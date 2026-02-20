@@ -125,6 +125,16 @@ class MediaDatabase:
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
+        self._injected_conn = False
+
+    @classmethod
+    def from_connection(cls, conn: sqlite3.Connection) -> MediaDatabase:
+        """Use an existing connection (e.g. session-scoped in-memory DB). Caller owns the connection."""
+        self = cls.__new__(cls)
+        self.db_path = Path(":memory:")
+        self._conn = conn
+        self._injected_conn = True
+        return self
 
     def connect(self) -> sqlite3.Connection:
         """Open connection and enable vector extension. Idempotent."""
@@ -146,7 +156,10 @@ class MediaDatabase:
         return self._conn
 
     def close(self) -> None:
-        """Close the database connection."""
+        """Close the database connection. No-op when using from_connection (caller owns conn)."""
+        if self._injected_conn:
+            self._conn = None
+            return
         if self._conn is not None:
             self._conn.close()
             self._conn = None

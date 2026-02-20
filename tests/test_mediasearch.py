@@ -101,57 +101,34 @@ def test_crawler_not_a_directory() -> None:
         path.unlink(missing_ok=True)
 
 
-def _sqlite_has_load_extension() -> bool:
-    import sqlite3
-    conn = sqlite3.connect(":memory:")
-    try:
-        conn.enable_load_extension(True)
-        return True
-    except AttributeError:
-        return False
-    finally:
-        conn.close()
-
-
-@pytest.mark.skipif(not _sqlite_has_load_extension(), reason="SQLite load_extension not available")
-def test_media_database_schema(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    db = MediaDatabase(db_path)
-    db.connect()
-    db.init_schema()
-    db.init_schema()  # idempotent
-    conn = db.connect()
-    r = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'").fetchone()
+def test_media_database_schema(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    r = db_conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'").fetchone()
     assert r is not None
-    r = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_index'").fetchone()
+    r = db_conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_index'").fetchone()
     assert r is not None
-    db.close()
 
 
-@pytest.mark.skipif(not _sqlite_has_load_extension(), reason="SQLite load_extension not available")
-def test_media_database_upsert_and_search(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    with MediaDatabase(db_path) as db:
-        db.init_schema()
-        aid = db.upsert_asset("/fake/photo.jpg", "abc123", 1000.0, "image")
-        assert aid > 0
-        row = db.get_asset_by_path("/fake/photo.jpg")
-        assert row is not None
-        assert row["hash"] == "abc123"
-        assert row["mtime"] == 1000.0
+def test_media_database_upsert_and_search(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    aid = db.upsert_asset("/fake/photo.jpg", "abc123", 1000.0, "image")
+    assert aid > 0
+    row = db.get_asset_by_path("/fake/photo.jpg")
+    assert row is not None
+    assert row["hash"] == "abc123"
+    assert row["mtime"] == 1000.0
 
-        # Same path updates
-        aid2 = db.upsert_asset("/fake/photo.jpg", "def456", 2000.0, "image")
-        assert aid2 == aid
-        row2 = db.get_asset_by_path("/fake/photo.jpg")
-        assert row2["hash"] == "def456"
+    # Same path updates
+    aid2 = db.upsert_asset("/fake/photo.jpg", "def456", 2000.0, "image")
+    assert aid2 == aid
+    row2 = db.get_asset_by_path("/fake/photo.jpg")
+    assert row2["hash"] == "def456"
 
-        # Embedding and search
-        emb = [0.1] * EMBEDDING_DIM
-        db.set_embedding(aid, emb)
-        results = db.search(emb, k=5)
-        assert len(results) >= 1
-        assert results[0][0] == aid
+    # Embedding and search
+    emb = [0.1] * EMBEDDING_DIM
+    db.set_embedding(aid, emb)
+    results = db.search(emb, k=5)
+    assert len(results) >= 1
+    assert results[0][0] == aid
 
 
 # ---- Sparse hash ----
@@ -262,80 +239,62 @@ def test_get_metadata_fallback_gps_lat_lon(mock_exif_class: object, tmp_path: Pa
 
 
 # ---- MediaDatabase: batch_upsert_assets ----
-@pytest.mark.skipif(not _sqlite_has_load_extension(), reason="SQLite load_extension not available")
-def test_batch_upsert_assets(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    with MediaDatabase(db_path) as db:
-        db.init_schema()
-        rows = [
-            ("/a.jpg", "h1", 1000.0, "IMAGE", "2024-01-01", 47.0, -122.0),
-            ("/b.jpg", "h2", 2000.0, "IMAGE", None, None, None),
-        ]
-        db.batch_upsert_assets(rows)
-        r1 = db.get_asset_by_path("/a.jpg")
-        r2 = db.get_asset_by_path("/b.jpg")
-        assert r1 is not None and r1["hash"] == "h1" and r1["capture_date"] == "2024-01-01" and r1["lat"] == 47.0
-        assert r2 is not None and r2["hash"] == "h2" and r2["capture_date"] is None and r2["lat"] is None
+def test_batch_upsert_assets(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    rows = [
+        ("/a.jpg", "h1", 1000.0, "IMAGE", "2024-01-01", 47.0, -122.0),
+        ("/b.jpg", "h2", 2000.0, "IMAGE", None, None, None),
+    ]
+    db.batch_upsert_assets(rows)
+    r1 = db.get_asset_by_path("/a.jpg")
+    r2 = db.get_asset_by_path("/b.jpg")
+    assert r1 is not None and r1["hash"] == "h1" and r1["capture_date"] == "2024-01-01" and r1["lat"] == 47.0
+    assert r2 is not None and r2["hash"] == "h2" and r2["capture_date"] is None and r2["lat"] is None
 
 
-@pytest.mark.skipif(not _sqlite_has_load_extension(), reason="SQLite load_extension not available")
-def test_batch_upsert_assets_empty_no_op(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    with MediaDatabase(db_path) as db:
-        db.init_schema()
-        db.batch_upsert_assets([])
-        assert db.connect().execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
+def test_batch_upsert_assets_empty_no_op(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.batch_upsert_assets([])
+    assert db_conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
 
 
-@pytest.mark.skipif(not _sqlite_has_load_extension(), reason="SQLite load_extension not available")
-def test_batch_upsert_assets_on_conflict_updates(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    with MediaDatabase(db_path) as db:
-        db.init_schema()
-        db.batch_upsert_assets([("/same.jpg", "hash1", 1000.0, "IMAGE", None, None, None)])
-        db.batch_upsert_assets([("/same.jpg", "hash2", 2000.0, "IMAGE", None, None, None)])
-        row = db.get_asset_by_path("/same.jpg")
-        assert row is not None and row["hash"] == "hash2" and row["mtime"] == 2000.0
+def test_batch_upsert_assets_on_conflict_updates(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.batch_upsert_assets([("/same.jpg", "hash1", 1000.0, "IMAGE", None, None, None)])
+    db.batch_upsert_assets([("/same.jpg", "hash2", 2000.0, "IMAGE", None, None, None)])
+    row = db.get_asset_by_path("/same.jpg")
+    assert row is not None and row["hash"] == "hash2" and row["mtime"] == 2000.0
 
 
 # ---- MediaDatabase: delete_asset_by_path ----
-@pytest.mark.skipif(not _sqlite_has_load_extension(), reason="SQLite load_extension not available")
-def test_delete_asset_by_path_removes_asset_and_embedding(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    with MediaDatabase(db_path) as db:
-        db.init_schema()
-        aid = db.upsert_asset("/gone.jpg", "h", 1000.0, "IMAGE")
-        db.set_embedding(aid, [0.1] * EMBEDDING_DIM)
-        db.delete_asset_by_path("/gone.jpg")
-        assert db.get_asset_by_path("/gone.jpg") is None
+def test_delete_asset_by_path_removes_asset_and_embedding(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    aid = db.upsert_asset("/gone.jpg", "h", 1000.0, "IMAGE")
+    db.set_embedding(aid, [0.1] * EMBEDDING_DIM)
+    db.delete_asset_by_path("/gone.jpg")
+    assert db.get_asset_by_path("/gone.jpg") is None
 
 
-@pytest.mark.skipif(not _sqlite_has_load_extension(), reason="SQLite load_extension not available")
-def test_delete_asset_by_path_nonexistent_no_op(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    with MediaDatabase(db_path) as db:
-        db.init_schema()
-        db.delete_asset_by_path("/nonexistent.jpg")
-        assert db.connect().execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
+def test_delete_asset_by_path_nonexistent_no_op(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.delete_asset_by_path("/nonexistent.jpg")
+    assert db_conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
 
 
 # ---- MediaDatabase: optional columns ----
-@pytest.mark.skipif(not _sqlite_has_load_extension(), reason="SQLite load_extension not available")
-def test_upsert_asset_optional_capture_date_lat_lon(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    with MediaDatabase(db_path) as db:
-        db.init_schema()
-        db.upsert_asset(
-            "/p.jpg", "h", 1000.0, "IMAGE",
-            capture_date="2024:06:15 12:00:00",
-            lat=48.5,
-            lon=-121.2,
-        )
-        row = db.get_asset_by_path("/p.jpg")
-        assert row is not None
-        assert row["capture_date"] == "2024:06:15 12:00:00"
-        assert row["lat"] == 48.5
-        assert row["lon"] == -121.2
+def test_upsert_asset_optional_capture_date_lat_lon(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.upsert_asset(
+        "/p.jpg", "h", 1000.0, "IMAGE",
+        capture_date="2024:06:15 12:00:00",
+        lat=48.5,
+        lon=-121.2,
+    )
+    row = db.get_asset_by_path("/p.jpg")
+    assert row is not None
+    assert row["capture_date"] == "2024:06:15 12:00:00"
+    assert row["lat"] == 48.5
+    assert row["lon"] == -121.2
 
 
 # ---- VideoThumbnailer ----
@@ -371,28 +330,27 @@ def test_progress_bar_complete() -> None:
 
 
 # ---- Schema migration ----
-@pytest.mark.skipif(not _sqlite_has_load_extension(), reason="SQLite load_extension not available")
-def test_init_schema_adds_missing_columns(tmp_path: Path) -> None:
-    db_path = tmp_path / "test.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("""
-        CREATE TABLE assets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            path TEXT NOT NULL UNIQUE,
-            hash TEXT NOT NULL,
-            mtime REAL NOT NULL,
-            type TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
-    db = MediaDatabase(db_path)
-    db.connect()
-    db.init_schema()
-    row = db.connect().execute("PRAGMA table_info(assets)").fetchall()
-    col_names = {r[1] for r in row}
-    assert "capture_date" in col_names and "lat" in col_names and "lon" in col_names
-    db.close()
+def test_init_schema_adds_missing_columns() -> None:
+    from conftest import _memory_conn_with_sqlite_vec
+    conn = _memory_conn_with_sqlite_vec()
+    try:
+        conn.execute("""
+            CREATE TABLE assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                hash TEXT NOT NULL,
+                mtime REAL NOT NULL,
+                type TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+        db = MediaDatabase.from_connection(conn)
+        db.init_schema()
+        row = conn.execute("PRAGMA table_info(assets)").fetchall()
+        col_names = {r[1] for r in row}
+        assert "capture_date" in col_names and "lat" in col_names and "lon" in col_names
+    finally:
+        conn.close()
 
 
 # ---- connect() failure ----
@@ -421,7 +379,7 @@ def test_cli_update_requires_path() -> None:
 
 
 def test_cli_query_accepts_query_string(tmp_path: Path) -> None:
-    with patch("sys.argv", ["mediasearch", "query", "sunset beach"]):
+    with patch("sys.argv", ["mediasearch", "--db", str(tmp_path / "q.db"), "query", "sunset beach"]):
         exit_code = main()
     assert exit_code == 0
 
