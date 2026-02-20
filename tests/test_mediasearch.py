@@ -315,6 +315,28 @@ def test_batch_upsert_assets_on_conflict_updates(db_conn: sqlite3.Connection, cl
     assert row is not None and row["hash"] == "hash2" and row["mtime"] == 2000.0
 
 
+def test_get_all_assets_returns_last_n(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.batch_upsert_assets([
+        ("/a.jpg", "h1", 1000.0, "IMAGE", "2024-01-01", None, None),
+        ("/b.jpg", "h2", 2000.0, "IMAGE", "2024-01-02", None, None),
+        ("/c.mp4", "h3", 3000.0, "VIDEO", None, None, None),
+    ])
+    assets = db.get_all_assets(limit=10)
+    assert len(assets) == 3
+    assert assets[0]["path"] == "/c.mp4" and assets[0]["type"] == "VIDEO"
+    assert assets[1]["path"] == "/b.jpg" and assets[1]["capture_date"] == "2024-01-02"
+    assert assets[2]["path"] == "/a.jpg"
+
+
+def test_get_vec_index_count(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    assert db.get_vec_index_count() == 0
+    aid = db.upsert_asset("/x.jpg", "h", 1000.0, "IMAGE")
+    db.set_embedding(aid, [0.1] * EMBEDDING_DIM)
+    assert db.get_vec_index_count() == 1
+
+
 # ---- MediaDatabase: delete_asset_by_path ----
 def test_delete_asset_by_path_removes_asset_and_embedding(db_conn: sqlite3.Connection, clear_db: None) -> None:
     db = MediaDatabase.from_connection(db_conn)

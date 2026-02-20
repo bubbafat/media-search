@@ -168,11 +168,12 @@ class MediaDatabase:
         """Open connection and enable vector extension. Idempotent."""
         if self._conn is not None:
             return self._conn
-        self._conn = sqlite3.connect(str(self.db_path))
+        self._conn = sqlite3.connect(str(self.db_path), timeout=30)
         try:
             self._conn.enable_load_extension(True)
             sqlite_vec.load(self._conn)
             self._conn.enable_load_extension(False)
+            self._conn.execute("PRAGMA journal_mode=WAL")
         except AttributeError:
             self._conn.close()
             self._conn = None
@@ -187,10 +188,11 @@ class MediaDatabase:
         """Open a new connection with sqlite_vec. Use for thread-safe reads from worker threads."""
         if self._injected_conn or str(self.db_path) == ":memory:":
             return self.connect()
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=30)
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -311,6 +313,37 @@ class MediaDatabase:
             rows,
         )
         conn.commit()
+
+    def get_all_assets(self, limit: int = 50) -> list[dict[str, object]]:
+        """Return last N assets (path, type, capture_date, hash). Thread-safe for Gradio workers."""
+        conn = self._fresh_connection()
+        try:
+            rows = conn.execute(
+                "SELECT path, type, capture_date, hash FROM assets ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [
+                {
+                    "path": r["path"],
+                    "type": r["type"],
+                    "capture_date": r["capture_date"],
+                    "hash": r["hash"],
+                }
+                for r in rows
+            ]
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
+
+    def get_vec_index_count(self) -> int:
+        """Return COUNT(*) FROM vec_index. Thread-safe. If 0, semantic search will return no results."""
+        conn = self._fresh_connection()
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM vec_index").fetchone()
+            return row[0] if row else 0
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
 
     def get_asset_by_path(self, path: str) -> sqlite3.Row | None:
         """Return the asset row for path, or None."""
@@ -556,6 +589,49 @@ class VideoThumbnailer:
         return out_path
 
 
+# Extensions that are RAW (need embedded JPEG preview for embedding/display).
+RAW_EXTENSIONS = {ext for ext, cat in MEDIA_EXTENSIONS.items() if cat == "RAW"}
+
+
+class RawThumbnailer:
+    """
+    Extracts embedded JPEG preview from RAW files (ARW, etc.) using exiftool.
+    Uses -JpgFromRaw (largest) or -PreviewImage as fallback.
+    """
+
+    def __init__(self, thumb_dir: Path | None = None) -> None:
+        self.thumb_dir = Path(thumb_dir) if thumb_dir else Path(__file__).resolve().parent / ".thumbnails" / "raw"
+        self.thumb_dir.mkdir(parents=True, exist_ok=True)
+
+    def thumbnail_path(self, file_hash: str) -> Path:
+        """Path where preview for this hash would be stored."""
+        return self.thumb_dir / f"{file_hash}.jpg"
+
+    def ensure_thumbnail(self, raw_path: Path, file_hash: str) -> Path | None:
+        """
+        Extract embedded JPEG from RAW; save as .thumbnails/raw/<hash>.jpg.
+        Returns path if successful, None if extraction fails.
+        """
+        out_path = self.thumbnail_path(file_hash)
+        if out_path.exists():
+            return out_path
+        try:
+            import subprocess
+            # Try JpgFromRaw (largest) first; fallback to PreviewImage
+            for tag in ("JpgFromRaw", "PreviewImage"):
+                result = subprocess.run(
+                    [EXIFTOOL_PATH, f"-{tag}", "-b", str(raw_path)],
+                    capture_output=True,
+                    timeout=30,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout) > 100:
+                    out_path.write_bytes(result.stdout)
+                    return out_path
+        except Exception:
+            pass
+        return None
+
+
 def _mlx_array_to_list(vec: object) -> list[float]:
     """Convert MLX array or numpy array to list of floats (length EMBEDDING_DIM)."""
     import mlx.core as mx
@@ -737,15 +813,17 @@ def run_rebuild_with_progress(
     db: MediaDatabase, path: Path
 ) -> Iterator[str]:
     """
-    Full scan and index with progress messages for UI.
-    Yields status strings: "Rebuilding schema...", "Scanning... N/M", "Embedding... N/M", "Done."
+    Incremental scan and index with progress. Adds the selected folder to the index
+    (merges with existing); does not wipe previous scans.
+    Yields: "Initializing...", "Found N files...", "Indexing...", "Embedding...", "Done."
     """
-    yield "Rebuilding schema..."
-    db.rebuild_schema()
+    yield "Initializing..."
+    db.init_schema()
     crawler = FileCrawler(path)
     files = list(crawler.crawl())
     total = len(files)
-    thumbnailer = VideoThumbnailer()
+    video_thumb = VideoThumbnailer()
+    raw_thumb = RawThumbnailer()
     embedder = ImageEmbedder()
     yield f"Found {total} files. Indexing metadata and hashes..."
 
@@ -769,9 +847,11 @@ def run_rebuild_with_progress(
             to_embed.append((str(fp), file_hash, asset_type))
             if asset_type == "VIDEO":
                 try:
-                    thumbnailer.ensure_thumbnail(fp, file_hash)
+                    video_thumb.ensure_thumbnail(fp, file_hash)
                 except Exception:
                     pass
+            elif asset_type == "RAW":
+                raw_thumb.ensure_thumbnail(fp, file_hash)
             if len(batch) >= BATCH_UPSERT_SIZE:
                 db.batch_upsert_assets(batch)
                 batch.clear()
@@ -789,9 +869,14 @@ def run_rebuild_with_progress(
             if not row:
                 continue
             if asset_type == "VIDEO":
-                image_path = thumbnailer.thumbnail_path(file_hash)
+                image_path = video_thumb.thumbnail_path(file_hash)
                 if not image_path.exists():
                     continue
+            elif asset_type == "RAW":
+                preview = raw_thumb.ensure_thumbnail(Path(str_path), file_hash)
+                if preview is None:
+                    continue
+                image_path = preview
             else:
                 image_path = Path(str_path)
             to_embed_with_id.append((row["id"], image_path))
@@ -819,7 +904,8 @@ def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
     crawler = FileCrawler(path)
     files = list(crawler.crawl())
     total = len(files)
-    thumbnailer = VideoThumbnailer()
+    video_thumb = VideoThumbnailer()
+    raw_thumb = RawThumbnailer()
     embedder = ImageEmbedder()
     logger.info("Update: scanning %d files under %s", total, path)
 
@@ -847,9 +933,11 @@ def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
                 to_embed.append((str_path, file_hash, asset_type))
                 if asset_type == "VIDEO":
                     try:
-                        thumbnailer.ensure_thumbnail(fp, file_hash)
+                        video_thumb.ensure_thumbnail(fp, file_hash)
                     except Exception as e:
                         logger.debug("Thumbnail skip %s: %s", fp, e)
+                elif asset_type == "RAW":
+                    raw_thumb.ensure_thumbnail(fp, file_hash)
                 if len(batch) >= BATCH_UPSERT_SIZE:
                     db.batch_upsert_assets(batch)
                     batch.clear()
@@ -869,9 +957,14 @@ def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
             if not row:
                 continue
             if asset_type == "VIDEO":
-                image_path = thumbnailer.thumbnail_path(file_hash)
+                image_path = video_thumb.thumbnail_path(file_hash)
                 if not image_path.exists():
                     continue
+            elif asset_type == "RAW":
+                preview = raw_thumb.ensure_thumbnail(Path(str_path), file_hash)
+                if preview is None:
+                    continue
+                image_path = preview
             else:
                 image_path = Path(str_path)
             to_embed_with_id.append((row["id"], image_path))

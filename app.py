@@ -21,14 +21,21 @@ from mediasearch import (
     FileCrawler,
     ImageEmbedder,
     MediaDatabase,
+    RawThumbnailer,
     VideoThumbnailer,
     run_rebuild_with_progress,
 )
 
 # Shared resources (same process as CLI — model loaded once)
+# THREAD-SAFETY: Gradio runs handlers in worker threads. _db_instance() uses a main-thread
+# connection. Handlers that use _db_instance() may only call methods that use _fresh_connection()
+# (search, fetch_asset_rows_by_ids, get_all_assets, get_vec_index_count). Handlers that need
+# connect() (rebuild_schema, batch_upsert, etc.) must create a fresh MediaDatabase() in the
+# worker. See tests/test_app_thread_safety.py.
 _db: MediaDatabase | None = None
 _embedder: ImageEmbedder | None = None
 _thumbnailer: VideoThumbnailer | None = None
+_raw_thumbnailer: RawThumbnailer | None = None
 
 # Result metadata for click-to-reveal: list of {"path", "display_path", "type", "capture_date", "lat", "lon"}
 ResultMeta = dict[str, str | float | None]
@@ -56,10 +63,17 @@ def _thumbnailer_instance() -> VideoThumbnailer:
     return _thumbnailer
 
 
+def _raw_thumbnailer_instance() -> RawThumbnailer:
+    global _raw_thumbnailer
+    if _raw_thumbnailer is None:
+        _raw_thumbnailer = RawThumbnailer()
+    return _raw_thumbnailer
+
+
 def _asset_count() -> int:
     """Thread-safe: use a fresh connection so Gradio worker threads don't share the main-thread DB."""
     try:
-        conn = sqlite3.connect(str(DEFAULT_DB_PATH))
+        conn = sqlite3.connect(str(DEFAULT_DB_PATH), timeout=30)
         try:
             row = conn.execute("SELECT COUNT(*) FROM assets").fetchone()
             return row[0] if row else 0
@@ -72,6 +86,7 @@ def _asset_count() -> int:
 def _search_results_to_gallery(
     db: MediaDatabase,
     thumbnailer: VideoThumbnailer,
+    raw_thumbnailer: RawThumbnailer,
     results: list[tuple[int, float]],
     k: int = 20,
 ) -> tuple[list[tuple[str | Path, str]], list[ResultMeta]]:
@@ -89,6 +104,9 @@ def _search_results_to_gallery(
         if asset_type == "VIDEO":
             thumb = thumbnailer.thumbnail_path(row["hash"])
             display_path = str(thumb) if thumb.exists() else path_str
+        elif asset_type == "RAW":
+            raw_preview = raw_thumbnailer.ensure_thumbnail(path, row["hash"] or "")
+            display_path = str(raw_preview) if raw_preview else path_str
         else:
             display_path = path_str
         if not Path(display_path).exists():
@@ -119,7 +137,8 @@ def semantic_search(query: str) -> tuple[list[tuple[str | Path, str]], list[Resu
     results = db.search(vec, k=20)
     if not results:
         return [], [], "No results (index may be empty). Try indexing a directory first."
-    gallery, meta_list = _search_results_to_gallery(db, thumbnailer, results, k=20)
+    raw_thumbnailer = _raw_thumbnailer_instance()
+    gallery, meta_list = _search_results_to_gallery(db, thumbnailer, raw_thumbnailer, results, k=20)
     return gallery, meta_list, f"Found {len(gallery)} results."
 
 
@@ -140,7 +159,8 @@ def visual_similarity(image: str | None) -> tuple[list[tuple[str | Path, str]], 
     results = db.search(vec, k=20)
     if not results:
         return [], [], "No results in index."
-    gallery, meta_list = _search_results_to_gallery(db, thumbnailer, results, k=20)
+    raw_thumbnailer = _raw_thumbnailer_instance()
+    gallery, meta_list = _search_results_to_gallery(db, thumbnailer, raw_thumbnailer, results, k=20)
     return gallery, meta_list, f"Found {len(gallery)} similar results."
 
 
@@ -150,7 +170,9 @@ def scan_and_index(path_text: str) -> Iterator[tuple[str, str]]:
     if not path.is_dir():
         yield "Invalid directory path.", get_status_text()
         return
-    db = _db_instance()
+    # Use a fresh DB instance so the connection is created in this worker thread (thread-safe).
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    db.init_schema()
     log_lines: list[str] = []
     for msg in run_rebuild_with_progress(db, path):
         log_lines.append(msg)
@@ -160,7 +182,9 @@ def scan_and_index(path_text: str) -> Iterator[tuple[str, str]]:
 
 def clear_database() -> tuple[str, str]:
     """Tab 3: clear all assets and embeddings."""
-    db = _db_instance()
+    # Use a fresh DB instance so the connection is created in this worker thread (thread-safe).
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    db.init_schema()
     db.rebuild_schema()
     return "Database cleared.", get_status_text(0)
 
@@ -169,6 +193,75 @@ def get_status_text(count: int | None = None) -> str:
     if count is None:
         count = _asset_count()
     return f"**{count}** assets indexed"
+
+
+def catalog_browser_load() -> tuple[
+    list[list[str | None]], list[tuple[str, str]], str, list[dict[str, object]]
+]:
+    """Load last 50 assets for Catalog Browser: Dataframe, Gallery, debug text, and assets for row select."""
+    # Use a fresh DB instance so the connection is created in this worker thread (thread-safe).
+    # Ensures schema exists even on cold start or after clearing.
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    db.init_schema()
+    thumbnailer = _thumbnailer_instance()
+    assets = db.get_all_assets(limit=50)
+    vec_count = db.get_vec_index_count()
+
+    # Dataframe: [[path, type, capture_date], ...]
+    df_data: list[list[str | None]] = []
+    for a in assets:
+        df_data.append([
+            a.get("path") or "",
+            a.get("type") or "",
+            str(a.get("capture_date") or ""),
+        ])
+
+    raw_thumbnailer = _raw_thumbnailer_instance()
+    # Gallery: (display_path, caption) - use thumbnail for VIDEO, raw preview for RAW
+    gallery: list[tuple[str, str]] = []
+    for a in assets:
+        path_str = a.get("path") or ""
+        p = Path(path_str)
+        asset_type = a.get("type") or ""
+        if asset_type == "VIDEO":
+            thumb = thumbnailer.thumbnail_path(a.get("hash") or "")
+            display = str(thumb) if thumb.exists() else path_str
+        elif asset_type == "RAW":
+            raw_preview = raw_thumbnailer.ensure_thumbnail(p, a.get("hash") or "")
+            display = str(raw_preview) if raw_preview else path_str
+        else:
+            display = path_str
+        if Path(display).exists():
+            gallery.append((display, f"{p.name} ({asset_type})"))
+
+    if vec_count == 0:
+        debug = "**vec_index count: 0** — Semantic search will return no results. Run Scan & Index to embed assets."
+    else:
+        debug = f"**vec_index count: {vec_count}** — Embeddings available for semantic search."
+
+    return df_data, gallery, debug, assets
+
+
+def on_catalog_row_select(
+    evt: gr.SelectData,
+    catalog_assets: list[dict[str, object]],
+) -> str | None:
+    """Show preview (image, video thumbnail, or raw embedded preview) for selected Dataframe row."""
+    if not catalog_assets or evt.index is None:
+        return None
+    row_idx = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+    if row_idx < 0 or row_idx >= len(catalog_assets):
+        return None
+    a = catalog_assets[row_idx]
+    asset_type = a.get("type") or ""
+    path_str = a.get("path") or ""
+    if asset_type == "VIDEO":
+        thumb = _thumbnailer_instance().thumbnail_path(a.get("hash") or "")
+        return str(thumb) if thumb.exists() else (path_str if Path(path_str).is_file() else None)
+    if asset_type == "RAW":
+        raw_preview = _raw_thumbnailer_instance().ensure_thumbnail(Path(path_str), a.get("hash") or "")
+        return str(raw_preview) if raw_preview else (path_str if Path(path_str).is_file() else None)
+    return path_str if Path(path_str).is_file() else None
 
 
 def on_gallery_select(evt: gr.SelectData, meta_list: list[ResultMeta]) -> str:
@@ -298,22 +391,65 @@ def build_ui() -> gr.Blocks:
                     outputs=[progress_log, status],
                 )
 
+            # Tab 4: Catalog Browser (debug)
+            with gr.TabItem("Catalog Browser"):
+                catalog_assets_state = gr.State([])  # type: ignore[var-annotated]
+                catalog_df = gr.Dataframe(
+                    label="Indexed assets (last 50)",
+                    headers=["path", "type", "capture_date"],
+                    datatype=["str", "str", "str"],
+                )
+                catalog_gallery = gr.Gallery(
+                    label="Thumbnails",
+                    columns=5,
+                    rows=4,
+                    object_fit="contain",
+                    height="auto",
+                    show_label=True,
+                )
+                catalog_preview = gr.Image(label="Preview", type="filepath")
+                catalog_debug = gr.Markdown("")
+                catalog_refresh_btn = gr.Button("Refresh Catalog", variant="secondary")
+
+                def catalog_refresh() -> tuple[
+                    list[list[str | None]], list[tuple[str, str]], str, list[dict[str, object]]
+                ]:
+                    return catalog_browser_load()
+
+                catalog_refresh_btn.click(
+                    fn=catalog_refresh,
+                    inputs=None,
+                    outputs=[catalog_df, catalog_gallery, catalog_debug, catalog_assets_state],
+                )
+                catalog_df.select(
+                    fn=on_catalog_row_select,
+                    inputs=[catalog_assets_state],
+                    outputs=[catalog_preview],
+                )
+
         # Eager-load CLIP in the main thread so Metal/MLX init happens before Gradio workers run.
         # If you run the app from a context where Metal isn't available, the first search will
         # show the full error (including "Original error: ..." from mediasearch).
-        def load_model_and_status() -> str:
+        def load_model_and_status() -> tuple[str, list[list[str | None]], list[tuple[str, str]], str, list[dict[str, object]]]:
             try:
                 _embedder_instance().get_text_embedding("warmup")
             except Exception:
                 pass  # First search will show the error; status still updates
-            return get_status_text()
+            df, gal, debug, assets = catalog_browser_load()
+            return get_status_text(), df, gal, debug, assets
 
-        demo.load(fn=load_model_and_status, inputs=None, outputs=[status])
+        demo.load(
+            fn=load_model_and_status,
+            inputs=None,
+            outputs=[status, catalog_df, catalog_gallery, catalog_debug, catalog_assets_state],
+        )
 
     return demo
 
 
 def main() -> None:
+    # Serve local media files directly (no copy to cache). Mac: ~ and /Volumes cover most media.
+    gr.set_static_paths(paths=[str(Path.home()), "/Volumes"])
     demo = build_ui()
     demo.launch(
         server_name="0.0.0.0",
