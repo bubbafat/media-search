@@ -17,6 +17,7 @@ except ImportError:
 
 from mediasearch import (
     EMBEDDING_DIM,
+    FastSyncCounts,
     FileCrawler,
     ImageEmbedder,
     MediaDatabase,
@@ -27,6 +28,7 @@ from mediasearch import (
     VideoThumbnailer,
     get_metadata,
     main,
+    run_fast_sync_with_progress,
     run_query,
     run_rebuild_with_progress,
     run_update,
@@ -443,6 +445,19 @@ def test_delete_asset_by_path_nonexistent_no_op(db_conn: sqlite3.Connection, cle
     assert db_conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
 
 
+def test_update_asset_mtime(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    """update_asset_mtime updates the mtime for an asset by id."""
+    db = MediaDatabase.from_connection(db_conn)
+    aid = db.upsert_asset("/photo.jpg", "h123", 1000.0, "IMAGE")
+    row = db.get_asset_by_path("/photo.jpg")
+    assert row is not None
+    assert row["mtime"] == 1000.0
+    db.update_asset_mtime(aid, 2000.5)
+    row2 = db.get_asset_by_path("/photo.jpg")
+    assert row2 is not None
+    assert row2["mtime"] == 2000.5
+
+
 def test_set_embedding_wrong_length_raises(db_conn: sqlite3.Connection, clear_db: None) -> None:
     db = MediaDatabase.from_connection(db_conn)
     aid = db.upsert_asset("/p.jpg", "h", 1000.0, "IMAGE")
@@ -786,6 +801,112 @@ def test_cli_db_and_verbose_accepted(tmp_path: Path) -> None:
     ):
         exit_code = main()
     assert exit_code == 0
+
+
+# ---- FastSyncCounts ----
+def test_fast_sync_counts_summary_message() -> None:
+    """FastSyncCounts.summary_message formats total, changed, and skipped."""
+    c = FastSyncCounts(total=1200, changed=5, skipped=1195)
+    msg = c.summary_message()
+    assert "1200" in msg
+    assert "5" in msg
+    assert "1195" in msg
+    assert "Sync complete" in msg
+    assert "checked" in msg
+    assert "indexed" in msg
+    assert "skipped" in msg
+
+
+# ---- run_fast_sync_with_progress ----
+def test_run_fast_sync_invalid_path_raises(tmp_path: Path) -> None:
+    """run_fast_sync_with_progress raises NotADirectoryError for non-directory path."""
+    from mediasearch import run_fast_sync_with_progress
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.enable_load_extension(True)
+    import sqlite_vec
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY, path TEXT UNIQUE, hash TEXT, mtime REAL, type TEXT, capture_date TEXT, lat REAL, lon REAL);
+        CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
+    """)
+    row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
+    if row is None:
+        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[512])")
+    conn.commit()
+    conn.close()
+    db = MediaDatabase(db_path)
+    db.init_schema()
+    not_a_dir = tmp_path / "file.txt"
+    not_a_dir.write_bytes(b"x")
+    with pytest.raises(NotADirectoryError, match=str(not_a_dir)):
+        list(run_fast_sync_with_progress(db, not_a_dir))
+
+
+def test_run_fast_sync_skips_unchanged_files(
+    tmp_path: Path, db_conn: sqlite3.Connection, clear_db: None
+) -> None:
+    """Files with current_mtime == stored_mtime are skipped; get_hash is never called."""
+    import os
+    from unittest.mock import MagicMock
+
+    f = tmp_path / "unchanged.jpg"
+    f.write_bytes(b"\xff\xd8\xff")
+    os.utime(f, (1000.0, 1000.0))
+    db = MediaDatabase.from_connection(db_conn)
+    db.upsert_asset(str(f), "existing_hash", 1000.0, "IMAGE")
+    mock_hash = MagicMock(return_value="existing_hash")
+    with patch.object(FileCrawler, "get_hash", mock_hash):
+        msgs_with_counts = list(run_fast_sync_with_progress(db, tmp_path))
+    final_counts = msgs_with_counts[-1][1]
+    assert final_counts.total == 1
+    assert final_counts.skipped == 1
+    assert final_counts.changed == 0
+    mock_hash.assert_not_called()
+
+
+def test_run_fast_sync_processes_new_and_modified_counts(tmp_path: Path) -> None:
+    """New files and modified files (mtime > stored) are indexed; counts are correct."""
+    from unittest.mock import MagicMock
+    import os
+
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.enable_load_extension(True)
+    import sqlite_vec
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY, path TEXT UNIQUE, hash TEXT, mtime REAL, type TEXT, capture_date TEXT, lat REAL, lon REAL);
+        CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
+    """)
+    row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
+    if row is None:
+        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[512])")
+    conn.commit()
+    conn.close()
+
+    (tmp_path / "new.jpg").write_bytes(b"\xff\xd8\xff")
+    (tmp_path / "modified.jpg").write_bytes(b"\xff\xd8\xfe")
+    os.utime(tmp_path / "new.jpg", (2000.0, 2000.0))
+    os.utime(tmp_path / "modified.jpg", (1000.0, 1000.0))
+    db = MediaDatabase(db_path)
+    db.init_schema()
+    db.upsert_asset(str(tmp_path / "modified.jpg"), "old_hash", 500.0, "IMAGE")
+    mock_embedder = MagicMock()
+    mock_embedder.get_image_embeddings_batch.return_value = [[0.1] * EMBEDDING_DIM] * 2
+    with patch("mediasearch.ImageEmbedder", return_value=mock_embedder):
+        msgs_with_counts = list(run_fast_sync_with_progress(db, tmp_path))
+    final_msg, final_counts = msgs_with_counts[-1]
+    assert final_counts.total == 2
+    assert final_counts.changed == 2
+    assert final_counts.skipped == 0
+    assert "Sync complete" in final_msg
+    assert db.get_asset_by_path(str(tmp_path / "new.jpg")) is not None
+    assert db.get_asset_by_path(str(tmp_path / "modified.jpg")) is not None
 
 
 # ---- run_update: stale asset removal ----
