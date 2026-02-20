@@ -1,13 +1,15 @@
 [project]
 name = "media-search"
 version = "0.1.0"
-description = "Add your description here"
+description = "Media indexing and searching"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
+    "ffmpeg-python>=0.2.0",
     "mlx-vlm>=0.1.15",
     "opencv-python>=4.10.0.84",
     "pillow>=10.4.0",
+    "PyExifTool>=0.5.6",
     "sqlite-vec>=0.1.6",
 ]
 

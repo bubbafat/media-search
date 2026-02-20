@@ -9,4 +9,6 @@ wheels/
 
 # Virtual environments
 .venv
+.thumbnails
 uv.lock
+mediasearch.db

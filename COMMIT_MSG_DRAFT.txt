@@ -1,0 +1,16 @@
+Phase 1: Core engine — metadata ingestion and deduplication
+
+Linear: Phase 1: Core Engine
+
+- MediaDatabase: extend schema with capture_date, lat, lon; load sqlite-vec
+  from uv env; vec_index vec0(asset_id, embedding float[512]). Migration adds
+  new columns to existing assets table.
+- FileCrawler: find JPG, ARW, MP4, MOV; SHA-256 hash for dedup; ExifToolHelper
+  (/opt/homebrew/bin/exiftool) to extract EXIF:DateTimeOriginal and
+  Composite:GPSPosition; parse GPS to decimal lat/lon.
+- VideoThumbnailer: ffmpeg-python to extract 224x224 frame at 1.0s; save to
+  .thumbnails/<sha256>.jpg.
+- CLI: --rebuild <path> and --update <path> with progress bar and counter;
+  rebuild wipes index and re-ingests; update incremental (mtime/hash) and
+  prunes missing paths.
+- Dependencies: PyExifTool, ffmpeg-python. .gitignore: .thumbnails, mediasearch.db.

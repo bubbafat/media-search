@@ -2,8 +2,9 @@
 """
 MediaSearch — Local-first semantic search engine for media files.
 
-Supports JPG, RAW (ARW), and MP4/MOV. Uses SQLite with sqlite-vec for
-vector search and Apple MLX for GPU-accelerated embeddings (M4 Mac Studio).
+Phase 1: Core engine — metadata ingestion and deduplication.
+Stack: Python, SQLite + sqlite-vec, FFmpeg, ExifTool.
+Supports JPG, RAW (ARW), MP4/MOV. Uses Apple MLX for embeddings (M4 Mac Studio).
 """
 
 from __future__ import annotations
@@ -11,12 +12,26 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import re
 import sqlite3
 import sys
 from pathlib import Path
 from typing import Iterator
 
+# Row for batch upsert: (path, hash, mtime, type, capture_date, lat, lon).
+AssetRow = tuple[str, str, float, str, str | None, float | None, float | None]
+
 import sqlite_vec
+
+try:
+    from exiftool import ExifToolHelper
+except ImportError:
+    ExifToolHelper = None  # type: ignore[misc, assignment]
+
+try:
+    import ffmpeg
+except ImportError:
+    ffmpeg = None  # type: ignore[assignment]
 
 # Default database path (project-local).
 DEFAULT_DB_PATH = Path(__file__).resolve().parent / "mediasearch.db"
@@ -33,6 +48,55 @@ MEDIA_EXTENSIONS: dict[str, str] = {
 
 # Vector dimension for embeddings (e.g. MLX VLM or similar).
 EMBEDDING_DIM = 512
+
+# ExifTool binary (Homebrew on Apple Silicon).
+EXIFTOOL_PATH = "/opt/homebrew/bin/exiftool"
+
+# Video thumbnail size (square frame for embedding models).
+THUMB_SIZE = 224
+THUMB_TIME_SEC = 1.0
+
+# Sparse hash: for files larger than this, hash first/middle/last 1MB only.
+SPARSE_HASH_THRESHOLD_BYTES = 100 * 1024 * 1024  # 100 MB
+SPARSE_HASH_CHUNK_BYTES = 1024 * 1024  # 1 MB
+
+# Batch size for bulk asset inserts (reduces disk I/O).
+BATCH_UPSERT_SIZE = 100
+
+
+def _dms_to_decimal(d: float, m: float, s: float, hem: str) -> float:
+    """Convert degrees, minutes, seconds and hemisphere to decimal degrees."""
+    dec = d + m / 60.0 + s / 3600.0
+    if hem in "SW":
+        dec = -dec
+    return dec
+
+
+def _parse_dms_single(s: str) -> float | None:
+    """Parse a single DMS string like \"47 deg 12' 34.56\" N\" to decimal degrees."""
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    deg_min_sec = r"(-?\d+(?:\.\d+)?)\s*deg\s*(-?\d+(?:\.\d+)?)\s*'\s*(-?\d+(?:\.\d+)?)\s*\"\s*([NSEW])"
+    m = re.match(deg_min_sec, s, re.IGNORECASE)
+    if not m:
+        return None
+    return _dms_to_decimal(float(m.group(1)), float(m.group(2)), float(m.group(3)), m.group(4).upper())
+
+
+def _parse_gps_position(gps_str: str) -> tuple[float | None, float | None]:
+    """
+    Parse ExifTool Composite:GPSPosition string to (lat, lon) in decimal degrees.
+    E.g. "47 deg 12' 34.56" N, 122 deg 45' 67.89" W" -> (47.2096, -122.7689).
+    """
+    if not gps_str or not isinstance(gps_str, str):
+        return (None, None)
+    parts = re.split(r",\s*", gps_str.strip())
+    if len(parts) != 2:
+        return (None, None)
+    lat = _parse_dms_single(parts[0].strip())
+    lon = _parse_dms_single(parts[1].strip())
+    return (lat, lon)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -51,10 +115,11 @@ def setup_logging(verbose: bool = False) -> None:
 class MediaDatabase:
     """
     SQLite database with sqlite-vec for asset metadata and vector embeddings.
+    Loads sqlite-vec from the uv environment.
 
     Schema:
-      - assets: id, path (unique), hash, mtime, type
-      - vec_index: vec0 virtual table (asset_id, embedding float[512])
+      - assets: id, path, hash (unique), mtime, type, capture_date, lat, lon
+      - vec_index: vec0 virtual table (asset_id integer, embedding float[512])
     """
 
     def __init__(self, db_path: Path) -> None:
@@ -102,11 +167,21 @@ class MediaDatabase:
                 path TEXT NOT NULL UNIQUE,
                 hash TEXT NOT NULL,
                 mtime REAL NOT NULL,
-                type TEXT NOT NULL
+                type TEXT NOT NULL,
+                capture_date TEXT,
+                lat REAL,
+                lon REAL
             );
             CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
             CREATE INDEX IF NOT EXISTS idx_assets_hash ON assets(hash);
         """)
+        # Migrate existing assets table: add new columns if missing
+        row = conn.execute("PRAGMA table_info(assets)").fetchall()
+        col_names = {r[1] for r in row} if row else set()
+        for col, typ in [("capture_date", "TEXT"), ("lat", "REAL"), ("lon", "REAL")]:
+            if col not in col_names:
+                conn.execute(f"ALTER TABLE assets ADD COLUMN {col} {typ}")
+        conn.commit()
         # vec0 virtual table: must be created with explicit schema
         if conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_index'"
@@ -127,29 +202,69 @@ class MediaDatabase:
         conn.commit()
         self.init_schema()
 
-    def upsert_asset(self, path: str, file_hash: str, mtime: float, asset_type: str) -> int:
+    def upsert_asset(
+        self,
+        path: str,
+        file_hash: str,
+        mtime: float,
+        asset_type: str,
+        *,
+        capture_date: str | None = None,
+        lat: float | None = None,
+        lon: float | None = None,
+    ) -> int:
         """
         Insert or replace an asset by path. Returns asset id.
         """
         conn = self.connect()
         conn.execute(
             """
-            INSERT INTO assets (path, hash, mtime, type)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(path) DO UPDATE SET hash = excluded.hash, mtime = excluded.mtime, type = excluded.type
+            INSERT INTO assets (path, hash, mtime, type, capture_date, lat, lon)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                hash = excluded.hash,
+                mtime = excluded.mtime,
+                type = excluded.type,
+                capture_date = excluded.capture_date,
+                lat = excluded.lat,
+                lon = excluded.lon
             """,
-            (path, file_hash, mtime, asset_type),
+            (path, file_hash, mtime, asset_type, capture_date, lat, lon),
         )
         conn.commit()
         row = conn.execute("SELECT id FROM assets WHERE path = ?", (path,)).fetchone()
         assert row is not None
         return row["id"]
 
+    def batch_upsert_assets(self, rows: list[AssetRow]) -> None:
+        """
+        Insert or replace multiple assets in one transaction. Use chunks of ~100
+        to reduce disk I/O; call with rows of length up to BATCH_UPSERT_SIZE.
+        """
+        if not rows:
+            return
+        conn = self.connect()
+        conn.executemany(
+            """
+            INSERT INTO assets (path, hash, mtime, type, capture_date, lat, lon)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                hash = excluded.hash,
+                mtime = excluded.mtime,
+                type = excluded.type,
+                capture_date = excluded.capture_date,
+                lat = excluded.lat,
+                lon = excluded.lon
+            """,
+            rows,
+        )
+        conn.commit()
+
     def get_asset_by_path(self, path: str) -> sqlite3.Row | None:
         """Return the asset row for path, or None."""
         conn = self.connect()
         return conn.execute(
-            "SELECT id, path, hash, mtime, type FROM assets WHERE path = ?",
+            "SELECT id, path, hash, mtime, type, capture_date, lat, lon FROM assets WHERE path = ?",
             (path,),
         ).fetchone()
 
@@ -213,18 +328,35 @@ class FileCrawler:
 
     def get_hash(self, path: Path, *, chunk_size: int = 65536) -> str:
         """
-        Compute SHA-256 hash of file contents for deduplication.
+        Compute SHA-256 hash for deduplication.
+        For files > 100MB, uses a sparse hash (first, middle, last 1MB) to speed up video indexing.
         """
         path = Path(path)
         if not path.is_file():
             raise FileNotFoundError(str(path))
+        size = path.stat().st_size
         h = hashlib.sha256()
         with open(path, "rb") as f:
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                h.update(chunk)
+            if size > SPARSE_HASH_THRESHOLD_BYTES:
+                # Sparse: first 1MB, middle 1MB, last 1MB
+                chunk = f.read(SPARSE_HASH_CHUNK_BYTES)
+                if chunk:
+                    h.update(chunk)
+                mid = (size - SPARSE_HASH_CHUNK_BYTES) // 2
+                f.seek(mid)
+                chunk = f.read(SPARSE_HASH_CHUNK_BYTES)
+                if chunk:
+                    h.update(chunk)
+                f.seek(max(0, size - SPARSE_HASH_CHUNK_BYTES))
+                chunk = f.read(SPARSE_HASH_CHUNK_BYTES)
+                if chunk:
+                    h.update(chunk)
+            else:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    h.update(chunk)
         return h.hexdigest()
 
     @staticmethod
@@ -234,37 +366,154 @@ class FileCrawler:
         return MEDIA_EXTENSIONS.get(ext, "unknown")
 
 
+def get_metadata(path: Path) -> dict[str, str | float | None]:
+    """
+    Use ExifToolHelper (exiftool at EXIFTOOL_PATH) to extract
+    EXIF:DateTimeOriginal and GPS. Prefer Composite:GPSPosition; if null,
+    fall back to EXIF:GPSLatitude and EXIF:GPSLongitude.
+    """
+    out: dict[str, str | float | None] = {
+        "capture_date": None,
+        "lat": None,
+        "lon": None,
+    }
+    if ExifToolHelper is None:
+        return out
+    path_str = str(path.resolve())
+    tags = [
+        "EXIF:DateTimeOriginal",
+        "Composite:GPSPosition",
+        "EXIF:GPSLatitude",
+        "EXIF:GPSLongitude",
+    ]
+    try:
+        with ExifToolHelper(executable=EXIFTOOL_PATH) as et:
+            tags_list = et.get_tags([path_str], tags)
+    except Exception:
+        return out
+    if not tags_list or not isinstance(tags_list[0], dict):
+        return out
+    d = tags_list[0]
+    out["capture_date"] = d.get("EXIF:DateTimeOriginal") or d.get("Composite:DateTimeCreated") or None
+    if isinstance(out["capture_date"], str):
+        out["capture_date"] = out["capture_date"].strip()
+
+    gps = d.get("Composite:GPSPosition")
+    if gps:
+        lat, lon = _parse_gps_position(str(gps))
+        out["lat"], out["lon"] = lat, lon
+    else:
+        # Fallback: EXIF:GPSLatitude and EXIF:GPSLongitude (e.g. "47 deg 12' 34.56" N")
+        lat_val = d.get("EXIF:GPSLatitude")
+        lon_val = d.get("EXIF:GPSLongitude")
+        if lat_val is not None and lon_val is not None:
+            out["lat"] = _parse_dms_single(str(lat_val))
+            out["lon"] = _parse_dms_single(str(lon_val))
+    return out
+
+
+class VideoThumbnailer:
+    """
+    Extracts a single 224x224 frame at 1.0s from videos using ffmpeg-python.
+    Saves thumbnails to a hidden .thumbnails directory keyed by file SHA-256 hash.
+    """
+
+    def __init__(self, thumb_dir: Path | None = None) -> None:
+        self.thumb_dir = Path(thumb_dir) if thumb_dir else Path(__file__).resolve().parent / ".thumbnails"
+        self.thumb_dir.mkdir(parents=True, exist_ok=True)
+
+    def thumbnail_path(self, file_hash: str) -> Path:
+        """Path where thumbnail for this hash would be stored."""
+        return self.thumb_dir / f"{file_hash}.jpg"
+
+    def ensure_thumbnail(self, video_path: Path, file_hash: str) -> Path:
+        """
+        Extract 224x224 frame at 1.0s from video; save as .thumbnails/<hash>.jpg.
+        Returns path to thumbnail (existing or newly created).
+        """
+        out_path = self.thumbnail_path(file_hash)
+        if out_path.exists():
+            return out_path
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg-python is not installed")
+        try:
+            (
+                ffmpeg.input(str(video_path), ss=THUMB_TIME_SEC)
+                .filter("scale", THUMB_SIZE, THUMB_SIZE)
+                .output(str(out_path), vframes=1)
+                .overwrite_output()
+                .run(capture_stdout=True, capture_stderr=True)
+            )
+        except ffmpeg.Error as e:
+            err = (e.stderr or b"").decode(errors="replace")
+            raise RuntimeError(f"FFmpeg thumbnail failed: {err}") from e
+        return out_path
+
+
+def _progress_bar(current: int, total: int, width: int = 30) -> str:
+    """Return a simple text progress bar and counter."""
+    if total <= 0:
+        pct = 0.0
+    else:
+        pct = current / total
+    filled = int(width * pct)
+    bar = "=" * filled + (">" if filled < width else "") + " " * (width - filled - 1)
+    return f"[{bar}] {current}/{total}"
+
+
 def run_rebuild(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
-    """Full scan: wipe index, then index every file under path."""
+    """Full scan: wipe index, then index every file under path with metadata and video thumbnails."""
     db.rebuild_schema()
     crawler = FileCrawler(path)
     files = list(crawler.crawl())
     total = len(files)
+    thumbnailer = VideoThumbnailer()
     logger.info("Rebuild: indexing %d files under %s", total, path)
 
+    batch: list[AssetRow] = []
     for i, fp in enumerate(files, start=1):
         try:
             file_hash = crawler.get_hash(fp)
             mtime = fp.stat().st_mtime
             asset_type = FileCrawler.path_to_type(fp)
-            db.upsert_asset(str(fp), file_hash, mtime, asset_type)
+            meta = get_metadata(fp)
+            batch.append((
+                str(fp),
+                file_hash,
+                mtime,
+                asset_type,
+                meta.get("capture_date") or None,
+                meta.get("lat"),
+                meta.get("lon"),
+            ))
+            if asset_type == "VIDEO":
+                try:
+                    thumbnailer.ensure_thumbnail(fp, file_hash)
+                except Exception as e:
+                    logger.debug("Thumbnail skip %s: %s", fp, e)
+            if len(batch) >= BATCH_UPSERT_SIZE:
+                db.batch_upsert_assets(batch)
+                batch.clear()
         except OSError as e:
             logger.warning("Skip %s: %s", fp, e)
-        if i % 50 == 0 or i == total:
-            logger.info("Scanning... [%d/%d]", i, total)
-
+        logger.info("\r%s", _progress_bar(i, total))
+    if batch:
+        db.batch_upsert_assets(batch)
+    logger.info("")
     logger.info("Rebuild complete. %d assets indexed.", total)
 
 
 def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
-    """Incremental scan: add new files, update changed (mtime/hash), remove missing."""
+    """Incremental scan: add new files, update changed (mtime/hash), remove missing; metadata and thumbnails."""
     db.init_schema()
     crawler = FileCrawler(path)
     files = list(crawler.crawl())
     total = len(files)
+    thumbnailer = VideoThumbnailer()
     logger.info("Update: scanning %d files under %s", total, path)
 
     indexed_paths: set[str] = set()
+    batch: list[AssetRow] = []
     for i, fp in enumerate(files, start=1):
         try:
             str_path = str(fp)
@@ -273,12 +522,31 @@ def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
             asset_type = FileCrawler.path_to_type(fp)
             existing = db.get_asset_by_path(str_path)
             if existing is None or existing["mtime"] != mtime or existing["hash"] != file_hash:
-                db.upsert_asset(str_path, file_hash, mtime, asset_type)
+                meta = get_metadata(fp)
+                batch.append((
+                    str_path,
+                    file_hash,
+                    mtime,
+                    asset_type,
+                    meta.get("capture_date") or None,
+                    meta.get("lat"),
+                    meta.get("lon"),
+                ))
+                if asset_type == "VIDEO":
+                    try:
+                        thumbnailer.ensure_thumbnail(fp, file_hash)
+                    except Exception as e:
+                        logger.debug("Thumbnail skip %s: %s", fp, e)
+                if len(batch) >= BATCH_UPSERT_SIZE:
+                    db.batch_upsert_assets(batch)
+                    batch.clear()
             indexed_paths.add(str_path)
         except OSError as e:
             logger.warning("Skip %s: %s", fp, e)
-        if i % 50 == 0 or i == total:
-            logger.info("Scanning... [%d/%d]", i, total)
+        logger.info("\r%s", _progress_bar(i, total))
+    logger.info("")
+    if batch:
+        db.batch_upsert_assets(batch)
 
     # Remove assets whose paths no longer exist on disk
     conn = db.connect()
