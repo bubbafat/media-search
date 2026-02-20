@@ -246,6 +246,13 @@ class MediaDatabase:
                     embedding FLOAT[512]
                 )
             """)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS indexed_directories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                added_at REAL NOT NULL
+            );
+        """)
         conn.commit()
 
     def rebuild_schema(self) -> None:
@@ -495,6 +502,67 @@ class MediaDatabase:
         conn.execute("DELETE FROM vec_index WHERE asset_id = ?", (asset_id,))
         conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
         conn.commit()
+
+    def add_directory(self, path: str) -> None:
+        """Save a root directory to indexed_directories. Path is normalized (resolved, trailing /)."""
+        import time
+        p = str(Path(path).expanduser().resolve())
+        if not p.endswith("/"):
+            p = p + "/"
+        conn = self.connect()
+        conn.execute(
+            "INSERT OR IGNORE INTO indexed_directories (path, added_at) VALUES (?, ?)",
+            (p, time.time()),
+        )
+        conn.commit()
+
+    def get_directories(self) -> list[tuple[str, int]]:
+        """
+        Return list of (path, item_count) for each indexed directory.
+        Item count uses LIKE path||'%' on assets (paths under this root).
+        """
+        conn = self._fresh_connection()
+        try:
+            rows = conn.execute(
+                "SELECT path FROM indexed_directories ORDER BY added_at ASC"
+            ).fetchall()
+            result: list[tuple[str, int]] = []
+            for row in rows:
+                p = row["path"]
+                count_row = conn.execute(
+                    "SELECT COUNT(*) FROM assets WHERE path LIKE ? OR path = ?",
+                    (p + "%", p.rstrip("/")),
+                ).fetchone()
+                count = count_row[0] if count_row else 0
+                result.append((p.rstrip("/"), count))
+            return result
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
+
+    def remove_directory(self, path: str) -> int:
+        """
+        Recursively delete all assets and vectors under this path.
+        Path is normalized; matches assets WHERE path LIKE normalized_path||'%'.
+        Also removes the directory from indexed_directories.
+        Returns number of assets deleted.
+        """
+        p = str(Path(path).expanduser().resolve())
+        if not p.endswith("/"):
+            p = p + "/"
+        conn = self.connect()
+        # Get asset ids under this path
+        rows = conn.execute(
+            "SELECT id FROM assets WHERE path LIKE ? OR path = ?",
+            (p + "%", p.rstrip("/")),
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        for aid in ids:
+            conn.execute("DELETE FROM vec_index WHERE asset_id = ?", (aid,))
+        conn.execute("DELETE FROM assets WHERE path LIKE ? OR path = ?", (p + "%", p.rstrip("/")))
+        conn.execute("DELETE FROM indexed_directories WHERE path = ?", (p,))
+        conn.commit()
+        return len(ids)
 
 
 class FileCrawler:

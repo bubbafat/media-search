@@ -175,6 +175,22 @@ def test_visual_similarity_thread_safe(tmp_path: Path) -> None:
     assert isinstance(gallery, list)
 
 
+def test_library_load_directories_thread_safe(tmp_path: Path) -> None:
+    """library_load_directories must run without SQLite thread error when invoked from a worker."""
+    db_path = tmp_path / "test.db"
+    _init_test_db(db_path)
+    with patch("mediasearch.DEFAULT_DB_PATH", db_path), patch(
+        "app.DEFAULT_DB_PATH", db_path
+    ):
+        import app
+        app._db = None
+        out, exc = _run_in_worker(app.library_load_directories)
+    assert exc is None, f"library_load_directories raised: {exc}"
+    df_data, paths = out
+    assert isinstance(df_data, list)
+    assert isinstance(paths, list)
+
+
 def test_validate_paths_thread_safe(tmp_path: Path) -> None:
     """validate_paths must run without SQLite thread error when invoked from a worker."""
     db_path = tmp_path / "test.db"

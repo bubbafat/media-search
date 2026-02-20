@@ -186,29 +186,118 @@ def visual_similarity(image: str | None) -> tuple[list[tuple[str | Path, str]], 
     return gallery, meta_list, f"Found {len(gallery)} similar results.", score_view
 
 
+def library_load_directories() -> tuple[list[list[str | None]], list[str]]:
+    """Load directory table data and path list for selection mapping. Thread-safe."""
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    try:
+        db.init_schema()
+        dirs = db.get_directories()
+        df_data: list[list[str | None]] = []
+        paths: list[str] = []
+        for path, count in dirs:
+            df_data.append([path, str(count)])
+            paths.append(path)
+        return df_data, paths
+    finally:
+        db.close()
+
+
 def scan_and_index(path_text: str) -> Iterator[tuple[str, str]]:
-    """Tab 3: scan directory and index with progress."""
+    """Legacy: yields (log, status) only. Use add_and_scan for full directory management."""
+    for log, st, _df, _paths in add_and_scan(path_text):
+        yield log, st
+
+
+def add_and_scan(path_text: str) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+    """Add directory to indexed_directories, then scan and index. Yields (log, status, df, paths)."""
     path = Path(path_text).expanduser().resolve()
     if not path.is_dir():
-        yield "Invalid directory path.", get_status_text()
+        yield "Invalid directory path.", get_status_text(), *library_load_directories()
         return
-    # Use a fresh DB instance so the connection is created in this worker thread (thread-safe).
     db = MediaDatabase(DEFAULT_DB_PATH)
-    db.init_schema()
-    log_lines: list[str] = []
-    for msg in run_rebuild_with_progress(db, path):
-        log_lines.append(msg)
-        yield "\n".join(log_lines), get_status_text(_asset_count())
-    yield "\n".join(log_lines), get_status_text(_asset_count())
+    try:
+        db.init_schema()
+        db.add_directory(str(path))
+        log_lines: list[str] = []
+        for msg in run_rebuild_with_progress(db, path):
+            log_lines.append(msg)
+            yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+        yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+    finally:
+        db.close()
 
 
-def clear_database() -> tuple[str, str]:
-    """Tab 3: clear all assets and embeddings."""
-    # Use a fresh DB instance so the connection is created in this worker thread (thread-safe).
+def update_directory(path_text: str) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+    """Reindex a single directory. Yields (log, status, df, paths)."""
+    path = Path(path_text).expanduser().resolve()
+    if not path_text or not path.is_dir():
+        yield "Invalid or empty path.", get_status_text(), *library_load_directories()
+        return
     db = MediaDatabase(DEFAULT_DB_PATH)
-    db.init_schema()
-    db.rebuild_schema()
-    return "Database cleared.", get_status_text(0)
+    try:
+        db.init_schema()
+        log_lines: list[str] = []
+        for msg in run_rebuild_with_progress(db, path):
+            log_lines.append(msg)
+            yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+        yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+    finally:
+        db.close()
+
+
+def reindex_all() -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+    """Iterate through indexed_directories and run scan for each. Yields (log, status, df, paths)."""
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    try:
+        db.init_schema()
+        dirs = db.get_directories()
+        if not dirs:
+            yield "No directories to reindex. Add a directory first.", get_status_text(), *library_load_directories()
+            return
+        log_lines: list[str] = []
+        for path_str, _ in dirs:
+            path = Path(path_str)
+            if not path.is_dir():
+                log_lines.append(f"Skip (not found): {path_str}")
+                continue
+            log_lines.append(f"Indexing {path_str}...")
+            for msg in run_rebuild_with_progress(db, path):
+                log_lines.append(msg)
+                yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+        yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+    finally:
+        db.close()
+
+
+def remove_directory(path_text: str) -> tuple[str, str, list[list[str | None]], list[str]]:
+    """
+    Remove directory and all its assets. Returns (progress_log, status, df, paths).
+    Thread-safe.
+    """
+    if not path_text or not path_text.strip():
+        return "No directory selected.", get_status_text(), *library_load_directories()
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    try:
+        db.init_schema()
+        n = db.remove_directory(path_text.strip())
+        return (
+            f"Deleted {n} assets for {path_text.strip()}.",
+            get_status_text(_asset_count()),
+            *library_load_directories(),
+        )
+    finally:
+        db.close()
+
+
+def clear_database() -> tuple[str, str, list[list[str | None]], list[str]]:
+    """Tab 3: clear all assets and embeddings. indexed_directories preserved."""
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    try:
+        db.init_schema()
+        db.rebuild_schema()
+        return "Database cleared.", get_status_text(0), *library_load_directories()
+    finally:
+        db.close()
 
 
 def get_status_text(count: int | None = None) -> str:
@@ -234,59 +323,68 @@ def _catalog_stats_text(
 def catalog_stats_load() -> str:
     """Load Stats for Catalog Browser. Thread-safe."""
     db = MediaDatabase(DEFAULT_DB_PATH)
-    db.init_schema()
-    assets_count = db.get_assets_count()
-    vec_count = db.get_vec_index_count()
-    thumbnailer = _thumbnailer_instance()
-    raw_thumbnailer = _raw_thumbnailer_instance()
-    thumb_assets = db.get_assets_for_thumb_check(limit=500)
-    missing = 0
-    for a in thumb_assets:
-        h = a.get("hash") or ""
-        t = a.get("type") or ""
-        if t == "VIDEO":
-            if not thumbnailer.thumbnail_path(h).exists():
-                missing += 1
-        elif t == "RAW":
-            if not raw_thumbnailer.thumbnail_path(h).exists():
-                missing += 1
-    return _catalog_stats_text(assets_count, vec_count, missing)
+    try:
+        db.init_schema()
+        assets_count = db.get_assets_count()
+        vec_count = db.get_vec_index_count()
+        thumbnailer = _thumbnailer_instance()
+        raw_thumbnailer = _raw_thumbnailer_instance()
+        thumb_assets = db.get_assets_for_thumb_check(limit=500)
+        missing = 0
+        for a in thumb_assets:
+            h = a.get("hash") or ""
+            t = a.get("type") or ""
+            if t == "VIDEO":
+                if not thumbnailer.thumbnail_path(h).exists():
+                    missing += 1
+            elif t == "RAW":
+                if not raw_thumbnailer.thumbnail_path(h).exists():
+                    missing += 1
+        return _catalog_stats_text(assets_count, vec_count, missing)
+    finally:
+        db.close()
 
 
 def catalog_direct_load() -> tuple[list[list[str | None]], list[dict[str, object]]]:
     """Load Direct View: 100 rows (ID, Path, Type, Capture Date) and assets state. Thread-safe."""
     db = MediaDatabase(DEFAULT_DB_PATH)
-    db.init_schema()
-    assets = db.get_assets_with_id(limit=100)
-    df_data: list[list[str | None]] = []
-    for a in assets:
-        df_data.append([
-            str(a.get("id") or ""),
-            a.get("path") or "",
-            a.get("type") or "",
-            str(a.get("capture_date") or ""),
-        ])
-    return df_data, assets
+    try:
+        db.init_schema()
+        assets = db.get_assets_with_id(limit=100)
+        df_data: list[list[str | None]] = []
+        for a in assets:
+            df_data.append([
+                str(a.get("id") or ""),
+                a.get("path") or "",
+                a.get("type") or "",
+                str(a.get("capture_date") or ""),
+            ])
+        return df_data, assets
+    finally:
+        db.close()
 
 
 def validate_paths() -> str:
     """Check os.path.exists for first 10 asset paths. Reports Absolute Path Drift. Thread-safe."""
     db = MediaDatabase(DEFAULT_DB_PATH)
-    db.init_schema()
-    paths = db.get_first_paths(limit=10)
-    if not paths:
-        return "No assets in database."
-    results: list[str] = []
-    missing = 0
-    for p in paths:
-        exists = "✅" if Path(p).exists() else "❌"
-        if not Path(p).exists():
-            missing += 1
-        results.append(f"{exists} `{p}`")
-    report = "\n".join(results)
-    if missing > 0:
-        report += f"\n\n⚠️ **Absolute Path Drift:** {missing} of {len(paths)} sampled paths do not exist. Database may have been built on another drive/folder."
-    return report
+    try:
+        db.init_schema()
+        paths = db.get_first_paths(limit=10)
+        if not paths:
+            return "No assets in database."
+        results: list[str] = []
+        missing = 0
+        for p in paths:
+            exists = "✅" if Path(p).exists() else "❌"
+            if not Path(p).exists():
+                missing += 1
+            results.append(f"{exists} `{p}`")
+        report = "\n".join(results)
+        if missing > 0:
+            report += f"\n\n⚠️ **Absolute Path Drift:** {missing} of {len(paths)} sampled paths do not exist. Database may have been built on another drive/folder."
+        return report
+    finally:
+        db.close()
 
 
 def on_direct_row_select(
@@ -440,28 +538,107 @@ def build_ui() -> gr.Blocks:
 
             # Tab 3: Library Management
             with gr.TabItem("Library Management"):
+                lib_dir_paths = gr.State([])  # type: ignore[var-annotated]
+                lib_selected_path = gr.State("")  # type: ignore[var-annotated]
+
+                gr.Markdown("### Add directory")
                 path_in = gr.Textbox(
                     label="Directory path",
                     placeholder="/path/to/photos",
                     value="",
                 )
-                scan_btn = gr.Button("Scan & Index", variant="primary")
+                add_scan_btn = gr.Button("Add & Scan", variant="primary")
+                reindex_all_btn = gr.Button("Reindex All", variant="secondary")
+
+                gr.Markdown("### Indexed directories")
+                dir_table = gr.Dataframe(
+                    label="Directory Management",
+                    headers=["Path", "Item Count"],
+                    datatype=["str", "str"],
+                    interactive=False,
+                )
+                with gr.Row():
+                    update_btn = gr.Button("Update selected", variant="secondary")
+                    delete_btn = gr.Button("Delete selected", variant="stop")
+                delete_confirm = gr.Column(visible=False)
+                with delete_confirm:
+                    gr.Markdown("⚠️ **This will remove all indexed data for this path. Continue?**")
+                    with gr.Row():
+                        confirm_delete_btn = gr.Button("Confirm Delete", variant="stop")
+                        cancel_delete_btn = gr.Button("Cancel", variant="secondary")
+
                 progress_log = gr.Textbox(
                     label="Progress",
                     lines=10,
                     interactive=False,
-                    placeholder="Click Scan & Index to start…",
+                    placeholder="Add a directory and click Add & Scan, or select a row and Update/Delete.",
                 )
                 clear_btn = gr.Button("Clear Database", variant="secondary")
-                scan_btn.click(
-                    fn=scan_and_index,
-                    inputs=[path_in],
-                    outputs=[progress_log, status],
+
+                def on_dir_row_select(evt: gr.SelectData, paths: list[str]) -> str:
+                    if not paths or evt.index is None:
+                        return ""
+                    idx = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+                    if 0 <= idx < len(paths):
+                        return paths[idx]
+                    return ""
+
+                dir_table.select(
+                    fn=on_dir_row_select,
+                    inputs=[lib_dir_paths],
+                    outputs=[lib_selected_path],
                 )
+
+                add_scan_btn.click(
+                    fn=add_and_scan,
+                    inputs=[path_in],
+                    outputs=[progress_log, status, dir_table, lib_dir_paths],
+                )
+
+                update_btn.click(
+                    fn=update_directory,
+                    inputs=[lib_selected_path],
+                    outputs=[progress_log, status, dir_table, lib_dir_paths],
+                )
+
+                def show_delete_confirm(path: str) -> bool:
+                    return bool(path and path.strip())
+
+                delete_btn.click(
+                    fn=show_delete_confirm,
+                    inputs=[lib_selected_path],
+                    outputs=[delete_confirm],
+                )
+
+                def hide_delete_confirm() -> bool:
+                    return False
+
+                cancel_delete_btn.click(
+                    fn=hide_delete_confirm,
+                    inputs=None,
+                    outputs=[delete_confirm],
+                )
+
+                confirm_delete_btn.click(
+                    fn=remove_directory,
+                    inputs=[lib_selected_path],
+                    outputs=[progress_log, status, dir_table, lib_dir_paths],
+                ).then(
+                    fn=hide_delete_confirm,
+                    inputs=None,
+                    outputs=[delete_confirm],
+                )
+
+                reindex_all_btn.click(
+                    fn=reindex_all,
+                    inputs=None,
+                    outputs=[progress_log, status, dir_table, lib_dir_paths],
+                )
+
                 clear_btn.click(
                     fn=clear_database,
                     inputs=None,
-                    outputs=[progress_log, status],
+                    outputs=[progress_log, status, dir_table, lib_dir_paths],
                 )
 
             # Tab 4: Catalog Browser (diagnostic)
@@ -503,19 +680,23 @@ def build_ui() -> gr.Blocks:
         # Eager-load CLIP in the main thread so Metal/MLX init happens before Gradio workers run.
         # If you run the app from a context where Metal isn't available, the first search will
         # show the full error (including "Original error: ..." from mediasearch).
-        def load_model_and_status() -> tuple[str, str, list[list[str | None]], list[dict[str, object]]]:
+        def load_model_and_status() -> tuple[
+            str, str, list[list[str | None]], list[dict[str, object]],
+            list[list[str | None]], list[str],
+        ]:
             try:
                 _embedder_instance().get_text_embedding("warmup")
             except Exception:
                 pass  # First search will show the error; status still updates
             stats = catalog_stats_load()
             df_data, assets = catalog_direct_load()
-            return get_status_text(), stats, df_data, assets
+            lib_df, lib_paths = library_load_directories()
+            return get_status_text(), stats, df_data, assets, lib_df, lib_paths
 
         demo.load(
             fn=load_model_and_status,
             inputs=None,
-            outputs=[status, catalog_stats, catalog_df, catalog_direct_assets],
+            outputs=[status, catalog_stats, catalog_df, catalog_direct_assets, dir_table, lib_dir_paths],
         )
 
     return demo
