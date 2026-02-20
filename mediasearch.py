@@ -40,19 +40,22 @@ _embedder_processor: object | None = None
 
 
 def _get_clip_model() -> tuple[object, object]:
-    """Load CLIP model and processor via mlx_embeddings (cached per process). Returns (model, processor)."""
+    """Load CLIP model and processor (cached per process). Returns (model, processor)."""
     global _embedder_model, _embedder_processor
     if _embedder_model is not None:
         return _embedder_model, _embedder_processor
     print("[INFO] Downloading CLIP model weights (first run only)...", flush=True)
     try:
-        from mlx_embeddings.utils import load
-        _embedder_model, _embedder_processor = load(CLIP_MODEL_NAME)
+        # mlx-community/clip-vit-base-patch32 uses weights.npz and is not supported by
+        # mlx_embeddings (no "clip" model type). Load via our mlx-examples-style loader.
+        from _clip_mlx import load_clip_from_hf
+        _embedder_model, _embedder_processor = load_clip_from_hf(CLIP_MODEL_NAME)
         return _embedder_model, _embedder_processor
     except Exception as e:
         raise RuntimeError(
             f"Failed to load CLIP model {CLIP_MODEL_NAME}. "
-            "Requires mlx-embeddings and Apple Silicon with Metal."
+            "Requires Apple Silicon with Metal. "
+            f"Original error: {e}"
         ) from e
 
 # Default database path (project-local).
@@ -180,6 +183,17 @@ class MediaDatabase:
         self._conn.row_factory = sqlite3.Row
         return self._conn
 
+    def _fresh_connection(self) -> sqlite3.Connection:
+        """Open a new connection with sqlite_vec. Use for thread-safe reads from worker threads."""
+        if self._injected_conn or str(self.db_path) == ":memory:":
+            return self.connect()
+        conn = sqlite3.connect(str(self.db_path))
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
     def close(self) -> None:
         """Close the database connection. No-op when using from_connection (caller owns conn)."""
         if self._injected_conn:
@@ -306,6 +320,30 @@ class MediaDatabase:
             (path,),
         ).fetchone()
 
+    def fetch_asset_rows_by_ids(
+        self, pairs: list[tuple[int, float]]
+    ) -> list[tuple[sqlite3.Row | None, float]]:
+        """
+        Fetch asset rows (path, hash, type, capture_date, lat, lon) for given (asset_id, distance) pairs.
+        Uses a fresh connection for thread safety when called from Gradio workers.
+        Returns list of (row, distance) where row is None if asset not found.
+        """
+        if not pairs:
+            return []
+        conn = self._fresh_connection()
+        try:
+            result: list[tuple[sqlite3.Row | None, float]] = []
+            for asset_id, distance in pairs:
+                row = conn.execute(
+                    "SELECT path, hash, type, capture_date, lat, lon FROM assets WHERE id = ?",
+                    (asset_id,),
+                ).fetchone()
+                result.append((row, distance))
+            return result
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
+
     def set_embedding(self, asset_id: int, embedding: list[float]) -> None:
         """Store or replace the embedding for an asset (length must be EMBEDDING_DIM)."""
         if len(embedding) != EMBEDDING_DIM:
@@ -340,16 +378,21 @@ class MediaDatabase:
     def search(self, query_embedding: list[float], k: int = 10) -> list[tuple[int, float]]:
         """
         KNN search. Returns list of (asset_id, distance) for the k nearest vectors.
+        Uses a fresh connection for thread safety when called from Gradio workers.
         """
         if len(query_embedding) != EMBEDDING_DIM:
             raise ValueError(f"embedding length must be {EMBEDDING_DIM}, got {len(query_embedding)}")
-        conn = self.connect()
-        blob = sqlite_vec.serialize_float32(query_embedding)
-        rows = conn.execute(
-            "SELECT asset_id, distance FROM vec_index WHERE embedding MATCH ? AND k = ?",
-            (blob, k),
-        ).fetchall()
-        return [(r["asset_id"], r["distance"]) for r in rows]
+        conn = self._fresh_connection()
+        try:
+            blob = sqlite_vec.serialize_float32(query_embedding)
+            rows = conn.execute(
+                "SELECT asset_id, distance FROM vec_index WHERE embedding MATCH ? AND k = ?",
+                (blob, k),
+            ).fetchall()
+            return [(r["asset_id"], r["distance"]) for r in rows]
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
 
     def delete_asset_by_path(self, path: str) -> None:
         """Remove asset and its embedding by path."""
@@ -550,8 +593,10 @@ class ImageEmbedder:
             raise FileNotFoundError(str(path))
         model, proc = self._model_and_processor
         image = Image.open(path).convert("RGB")
-        inputs = proc(images=image, return_tensors="pt", padding=True)
-        pv = inputs["pixel_values"].numpy().transpose(0, 2, 3, 1)
+        inputs = proc(images=image, return_tensors="np", padding=True)
+        pv = inputs["pixel_values"]
+        if len(pv.shape) == 4 and pv.shape[1] == 3:
+            pv = pv.transpose(0, 2, 3, 1)
         pixel_values = mx.array(pv).astype(mx.float32)
         if hasattr(model, "get_image_features"):
             out = model.get_image_features(pixel_values=pixel_values)
@@ -576,8 +621,10 @@ class ImageEmbedder:
             if not path.is_file():
                 raise FileNotFoundError(str(path))
             images.append(Image.open(path).convert("RGB"))
-        inputs = proc(images=images, return_tensors="pt", padding=True)
-        pv = inputs["pixel_values"].numpy().transpose(0, 2, 3, 1)
+        inputs = proc(images=images, return_tensors="np", padding=True)
+        pv = inputs["pixel_values"]
+        if len(pv.shape) == 4 and pv.shape[1] == 3:
+            pv = pv.transpose(0, 2, 3, 1)
         pixel_values = mx.array(pv).astype(mx.float32)
         if hasattr(model, "get_image_features"):
             out = model.get_image_features(pixel_values=pixel_values)
@@ -590,8 +637,8 @@ class ImageEmbedder:
         """Return a 512-dim embedding vector for the text query."""
         import mlx.core as mx
         model, proc = self._model_and_processor
-        inputs = proc(text=[text_query], return_tensors="pt", padding=True, truncation=True)
-        input_ids = mx.array(inputs["input_ids"].numpy())
+        inputs = proc(text=[text_query], return_tensors="np", padding=True, truncation=True)
+        input_ids = mx.array(inputs["input_ids"])
         if hasattr(model, "get_text_features"):
             out = model.get_text_features(input_ids=input_ids)
         else:

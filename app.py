@@ -76,14 +76,11 @@ def _search_results_to_gallery(
     k: int = 20,
 ) -> tuple[list[tuple[str | Path, str]], list[ResultMeta]]:
     """Convert search (asset_id, distance) list to gallery items and metadata for click-to-reveal."""
-    conn = db.connect()
+    pairs = results[:k]
+    rows_with_dist = db.fetch_asset_rows_by_ids(pairs)
     gallery: list[tuple[str | Path, str]] = []
     meta_list: list[ResultMeta] = []
-    for asset_id, distance in results[:k]:
-        row = conn.execute(
-            "SELECT path, hash, type, capture_date, lat, lon FROM assets WHERE id = ?",
-            (asset_id,),
-        ).fetchone()
+    for (row, distance) in rows_with_dist:
         if not row:
             continue
         path_str = row["path"]
@@ -301,8 +298,17 @@ def build_ui() -> gr.Blocks:
                     outputs=[progress_log, status],
                 )
 
-        # Refresh status when app loads
-        demo.load(fn=lambda: get_status_text(), inputs=None, outputs=[status])
+        # Eager-load CLIP in the main thread so Metal/MLX init happens before Gradio workers run.
+        # If you run the app from a context where Metal isn't available, the first search will
+        # show the full error (including "Original error: ..." from mediasearch).
+        def load_model_and_status() -> str:
+            try:
+                _embedder_instance().get_text_embedding("warmup")
+            except Exception:
+                pass  # First search will show the error; status still updates
+            return get_status_text()
+
+        demo.load(fn=load_model_and_status, inputs=None, outputs=[status])
 
     return demo
 

@@ -25,3 +25,6 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "integration: opt-in tests that need network (e.g. MEDIASEARCH_TEST_CLIP_LOAD=1).",
+]
