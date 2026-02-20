@@ -18,6 +18,7 @@ except ImportError:
 from mediasearch import (
     EMBEDDING_DIM,
     FileCrawler,
+    ImageEmbedder,
     MediaDatabase,
     MEDIA_EXTENSIONS,
     SPARSE_HASH_CHUNK_BYTES,
@@ -359,6 +360,35 @@ def test_rebuild_schema_drops_and_recreates_tables(db_conn: sqlite3.Connection, 
     assert r is not None
 
 
+def test_batch_save_embeddings_stores_and_searchable(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    """batch_save_embeddings persists multiple embeddings in one transaction; all are searchable."""
+    db = MediaDatabase.from_connection(db_conn)
+    a1 = db.upsert_asset("/p1.jpg", "h1", 1000.0, "IMAGE")
+    a2 = db.upsert_asset("/p2.jpg", "h2", 2000.0, "IMAGE")
+    vec1 = [0.1] * EMBEDDING_DIM
+    vec2 = [0.2] * EMBEDDING_DIM
+    db.batch_save_embeddings([(a1, vec1), (a2, vec2)])
+    results1 = db.search(vec1, k=5)
+    results2 = db.search(vec2, k=5)
+    assert any(r[0] == a1 for r in results1)
+    assert any(r[0] == a2 for r in results2)
+
+
+def test_batch_save_embeddings_empty_no_op(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    """batch_save_embeddings with empty list is a no-op."""
+    db = MediaDatabase.from_connection(db_conn)
+    db.batch_save_embeddings([])
+    assert db_conn.execute("SELECT COUNT(*) FROM vec_index").fetchone()[0] == 0
+
+
+def test_batch_save_embeddings_wrong_length_raises(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    """batch_save_embeddings raises ValueError if any embedding has wrong length."""
+    db = MediaDatabase.from_connection(db_conn)
+    aid = db.upsert_asset("/p.jpg", "h", 1000.0, "IMAGE")
+    with pytest.raises(ValueError, match=f"embedding length must be {EMBEDDING_DIM}"):
+        db.batch_save_embeddings([(aid, [0.1] * (EMBEDDING_DIM - 1))])
+
+
 # ---- MediaDatabase: optional columns ----
 def test_upsert_asset_optional_capture_date_lat_lon(db_conn: sqlite3.Connection, clear_db: None) -> None:
     db = MediaDatabase.from_connection(db_conn)
@@ -406,7 +436,7 @@ def test_ensure_thumbnail_returns_existing_path(tmp_path: Path) -> None:
 
 
 def test_ensure_thumbnail_creates_file_when_ffmpeg_succeeds(tmp_path: Path) -> None:
-    """When thumbnail missing, ffmpeg runs and creates the file."""
+    """When thumbnail missing, ffmpeg runs with VideoToolbox and creates the file."""
     thumb_dir = tmp_path / "thumbs"
     thumb_dir.mkdir()
     t = VideoThumbnailer(thumb_dir=thumb_dir)
@@ -422,6 +452,9 @@ def test_ensure_thumbnail_creates_file_when_ffmpeg_succeeds(tmp_path: Path) -> N
         result = t.ensure_thumbnail(video, "hash99")
     assert result == out_path
     assert out_path.exists()
+    mock_input.assert_called_once()
+    call_kwargs = mock_input.call_args[1]
+    assert call_kwargs.get("hwaccel") == "videotoolbox"
 
 
 def test_ensure_thumbnail_raises_on_ffmpeg_error(tmp_path: Path) -> None:
@@ -452,6 +485,16 @@ def test_ensure_thumbnail_raises_when_ffmpeg_module_is_none(tmp_path: Path) -> N
     with patch("mediasearch.ffmpeg", None):
         with pytest.raises(RuntimeError, match="ffmpeg-python is not installed"):
             t.ensure_thumbnail(video, "y")
+
+
+# ---- ImageEmbedder: batch and lazy load ----
+def test_get_image_embeddings_batch_empty_returns_empty_without_loading() -> None:
+    """get_image_embeddings_batch([]) returns [] and does not load the model."""
+    embedder = ImageEmbedder()
+    with patch("mediasearch._get_clip_model") as mock_load:
+        result = embedder.get_image_embeddings_batch([])
+    assert result == []
+    mock_load.assert_not_called()
 
 
 # ---- _progress_bar ----

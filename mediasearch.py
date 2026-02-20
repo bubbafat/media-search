@@ -35,11 +35,12 @@ except ImportError:
 
 # MLX-CLIP for visual search (optional; requires Apple Silicon with Metal).
 CLIP_MODEL_NAME = "mlx-community/clip-vit-base-patch32"
-_embedder_model: object = None
-_embedder_processor: object = None
+_embedder_model: object | None = None
+_embedder_processor: object | None = None
+
 
 def _get_clip_model() -> tuple[object, object]:
-    """Lazy-load CLIP model and processor via mlx_embeddings. Returns (model, processor)."""
+    """Load CLIP model and processor via mlx_embeddings (cached per process). Returns (model, processor)."""
     global _embedder_model, _embedder_processor
     if _embedder_model is not None:
         return _embedder_model, _embedder_processor
@@ -82,6 +83,9 @@ SPARSE_HASH_CHUNK_BYTES = 1024 * 1024  # 1 MB
 
 # Batch size for bulk asset inserts (reduces disk I/O).
 BATCH_UPSERT_SIZE = 100
+
+# Batch size for embedding (GPU throughput on M4).
+EMBED_BATCH_SIZE = 32
 
 
 def _dms_to_decimal(d: float, m: float, s: float, hem: str) -> float:
@@ -313,6 +317,21 @@ class MediaDatabase:
         )
         conn.commit()
 
+    def batch_save_embeddings(self, pairs: list[tuple[int, list[float]]]) -> None:
+        """Insert or replace embeddings for multiple assets in a single transaction."""
+        if not pairs:
+            return
+        conn = self.connect()
+        for asset_id, embedding in pairs:
+            if len(embedding) != EMBEDDING_DIM:
+                raise ValueError(f"embedding length must be {EMBEDDING_DIM}, got {len(embedding)}")
+            blob = sqlite_vec.serialize_float32(embedding)
+            conn.execute(
+                "INSERT OR REPLACE INTO vec_index (asset_id, embedding) VALUES (?, ?)",
+                (asset_id, blob),
+            )
+        conn.commit()
+
     def save_embedding(self, asset_id: int, vector: list[float]) -> None:
         """Insert or replace the embedding for an asset using sqlite_vec.serialize_float32."""
         self.set_embedding(asset_id, vector)
@@ -475,7 +494,11 @@ class VideoThumbnailer:
             raise RuntimeError("ffmpeg-python is not installed")
         try:
             (
-                ffmpeg.input(str(video_path), ss=THUMB_TIME_SEC)
+                ffmpeg.input(
+                    str(video_path),
+                    hwaccel="videotoolbox",
+                    ss=THUMB_TIME_SEC,
+                )
                 .filter("scale", THUMB_SIZE, THUMB_SIZE)
                 .output(str(out_path), vframes=1)
                 .overwrite_output()
@@ -500,6 +523,7 @@ class ImageEmbedder:
     """
     MLX-CLIP embedder for image and text. Uses mlx-community/clip-vit-base-patch32
     (via mlx_embeddings) to produce 512-dim vectors for visual search.
+    Model is loaded lazily on first use (get_image_embedding or get_text_embedding).
     """
 
     def __init__(self, model_name: str = CLIP_MODEL_NAME) -> None:
@@ -507,20 +531,22 @@ class ImageEmbedder:
         self._model: object | None = None
         self._processor: object | None = None
 
-    def _ensure_loaded(self) -> None:
+    @property
+    def _model_and_processor(self) -> tuple[object, object]:
+        """Load model and processor on first access (lazy); cached for the process."""
         if self._model is None:
             self._model, self._processor = _get_clip_model()
+        return self._model, self._processor
 
     def get_image_embedding(self, image_path: Path | str) -> list[float]:
         """Return a 512-dim embedding vector for the image at image_path."""
         import mlx.core as mx
         from PIL import Image
-        self._ensure_loaded()
         path = Path(image_path)
         if not path.is_file():
             raise FileNotFoundError(str(path))
+        model, proc = self._model_and_processor
         image = Image.open(path).convert("RGB")
-        proc, model = self._processor, self._model
         inputs = proc(images=image, return_tensors="pt", padding=True)
         pv = inputs["pixel_values"].numpy().transpose(0, 2, 3, 1)
         pixel_values = mx.array(pv).astype(mx.float32)
@@ -532,11 +558,35 @@ class ImageEmbedder:
         vec = out[0] if hasattr(out, "__getitem__") else out
         return _mlx_array_to_list(vec)
 
+    def get_image_embeddings_batch(
+        self, image_paths: list[Path | str]
+    ) -> list[list[float]]:
+        """Return 512-dim embedding vectors for a batch of images (GPU-efficient)."""
+        if not image_paths:
+            return []
+        import mlx.core as mx
+        from PIL import Image
+        model, proc = self._model_and_processor
+        images = []
+        for p in image_paths:
+            path = Path(p)
+            if not path.is_file():
+                raise FileNotFoundError(str(path))
+            images.append(Image.open(path).convert("RGB"))
+        inputs = proc(images=images, return_tensors="pt", padding=True)
+        pv = inputs["pixel_values"].numpy().transpose(0, 2, 3, 1)
+        pixel_values = mx.array(pv).astype(mx.float32)
+        if hasattr(model, "get_image_features"):
+            out = model.get_image_features(pixel_values=pixel_values)
+        else:
+            out = model(pixel_values=pixel_values)
+            out = getattr(out, "image_embeds", getattr(out, "last_hidden_state", out))
+        return [_mlx_array_to_list(out[i]) for i in range(len(images))]
+
     def get_text_embedding(self, text_query: str) -> list[float]:
         """Return a 512-dim embedding vector for the text query."""
         import mlx.core as mx
-        self._ensure_loaded()
-        proc, model = self._processor, self._model
+        model, proc = self._model_and_processor
         inputs = proc(text=[text_query], return_tensors="pt", padding=True, truncation=True)
         input_ids = mx.array(inputs["input_ids"].numpy())
         if hasattr(model, "get_text_features"):
@@ -602,8 +652,9 @@ def run_rebuild(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
         db.batch_upsert_assets(batch)
     logger.info("")
 
-    # Embed: images/RAW use file path; videos use thumbnail path
-    for j, (str_path, file_hash, asset_type) in enumerate(to_embed, start=1):
+    # Embed in batches: images/RAW use file path; videos use thumbnail path
+    to_embed_with_id: list[tuple[int, Path]] = []
+    for str_path, file_hash, asset_type in to_embed:
         try:
             row = db.get_asset_by_path(str_path)
             if not row:
@@ -614,12 +665,20 @@ def run_rebuild(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
                     continue
             else:
                 image_path = Path(str_path)
-            vec = embedder.get_image_embedding(image_path)
-            db.save_embedding(row["id"], vec)
+            to_embed_with_id.append((row["id"], image_path))
         except Exception as e:
             logger.debug("Embed skip %s: %s", str_path, e)
-        if j % 50 == 0 or j == len(to_embed):
-            logger.info("\rEmbedding... [%d/%d]", j, len(to_embed))
+
+    for start in range(0, len(to_embed_with_id), EMBED_BATCH_SIZE):
+        batch = to_embed_with_id[start : start + EMBED_BATCH_SIZE]
+        try:
+            paths = [p for _, p in batch]
+            vecs = embedder.get_image_embeddings_batch(paths)
+            db.batch_save_embeddings([(aid, vec) for (aid, _), vec in zip(batch, vecs)])
+        except Exception as e:
+            logger.debug("Embed batch skip: %s", e)
+        j = min(start + EMBED_BATCH_SIZE, len(to_embed_with_id))
+        logger.info("\rEmbedding... [%d/%d]", j, len(to_embed_with_id))
     logger.info("")
     logger.info("Rebuild complete. %d assets indexed.", total)
 
@@ -672,8 +731,9 @@ def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
     if batch:
         db.batch_upsert_assets(batch)
 
-    # Embed new/updated assets
-    for j, (str_path, file_hash, asset_type) in enumerate(to_embed, start=1):
+    # Embed new/updated assets in batches
+    to_embed_with_id = []
+    for str_path, file_hash, asset_type in to_embed:
         try:
             row = db.get_asset_by_path(str_path)
             if not row:
@@ -684,13 +744,21 @@ def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
                     continue
             else:
                 image_path = Path(str_path)
-            vec = embedder.get_image_embedding(image_path)
-            db.save_embedding(row["id"], vec)
+            to_embed_with_id.append((row["id"], image_path))
         except Exception as e:
             logger.debug("Embed skip %s: %s", str_path, e)
-        if j % 50 == 0 or j == len(to_embed):
-            logger.info("\rEmbedding... [%d/%d]", j, len(to_embed))
-    if to_embed:
+
+    for start in range(0, len(to_embed_with_id), EMBED_BATCH_SIZE):
+        batch = to_embed_with_id[start : start + EMBED_BATCH_SIZE]
+        try:
+            paths = [p for _, p in batch]
+            vecs = embedder.get_image_embeddings_batch(paths)
+            db.batch_save_embeddings([(aid, vec) for (aid, _), vec in zip(batch, vecs)])
+        except Exception as e:
+            logger.debug("Embed batch skip: %s", e)
+        j = min(start + EMBED_BATCH_SIZE, len(to_embed_with_id))
+        logger.info("\rEmbedding... [%d/%d]", j, len(to_embed_with_id))
+    if to_embed_with_id:
         logger.info("")
 
     # Remove assets whose paths no longer exist on disk
