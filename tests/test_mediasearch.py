@@ -21,12 +21,14 @@ from mediasearch import (
     ImageEmbedder,
     MediaDatabase,
     MEDIA_EXTENSIONS,
+    RawThumbnailer,
     SPARSE_HASH_CHUNK_BYTES,
     SPARSE_HASH_THRESHOLD_BYTES,
     VideoThumbnailer,
     get_metadata,
     main,
     run_query,
+    run_rebuild_with_progress,
     run_update,
 )
 from mediasearch import (
@@ -337,6 +339,56 @@ def test_get_vec_index_count(db_conn: sqlite3.Connection, clear_db: None) -> Non
     assert db.get_vec_index_count() == 1
 
 
+def test_get_assets_count(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    assert db.get_assets_count() == 0
+    db.batch_upsert_assets([
+        ("/a.jpg", "h1", 1000.0, "IMAGE", "2024-01-01", None, None),
+        ("/b.mp4", "h2", 2000.0, "VIDEO", None, None, None),
+    ])
+    assert db.get_assets_count() == 2
+
+
+def test_get_assets_with_id_returns_last_n_with_id(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.batch_upsert_assets([
+        ("/a.jpg", "h1", 1000.0, "IMAGE", "2024-01-01", None, None),
+        ("/b.mp4", "h2", 2000.0, "VIDEO", None, None, None),
+        ("/c.arw", "h3", 3000.0, "RAW", "2024-02-15", None, None),
+    ])
+    assets = db.get_assets_with_id(limit=10)
+    assert len(assets) == 3
+    assert all("id" in a and "path" in a and "type" in a and "capture_date" in a and "hash" in a for a in assets)
+    # Order by id DESC: newest first
+    assert assets[0]["path"] == "/c.arw" and assets[0]["type"] == "RAW"
+    assert assets[1]["path"] == "/b.mp4"
+    assert assets[2]["path"] == "/a.jpg" and assets[2]["capture_date"] == "2024-01-01"
+
+
+def test_get_assets_for_thumb_check_returns_only_video_raw(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.batch_upsert_assets([
+        ("/a.jpg", "h1", 1000.0, "IMAGE", None, None, None),
+        ("/b.mp4", "h2", 2000.0, "VIDEO", None, None, None),
+        ("/c.arw", "h3", 3000.0, "RAW", None, None, None),
+    ])
+    assets = db.get_assets_for_thumb_check(limit=500)
+    assert len(assets) == 2
+    types = {a["type"] for a in assets}
+    assert types == {"VIDEO", "RAW"}
+
+
+def test_get_first_paths_returns_by_id_asc(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.batch_upsert_assets([
+        ("/first.jpg", "h1", 1000.0, "IMAGE", None, None, None),
+        ("/second.mp4", "h2", 2000.0, "VIDEO", None, None, None),
+        ("/third.arw", "h3", 3000.0, "RAW", None, None, None),
+    ])
+    paths = db.get_first_paths(limit=2)
+    assert paths == ["/first.jpg", "/second.mp4"]
+
+
 # ---- MediaDatabase: delete_asset_by_path ----
 def test_delete_asset_by_path_removes_asset_and_embedding(db_conn: sqlite3.Connection, clear_db: None) -> None:
     db = MediaDatabase.from_connection(db_conn)
@@ -513,6 +565,71 @@ def test_ensure_thumbnail_raises_runtime_error_on_corrupt_or_other_failure(tmp_p
     assert "Invalid data" in str(exc_info.value) or "OSError" in str(exc_info.value)
 
 
+def test_raw_thumbnailer_thumbnail_path(tmp_path: Path) -> None:
+    thumb_dir = tmp_path / "raw_thumbs"
+    t = RawThumbnailer(thumb_dir=thumb_dir)
+    p = t.thumbnail_path("abc123def")
+    assert p == thumb_dir / "abc123def.jpg"
+    assert p.parent == thumb_dir
+
+
+def test_raw_thumbnailer_init_creates_dir(tmp_path: Path) -> None:
+    thumb_dir = tmp_path / "raw" / "nested"
+    assert not thumb_dir.exists()
+    RawThumbnailer(thumb_dir=thumb_dir)
+    assert thumb_dir.is_dir()
+
+
+def test_raw_thumbnailer_ensure_thumbnail_returns_existing(tmp_path: Path) -> None:
+    """When preview file already exists, return it without calling exiftool."""
+    thumb_dir = tmp_path / "raw"
+    thumb_dir.mkdir()
+    existing = thumb_dir / "hash123.jpg"
+    existing.write_bytes(b"fake jpeg content")
+    t = RawThumbnailer(thumb_dir=thumb_dir)
+    raw_path = tmp_path / "photo.arw"
+    raw_path.write_bytes(b"raw")
+    with patch("subprocess.run") as mock_run:
+        result = t.ensure_thumbnail(raw_path, "hash123")
+    assert result == existing
+    mock_run.assert_not_called()
+
+
+def test_raw_thumbnailer_ensure_thumbnail_extracts_via_exiftool(tmp_path: Path) -> None:
+    """When preview missing, exiftool subprocess extracts and saves JPEG."""
+    thumb_dir = tmp_path / "raw"
+    thumb_dir.mkdir()
+    t = RawThumbnailer(thumb_dir=thumb_dir)
+    raw_path = tmp_path / "photo.arw"
+    raw_path.write_bytes(b"raw")
+
+    fake_jpeg = b"\xff\xd8\xff" + b"x" * 200  # minimal valid-looking output
+    mock_result = type("Result", (), {"returncode": 0, "stdout": fake_jpeg})()
+
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        result = t.ensure_thumbnail(raw_path, "hash456")
+    assert result is not None
+    assert result == thumb_dir / "hash456.jpg"
+    assert result.read_bytes() == fake_jpeg
+    mock_run.assert_called()
+    call_args = mock_run.call_args[0][0]
+    assert "-JpgFromRaw" in " ".join(str(x) for x in call_args) or "-PreviewImage" in " ".join(str(x) for x in call_args)
+
+
+def test_raw_thumbnailer_ensure_thumbnail_returns_none_when_extraction_fails(tmp_path: Path) -> None:
+    """When exiftool returns no usable output, return None."""
+    thumb_dir = tmp_path / "raw"
+    thumb_dir.mkdir()
+    t = RawThumbnailer(thumb_dir=thumb_dir)
+    raw_path = tmp_path / "photo.arw"
+    raw_path.write_bytes(b"raw")
+
+    mock_result = type("Result", (), {"returncode": 1, "stdout": b""})()
+    with patch("subprocess.run", return_value=mock_result):
+        result = t.ensure_thumbnail(raw_path, "hash789")
+    assert result is None
+
+
 def test_ensure_thumbnail_raises_when_ffmpeg_module_is_none(tmp_path: Path) -> None:
     """When ffmpeg-python is not installed, raise RuntimeError."""
     thumb_dir = tmp_path / "thumbs"
@@ -633,6 +750,56 @@ def test_cli_db_and_verbose_accepted(tmp_path: Path) -> None:
 
 
 # ---- run_update: stale asset removal ----
+def test_run_rebuild_with_progress_is_incremental_does_not_wipe_existing(
+    tmp_path: Path, db_conn: sqlite3.Connection
+) -> None:
+    """run_rebuild_with_progress uses init_schema (merge), not rebuild_schema (wipe)."""
+    from unittest.mock import MagicMock
+
+    # Use file-based DB so run_rebuild_with_progress can create its own connection
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.enable_load_extension(True)
+    import sqlite_vec
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY, path TEXT UNIQUE, hash TEXT, mtime REAL, type TEXT, capture_date TEXT, lat REAL, lon REAL);
+        CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
+    """)
+    row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
+    if row is None:
+        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[512])")
+    conn.commit()
+    # Pre-insert an asset (simulating prior scan)
+    conn.execute(
+        "INSERT INTO assets (path, hash, mtime, type, capture_date, lat, lon) VALUES (?,?,?,?,?,?,?)",
+        ("/pre-existing.jpg", "prehash", 1000.0, "IMAGE", None, None, None),
+    )
+    conn.commit()
+    conn.close()
+
+    (tmp_path / "new.jpg").write_bytes(b"\xff\xd8\xff")
+    mock_embedder = MagicMock()
+    mock_embedder.get_image_embeddings_batch.return_value = [[0.1] * EMBEDDING_DIM]
+
+    with (
+        patch("mediasearch.DEFAULT_DB_PATH", db_path),
+        patch("mediasearch.ImageEmbedder", return_value=mock_embedder),
+    ):
+        db = MediaDatabase(db_path)
+        db.init_schema()
+        msgs = list(run_rebuild_with_progress(db, tmp_path))
+
+    assert "Initializing" in msgs[0] or "Found" in str(msgs)
+    # Pre-existing asset must still exist (incremental merge, not wipe)
+    db2 = MediaDatabase(db_path)
+    db2.init_schema()
+    row = db2.get_asset_by_path("/pre-existing.jpg")
+    assert row is not None, "run_rebuild_with_progress must not wipe existing assets (init_schema, not rebuild_schema)"
+
+
 def test_run_update_removes_assets_no_longer_on_disk(
     db_conn: sqlite3.Connection, clear_db: None, tmp_path: Path
 ) -> None:

@@ -314,6 +314,16 @@ class MediaDatabase:
         )
         conn.commit()
 
+    def get_assets_count(self) -> int:
+        """Return COUNT(*) FROM assets. Thread-safe."""
+        conn = self._fresh_connection()
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM assets").fetchone()
+            return row[0] if row else 0
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
+
     def get_all_assets(self, limit: int = 50) -> list[dict[str, object]]:
         """Return last N assets (path, type, capture_date, hash). Thread-safe for Gradio workers."""
         conn = self._fresh_connection()
@@ -331,6 +341,54 @@ class MediaDatabase:
                 }
                 for r in rows
             ]
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
+
+    def get_assets_with_id(self, limit: int = 100) -> list[dict[str, object]]:
+        """Return last N assets (id, path, type, capture_date) for Direct View. Thread-safe."""
+        conn = self._fresh_connection()
+        try:
+            rows = conn.execute(
+                "SELECT id, path, type, capture_date, hash FROM assets ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [
+                {
+                    "id": r["id"],
+                    "path": r["path"],
+                    "type": r["type"],
+                    "capture_date": r["capture_date"],
+                    "hash": r["hash"],
+                }
+                for r in rows
+            ]
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
+
+    def get_assets_for_thumb_check(self, limit: int = 500) -> list[dict[str, object]]:
+        """Return VIDEO/RAW assets (path, hash, type) for missing-thumbnail audit. Thread-safe."""
+        conn = self._fresh_connection()
+        try:
+            rows = conn.execute(
+                "SELECT path, hash, type FROM assets WHERE type IN ('VIDEO', 'RAW') LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [{"path": r["path"], "hash": r["hash"], "type": r["type"]} for r in rows]
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
+
+    def get_first_paths(self, limit: int = 10) -> list[str]:
+        """Return first N asset paths (by id) for path validation. Thread-safe."""
+        conn = self._fresh_connection()
+        try:
+            rows = conn.execute(
+                "SELECT path FROM assets ORDER BY id ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [r["path"] for r in rows]
         finally:
             if not self._injected_conn and conn is not self._conn:
                 conn.close()

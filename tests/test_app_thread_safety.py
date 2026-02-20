@@ -100,21 +100,22 @@ def test_clear_database_thread_safe(tmp_path: Path) -> None:
     assert out[0] == "Database cleared."
 
 
-def test_catalog_browser_load_thread_safe(tmp_path: Path) -> None:
-    """catalog_browser_load must run without SQLite thread error when invoked from a worker."""
+def test_catalog_load_thread_safe(tmp_path: Path) -> None:
+    """catalog_stats_load and catalog_direct_load must run without SQLite thread error in a worker."""
     db_path = tmp_path / "test.db"
     _init_test_db(db_path)
     with patch("mediasearch.DEFAULT_DB_PATH", db_path), patch(
         "app.DEFAULT_DB_PATH", db_path
     ):
         import app
-        # Reset shared db so it uses our tmp path
         app._db = None
-        out, exc = _run_in_worker(app.catalog_browser_load)
-    assert exc is None, f"catalog_browser_load raised: {exc}"
-    df_data, gallery, debug, assets = out
+        stats_out, exc1 = _run_in_worker(app.catalog_stats_load)
+        direct_out, exc2 = _run_in_worker(app.catalog_direct_load)
+    assert exc1 is None, f"catalog_stats_load raised: {exc1}"
+    assert exc2 is None, f"catalog_direct_load raised: {exc2}"
+    assert isinstance(stats_out, str)
+    df_data, assets = direct_out
     assert isinstance(df_data, list)
-    assert "vec_index count" in debug
 
 
 def test_semantic_search_thread_safe(tmp_path: Path) -> None:
@@ -140,7 +141,7 @@ def test_semantic_search_thread_safe(tmp_path: Path) -> None:
         app._db = None
         out, exc = _run_in_worker(app.semantic_search, "test query")
     assert exc is None, f"semantic_search raised: {exc}"
-    gallery, meta, status = out
+    gallery, meta, status, score_view = out
     assert isinstance(gallery, list)
     assert "Found" in status or "No results" in status
 
@@ -170,8 +171,22 @@ def test_visual_similarity_thread_safe(tmp_path: Path) -> None:
         app._db = None
         out, exc = _run_in_worker(app.visual_similarity, str(img_path))
     assert exc is None, f"visual_similarity raised: {exc}"
-    gallery, meta, status = out
+    gallery, meta, status, score_view = out
     assert isinstance(gallery, list)
+
+
+def test_validate_paths_thread_safe(tmp_path: Path) -> None:
+    """validate_paths must run without SQLite thread error when invoked from a worker."""
+    db_path = tmp_path / "test.db"
+    _init_test_db(db_path)
+    with patch("mediasearch.DEFAULT_DB_PATH", db_path), patch(
+        "app.DEFAULT_DB_PATH", db_path
+    ):
+        import app
+        app._db = None
+        out, exc = _run_in_worker(app.validate_paths)
+    assert exc is None, f"validate_paths raised: {exc}"
+    assert isinstance(out, str)
 
 
 def test_scan_and_index_thread_safe(tmp_path: Path) -> None:
@@ -196,4 +211,4 @@ def test_scan_and_index_thread_safe(tmp_path: Path) -> None:
     assert exc is None, f"scan_and_index raised: {exc}"
     assert len(out) >= 1
     all_msgs = " ".join(str(m) for pair in out for m in (pair if isinstance(pair, (list, tuple)) else [pair]))
-    assert "Indexing" in all_msgs or "Rebuilding" in all_msgs or "Found" in all_msgs
+    assert "Indexing" in all_msgs or "Initializing" in all_msgs or "Found" in all_msgs
