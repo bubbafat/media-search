@@ -686,6 +686,86 @@ def run_rebuild(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
     logger.info("Rebuild complete. %d assets indexed.", total)
 
 
+def run_rebuild_with_progress(
+    db: MediaDatabase, path: Path
+) -> Iterator[str]:
+    """
+    Full scan and index with progress messages for UI.
+    Yields status strings: "Rebuilding schema...", "Scanning... N/M", "Embedding... N/M", "Done."
+    """
+    yield "Rebuilding schema..."
+    db.rebuild_schema()
+    crawler = FileCrawler(path)
+    files = list(crawler.crawl())
+    total = len(files)
+    thumbnailer = VideoThumbnailer()
+    embedder = ImageEmbedder()
+    yield f"Found {total} files. Indexing metadata and hashes..."
+
+    batch: list[AssetRow] = []
+    to_embed: list[tuple[str, str, str]] = []
+    for i, fp in enumerate(files, start=1):
+        try:
+            file_hash = crawler.get_hash(fp)
+            mtime = fp.stat().st_mtime
+            asset_type = FileCrawler.path_to_type(fp)
+            meta = get_metadata(fp)
+            batch.append((
+                str(fp),
+                file_hash,
+                mtime,
+                asset_type,
+                meta.get("capture_date") or None,
+                meta.get("lat"),
+                meta.get("lon"),
+            ))
+            to_embed.append((str(fp), file_hash, asset_type))
+            if asset_type == "VIDEO":
+                try:
+                    thumbnailer.ensure_thumbnail(fp, file_hash)
+                except Exception:
+                    pass
+            if len(batch) >= BATCH_UPSERT_SIZE:
+                db.batch_upsert_assets(batch)
+                batch.clear()
+            if i % 50 == 0 or i == total:
+                yield f"Indexing files... {i}/{total}"
+        except OSError:
+            pass
+    if batch:
+        db.batch_upsert_assets(batch)
+
+    to_embed_with_id: list[tuple[int, Path]] = []
+    for str_path, file_hash, asset_type in to_embed:
+        try:
+            row = db.get_asset_by_path(str_path)
+            if not row:
+                continue
+            if asset_type == "VIDEO":
+                image_path = thumbnailer.thumbnail_path(file_hash)
+                if not image_path.exists():
+                    continue
+            else:
+                image_path = Path(str_path)
+            to_embed_with_id.append((row["id"], image_path))
+        except Exception:
+            pass
+
+    n_embed = len(to_embed_with_id)
+    yield f"Computing MLX embeddings (batches of {EMBED_BATCH_SIZE})..."
+    for start in range(0, len(to_embed_with_id), EMBED_BATCH_SIZE):
+        batch = to_embed_with_id[start : start + EMBED_BATCH_SIZE]
+        try:
+            paths = [p for _, p in batch]
+            vecs = embedder.get_image_embeddings_batch(paths)
+            db.batch_save_embeddings([(aid, vec) for (aid, _), vec in zip(batch, vecs)])
+        except Exception:
+            pass
+        j = min(start + EMBED_BATCH_SIZE, n_embed)
+        yield f"Embedding... {j}/{n_embed}"
+    yield f"Done. {total} assets indexed."
+
+
 def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
     """Incremental scan: add/update assets, metadata, thumbnails, then embed new/changed with MLX-CLIP."""
     db.init_schema()
