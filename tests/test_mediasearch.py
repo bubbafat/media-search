@@ -29,6 +29,7 @@ from mediasearch import (
     get_metadata,
     main,
     run_fast_sync_with_progress,
+    run_prune_with_progress,
     run_query,
     run_rebuild_with_progress,
     run_update,
@@ -413,7 +414,22 @@ def test_get_directories_returns_item_count(db_conn: sqlite3.Connection, clear_d
     ])
     dirs = db.get_directories()
     assert len(dirs) == 1
-    assert dirs[0] == ("/Volumes/P", 2)
+    assert dirs[0][0] == "/Volumes/P"
+    assert dirs[0][1] == 2
+
+
+def test_update_directory_scan_stats(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    """update_directory_scan_stats sets last_scanned and last_scan_duration; get_directories returns them."""
+    db = MediaDatabase.from_connection(db_conn)
+    db.init_schema()
+    db.add_directory("/Volumes/Photos")
+    db.update_directory_scan_stats("/Volumes/Photos", 12.5)
+    dirs = db.get_directories()
+    assert len(dirs) == 1
+    path, count, last_scanned, last_duration = dirs[0]
+    assert path == "/Volumes/Photos"
+    assert last_scanned is not None
+    assert last_duration == 12.5
 
 
 def test_remove_directory_deletes_assets_and_vectors(db_conn: sqlite3.Connection, clear_db: None) -> None:
@@ -443,6 +459,16 @@ def test_delete_asset_by_path_nonexistent_no_op(db_conn: sqlite3.Connection, cle
     db = MediaDatabase.from_connection(db_conn)
     db.delete_asset_by_path("/nonexistent.jpg")
     assert db_conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
+
+
+def test_set_embedding_device() -> None:
+    """set_embedding_device clears model cache and sets _use_metal."""
+    from mediasearch import set_embedding_device
+
+    set_embedding_device(True)
+    set_embedding_device(False)
+    # After False, next model load would use CPU; we just verify no exception
+    set_embedding_device(True)
 
 
 def test_update_asset_mtime(db_conn: sqlite3.Connection, clear_db: None) -> None:
@@ -755,6 +781,11 @@ def test_init_schema_adds_missing_columns() -> None:
         row = conn.execute("PRAGMA table_info(assets)").fetchall()
         col_names = {r[1] for r in row}
         assert "capture_date" in col_names and "lat" in col_names and "lon" in col_names
+        # indexed_directories: last_scanned, last_scan_duration (created by init_schema)
+        idx_rows = conn.execute("PRAGMA table_info(indexed_directories)").fetchall()
+        if idx_rows:
+            idx_cols = {r[1] for r in idx_rows}
+            assert "last_scanned" in idx_cols and "last_scan_duration" in idx_cols
     finally:
         conn.close()
 
@@ -900,13 +931,37 @@ def test_run_fast_sync_processes_new_and_modified_counts(tmp_path: Path) -> None
     mock_embedder.get_image_embeddings_batch.return_value = [[0.1] * EMBEDDING_DIM] * 2
     with patch("mediasearch.ImageEmbedder", return_value=mock_embedder):
         msgs_with_counts = list(run_fast_sync_with_progress(db, tmp_path))
-    final_msg, final_counts = msgs_with_counts[-1]
+    final_msg, final_counts, _ = msgs_with_counts[-1]
     assert final_counts.total == 2
     assert final_counts.changed == 2
     assert final_counts.skipped == 0
     assert "Sync complete" in final_msg
     assert db.get_asset_by_path(str(tmp_path / "new.jpg")) is not None
     assert db.get_asset_by_path(str(tmp_path / "modified.jpg")) is not None
+
+
+def test_run_prune_with_progress_removes_ghost_entries(
+    tmp_path: Path, db_conn: sqlite3.Connection, clear_db: None
+) -> None:
+    """Prune removes assets whose files no longer exist on disk; yields (msg, pruned, progress)."""
+    db = MediaDatabase.from_connection(db_conn)
+    db.init_schema()
+    db.add_directory(str(tmp_path))
+    # Asset for file that exists
+    (tmp_path / "exists.jpg").write_bytes(b"\xff\xd8\xff")
+    db.upsert_asset(str(tmp_path / "exists.jpg"), "h1", 1000.0, "IMAGE")
+    # Asset for file that does not exist (ghost)
+    db.upsert_asset(str(tmp_path / "ghost.jpg"), "h2", 2000.0, "IMAGE")
+    assert db.get_asset_by_path(str(tmp_path / "ghost.jpg")) is not None
+
+    results = list(run_prune_with_progress(db, tmp_path))
+    assert len(results) >= 1
+    final_msg, pruned, progress = results[-1]
+    assert pruned == 1
+    assert progress == 1.0
+    assert "Prune complete" in final_msg
+    assert db.get_asset_by_path(str(tmp_path / "ghost.jpg")) is None
+    assert db.get_asset_by_path(str(tmp_path / "exists.jpg")) is not None
 
 
 # ---- run_update: stale asset removal ----
@@ -950,7 +1005,7 @@ def test_run_rebuild_with_progress_is_incremental_does_not_wipe_existing(
     ):
         db = MediaDatabase(db_path)
         db.init_schema()
-        msgs = list(run_rebuild_with_progress(db, tmp_path))
+        msgs = [m for m, _ in run_rebuild_with_progress(db, tmp_path)]
 
     assert "Initializing" in msgs[0] or "Found" in str(msgs)
     # Pre-existing asset must still exist (incremental merge, not wipe)

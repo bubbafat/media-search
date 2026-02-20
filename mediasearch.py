@@ -38,6 +38,15 @@ except ImportError:
 CLIP_MODEL_NAME = "mlx-community/clip-vit-base-patch32"
 _embedder_model: object | None = None
 _embedder_processor: object | None = None
+_use_metal: bool = True
+
+
+def set_embedding_device(use_metal: bool) -> None:
+    """Set whether to use Metal (GPU) for embeddings. Clears cached model; takes effect on next load."""
+    global _embedder_model, _embedder_processor, _use_metal
+    _use_metal = use_metal
+    _embedder_model = None
+    _embedder_processor = None
 
 
 def _get_clip_model() -> tuple[object, object]:
@@ -45,6 +54,9 @@ def _get_clip_model() -> tuple[object, object]:
     global _embedder_model, _embedder_processor
     if _embedder_model is not None:
         return _embedder_model, _embedder_processor
+    if not _use_metal:
+        import mlx.core as mx
+        mx.set_default_device(mx.cpu)
     print("[INFO] Downloading CLIP model weights (first run only)...", flush=True)
     try:
         # mlx-community/clip-vit-base-patch32 uses weights.npz and is not supported by
@@ -169,7 +181,7 @@ class MediaDatabase:
         """Open connection and enable vector extension. Idempotent."""
         if self._conn is not None:
             return self._conn
-        self._conn = sqlite3.connect(str(self.db_path), timeout=30)
+        self._conn = sqlite3.connect(str(self.db_path), timeout=30, check_same_thread=False)
         try:
             self._conn.enable_load_extension(True)
             sqlite_vec.load(self._conn)
@@ -189,7 +201,7 @@ class MediaDatabase:
         """Open a new connection with sqlite_vec. Use for thread-safe reads from worker threads."""
         if self._injected_conn or str(self.db_path) == ":memory:":
             return self.connect()
-        conn = sqlite3.connect(str(self.db_path), timeout=30)
+        conn = sqlite3.connect(str(self.db_path), timeout=30, check_same_thread=False)
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
@@ -251,9 +263,16 @@ class MediaDatabase:
             CREATE TABLE IF NOT EXISTS indexed_directories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path TEXT NOT NULL UNIQUE,
-                added_at REAL NOT NULL
+                added_at REAL NOT NULL,
+                last_scanned REAL,
+                last_scan_duration REAL
             );
         """)
+        # Migrate: add last_scanned, last_scan_duration if missing
+        dir_cols = {r[1] for r in conn.execute("PRAGMA table_info(indexed_directories)").fetchall()}
+        for col, typ in [("last_scanned", "REAL"), ("last_scan_duration", "REAL")]:
+            if col not in dir_cols:
+                conn.execute(f"ALTER TABLE indexed_directories ADD COLUMN {col} {typ}")
         conn.commit()
 
     def rebuild_schema(self) -> None:
@@ -523,17 +542,17 @@ class MediaDatabase:
         )
         conn.commit()
 
-    def get_directories(self) -> list[tuple[str, int]]:
+    def get_directories(self) -> list[tuple[str, int, float | None, float | None]]:
         """
-        Return list of (path, item_count) for each indexed directory.
-        Item count uses LIKE path||'%' on assets (paths under this root).
+        Return list of (path, item_count, last_scanned, last_scan_duration) for each indexed directory.
+        last_scanned: Unix timestamp or None. last_scan_duration: seconds or None.
         """
         conn = self._fresh_connection()
         try:
             rows = conn.execute(
-                "SELECT path FROM indexed_directories ORDER BY added_at ASC"
+                "SELECT path, last_scanned, last_scan_duration FROM indexed_directories ORDER BY added_at ASC"
             ).fetchall()
-            result: list[tuple[str, int]] = []
+            result: list[tuple[str, int, float | None, float | None]] = []
             for row in rows:
                 p = row["path"]
                 count_row = conn.execute(
@@ -541,11 +560,39 @@ class MediaDatabase:
                     (p + "%", p.rstrip("/")),
                 ).fetchone()
                 count = count_row[0] if count_row else 0
-                result.append((p.rstrip("/"), count))
+                try:
+                    ls = row["last_scanned"]
+                    lsd = row["last_scan_duration"]
+                except (KeyError, IndexError):
+                    ls, lsd = None, None
+                if ls is not None:
+                    try:
+                        ls = float(ls)
+                    except (TypeError, ValueError):
+                        ls = None
+                if lsd is not None:
+                    try:
+                        lsd = float(lsd)
+                    except (TypeError, ValueError):
+                        lsd = None
+                result.append((p.rstrip("/"), count, ls, lsd))
             return result
         finally:
             if not self._injected_conn and conn is not self._conn:
                 conn.close()
+
+    def update_directory_scan_stats(self, path: str, duration_seconds: float) -> None:
+        """Set last_scanned and last_scan_duration for the directory. Path normalized."""
+        import time
+        p = str(Path(path).expanduser().resolve())
+        if not p.endswith("/"):
+            p = p + "/"
+        conn = self.connect()
+        conn.execute(
+            "UPDATE indexed_directories SET last_scanned = ?, last_scan_duration = ? WHERE path = ?",
+            (time.time(), duration_seconds, p),
+        )
+        conn.commit()
 
     def remove_directory(self, path: str) -> int:
         """
@@ -944,13 +991,16 @@ def run_rebuild(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
 
 def run_rebuild_with_progress(
     db: MediaDatabase, path: Path
-) -> Iterator[str]:
+) -> Iterator[tuple[str, float]]:
     """
     Incremental scan and index with progress. Adds the selected folder to the index
     (merges with existing); does not wipe previous scans.
-    Yields: "Initializing...", "Found N files...", "Indexing...", "Embedding...", "Done."
+    Yields (message, progress) where progress is 0.0 to 1.0.
+    Updates last_scanned and last_scan_duration in indexed_directories.
     """
-    yield "Initializing..."
+    import time
+    t0 = time.perf_counter()
+    yield "Initializing...", 0.0
     db.init_schema()
     crawler = FileCrawler(path)
     files = list(crawler.crawl())
@@ -958,7 +1008,7 @@ def run_rebuild_with_progress(
     video_thumb = VideoThumbnailer()
     raw_thumb = RawThumbnailer()
     embedder = ImageEmbedder()
-    yield f"Found {total} files. Indexing metadata and hashes..."
+    yield f"Found {total} files. Indexing metadata and hashes...", 0.01
 
     batch: list[AssetRow] = []
     to_embed: list[tuple[str, str, str]] = []
@@ -989,7 +1039,7 @@ def run_rebuild_with_progress(
                 db.batch_upsert_assets(batch)
                 batch.clear()
             if i % 50 == 0 or i == total:
-                yield f"Indexing files... {i}/{total}"
+                yield f"Indexing files... {i}/{total}", 0.5 * (i / total) if total else 0.5
         except OSError:
             pass
     if batch:
@@ -1017,7 +1067,7 @@ def run_rebuild_with_progress(
             pass
 
     n_embed = len(to_embed_with_id)
-    yield f"Computing MLX embeddings (batches of {EMBED_BATCH_SIZE})..."
+    yield f"Computing MLX embeddings (batches of {EMBED_BATCH_SIZE})...", 0.5
     for start in range(0, len(to_embed_with_id), EMBED_BATCH_SIZE):
         batch = to_embed_with_id[start : start + EMBED_BATCH_SIZE]
         try:
@@ -1027,8 +1077,14 @@ def run_rebuild_with_progress(
         except Exception:
             pass
         j = min(start + EMBED_BATCH_SIZE, n_embed)
-        yield f"Embedding... {j}/{n_embed}"
-    yield f"Done. {total} assets indexed."
+        frac = (j / n_embed) if n_embed else 1.0
+        yield f"Embedding... {j}/{n_embed}", 0.5 + 0.5 * frac
+    duration = time.perf_counter() - t0
+    try:
+        db.update_directory_scan_stats(str(path), duration)
+    except Exception:
+        pass
+    yield f"Done. {total} assets indexed.", 1.0
 
 
 @dataclass
@@ -1045,18 +1101,21 @@ class FastSyncCounts:
 
 def run_fast_sync_with_progress(
     db: MediaDatabase, path: Path
-) -> Iterator[tuple[str, FastSyncCounts]]:
+) -> Iterator[tuple[str, FastSyncCounts, float]]:
     """
     Incremental scan by mtime: skip hashing/embedding for unchanged files.
     For each file: if stored_mtime is NULL (new) or current_mtime > stored_mtime (modified),
     perform sparse hashing, MLX embedding, and upsert. Else skip.
-    Yields (progress_message, counts).
+    Yields (progress_message, counts, progress) where progress is 0.0 to 1.0.
+    Updates last_scanned and last_scan_duration.
     """
+    import time
+    t0 = time.perf_counter()
     path = Path(path).resolve()
     if not path.is_dir():
         raise NotADirectoryError(str(path))
 
-    yield "Initializing Fast Sync...", FastSyncCounts()
+    yield "Initializing Fast Sync...", FastSyncCounts(), 0.0
     db.init_schema()
     crawler = FileCrawler(path)
     files = list(crawler.crawl())
@@ -1105,7 +1164,8 @@ def run_fast_sync_with_progress(
                 counts.skipped += 1
 
             if i % 50 == 0 or i == total:
-                yield f"Scanning... {i}/{total} files ({counts.changed} changed, {counts.skipped} skipped)", counts
+                scan_frac = (i / total) if total else 1.0
+                yield f"Scanning... {i}/{total} files ({counts.changed} changed, {counts.skipped} skipped)", counts, 0.5 * scan_frac
         except OSError:
             pass
 
@@ -1134,7 +1194,7 @@ def run_fast_sync_with_progress(
             pass
 
     n_embed = len(to_embed_with_id)
-    yield f"Computing MLX embeddings ({n_embed} new/changed)...", counts
+    yield f"Computing MLX embeddings ({n_embed} new/changed)...", counts, 0.5
     for start in range(0, len(to_embed_with_id), EMBED_BATCH_SIZE):
         batch_embed = to_embed_with_id[start : start + EMBED_BATCH_SIZE]
         try:
@@ -1144,9 +1204,45 @@ def run_fast_sync_with_progress(
         except Exception:
             pass
         j = min(start + EMBED_BATCH_SIZE, n_embed)
-        yield f"Embedding... {j}/{n_embed}", counts
+        embed_frac = (j / n_embed) if n_embed else 1.0
+        yield f"Embedding... {j}/{n_embed}", counts, 0.5 + 0.5 * embed_frac
 
-    yield counts.summary_message(), counts
+    duration = time.perf_counter() - t0
+    try:
+        db.update_directory_scan_stats(str(path), duration)
+    except Exception:
+        pass
+    yield counts.summary_message(), counts, 1.0
+
+
+def run_prune_with_progress(db: MediaDatabase, path: Path) -> Iterator[tuple[str, int, float]]:
+    """
+    Remove ghost entries: assets under path whose files no longer exist on disk.
+    Yields (progress_message, pruned_count_so_far, progress) where progress is 0.0 to 1.0.
+    """
+    path = Path(path).resolve()
+    if not path.is_dir():
+        raise NotADirectoryError(str(path))
+    db.init_schema()
+    p_norm = str(path)
+    if not p_norm.endswith("/"):
+        p_norm = p_norm + "/"
+    conn = db.connect()
+    rows = conn.execute(
+        "SELECT id, path FROM assets WHERE path LIKE ? OR path = ?",
+        (p_norm + "%", p_norm.rstrip("/")),
+    ).fetchall()
+    pruned = 0
+    for i, row in enumerate(rows):
+        p = row["path"]
+        if not Path(p).exists():
+            db.delete_asset_by_path(p)
+            pruned += 1
+        if (i + 1) % 100 == 0 or i == len(rows) - 1:
+            n = len(rows)
+            prog = ((i + 1) / n) if n else 1.0
+            yield f"Cleaning up orphans... {i + 1}/{len(rows)} checked", pruned, prog
+    yield f"Prune complete. Removed {pruned} ghost entries.", pruned, 1.0
 
 
 def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:

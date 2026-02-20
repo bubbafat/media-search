@@ -16,6 +16,8 @@ from pathlib import Path
 
 import gradio as gr
 
+import time
+
 from mediasearch import (
     DEFAULT_DB_PATH,
     FileCrawler,
@@ -24,7 +26,9 @@ from mediasearch import (
     RawThumbnailer,
     VideoThumbnailer,
     run_fast_sync_with_progress,
+    run_prune_with_progress,
     run_rebuild_with_progress,
+    set_embedding_device,
 )
 
 # Shared resources (same process as CLI — model loaded once)
@@ -55,6 +59,13 @@ def _embedder_instance() -> ImageEmbedder:
     if _embedder is None:
         _embedder = ImageEmbedder()
     return _embedder
+
+
+def _on_metal_toggle(use_metal: bool) -> None:
+    """Clear embedder cache and set device so next load uses Metal or CPU."""
+    global _embedder
+    _embedder = None
+    set_embedding_device(use_metal)
 
 
 def _thumbnailer_instance() -> VideoThumbnailer:
@@ -187,16 +198,33 @@ def visual_similarity(image: str | None) -> tuple[list[tuple[str | Path, str]], 
     return gallery, meta_list, f"Found {len(gallery)} similar results.", score_view
 
 
+def _health_indicator(last_scanned: float | None) -> str:
+    """Color-coded health: Green (< 7d), Yellow (7–30d), Red (> 30d or never)."""
+    if last_scanned is None:
+        return "🔴 Never"
+    age_days = (time.time() - last_scanned) / 86400
+    if age_days < 7:
+        return "🟢 Fresh"
+    if age_days < 30:
+        return "🟡 Stale"
+    return "🔴 Expired"
+
+
 def library_load_directories() -> tuple[list[list[str | None]], list[str]]:
-    """Load directory table data and path list for selection mapping. Thread-safe."""
+    """Load directory table: Path, Sync Statistics ({assets} files | {duration}s), Health. Thread-safe."""
     db = MediaDatabase(DEFAULT_DB_PATH)
     try:
         db.init_schema()
         dirs = db.get_directories()
         df_data: list[list[str | None]] = []
         paths: list[str] = []
-        for path, count in dirs:
-            df_data.append([path, str(count)])
+        for path, count, last_scanned, last_duration in dirs:
+            if last_duration is not None:
+                stats = f"{count} files | {last_duration:.1f}s"
+            else:
+                stats = f"{count} files | —"
+            health = _health_indicator(last_scanned)
+            df_data.append([path, stats, health])
             paths.append(path)
         return df_data, paths
     finally:
@@ -209,7 +237,10 @@ def scan_and_index(path_text: str) -> Iterator[tuple[str, str]]:
         yield log, st
 
 
-def add_and_scan(path_text: str) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+def add_and_scan(
+    path_text: str,
+    progress: gr.Progress = gr.Progress(),
+) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
     """Add directory to indexed_directories, then scan and index. Yields (log, status, df, paths)."""
     path = Path(path_text).expanduser().resolve()
     if not path.is_dir():
@@ -220,7 +251,8 @@ def add_and_scan(path_text: str) -> Iterator[tuple[str, str, list[list[str | Non
         db.init_schema()
         db.add_directory(str(path))
         log_lines: list[str] = []
-        for msg in run_rebuild_with_progress(db, path):
+        for msg, prog in run_rebuild_with_progress(db, path):
+            progress(prog, desc=msg)
             log_lines.append(msg)
             yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
         yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
@@ -228,25 +260,18 @@ def add_and_scan(path_text: str) -> Iterator[tuple[str, str, list[list[str | Non
         db.close()
 
 
-def update_directory(path_text: str) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
-    """Reindex a single directory. Yields (log, status, df, paths)."""
-    path = Path(path_text).expanduser().resolve()
-    if not path_text or not path.is_dir():
-        yield "Invalid or empty path.", get_status_text(), *library_load_directories()
-        return
-    db = MediaDatabase(DEFAULT_DB_PATH)
-    try:
-        db.init_schema()
-        log_lines: list[str] = []
-        for msg in run_rebuild_with_progress(db, path):
-            log_lines.append(msg)
-            yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
-        yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
-    finally:
-        db.close()
+def update_directory(
+    path_text: str,
+    progress: gr.Progress = gr.Progress(),
+) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+    """Legacy alias for deep_repair_directory. Reindex a single directory."""
+    yield from deep_repair_directory(path_text, progress)
 
 
-def fast_sync_directory(path_text: str) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+def fast_sync_directory(
+    path_text: str,
+    progress: gr.Progress = gr.Progress(),
+) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
     """Fast Sync: incremental scan by mtime. Skips unchanged files. Yields (log, status, df, paths)."""
     path = Path(path_text).expanduser().resolve()
     if not path_text or not path.is_dir():
@@ -256,7 +281,8 @@ def fast_sync_directory(path_text: str) -> Iterator[tuple[str, str, list[list[st
     try:
         db.init_schema()
         log_lines: list[str] = []
-        for msg, _ in run_fast_sync_with_progress(db, path):
+        for msg, _, prog in run_fast_sync_with_progress(db, path):
+            progress(prog, desc=msg)
             log_lines.append(msg)
             yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
         yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
@@ -264,7 +290,53 @@ def fast_sync_directory(path_text: str) -> Iterator[tuple[str, str, list[list[st
         db.close()
 
 
-def reindex_all() -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+def deep_repair_directory(
+    path_text: str,
+    progress: gr.Progress = gr.Progress(),
+) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+    """Deep Repair: force rehash and re-embed everything. Yields (log, status, df, paths)."""
+    path = Path(path_text).expanduser().resolve()
+    if not path_text or not path.is_dir():
+        yield "Invalid or empty path.", get_status_text(), *library_load_directories()
+        return
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    try:
+        db.init_schema()
+        log_lines: list[str] = []
+        for msg, prog in run_rebuild_with_progress(db, path):
+            progress(prog, desc=msg)
+            log_lines.append(msg)
+            yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+        yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+    finally:
+        db.close()
+
+
+def prune_directory(
+    path_text: str,
+    progress: gr.Progress = gr.Progress(),
+) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+    """Prune: remove ghost entries (files deleted from disk). Yields (log, status, df, paths)."""
+    path = Path(path_text).expanduser().resolve()
+    if not path_text or not path.is_dir():
+        yield "Invalid or empty path.", get_status_text(), *library_load_directories()
+        return
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    try:
+        db.init_schema()
+        log_lines: list[str] = []
+        for msg, _, prog in run_prune_with_progress(db, path):
+            progress(prog, desc=msg)
+            log_lines.append(msg)
+            yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+        yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+    finally:
+        db.close()
+
+
+def reindex_all(
+    progress: gr.Progress = gr.Progress(),
+) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
     """Iterate through indexed_directories and run scan for each. Yields (log, status, df, paths)."""
     db = MediaDatabase(DEFAULT_DB_PATH)
     try:
@@ -280,7 +352,8 @@ def reindex_all() -> Iterator[tuple[str, str, list[list[str | None]], list[str]]
                 log_lines.append(f"Skip (not found): {path_str}")
                 continue
             log_lines.append(f"Indexing {path_str}...")
-            for msg in run_rebuild_with_progress(db, path):
+            for msg, prog in run_rebuild_with_progress(db, path):
+                progress(prog, desc=msg)
                 log_lines.append(msg)
                 yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
         yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
@@ -572,13 +645,14 @@ def build_ui() -> gr.Blocks:
                 gr.Markdown("### Indexed directories")
                 dir_table = gr.Dataframe(
                     label="Directory Management",
-                    headers=["Path", "Item Count"],
-                    datatype=["str", "str"],
+                    headers=["Path", "Sync Statistics", "Health"],
+                    datatype=["str", "str", "str"],
                     interactive=False,
                 )
                 with gr.Row():
-                    update_btn = gr.Button("Update selected", variant="secondary")
                     fast_sync_btn = gr.Button("Fast Sync", variant="secondary")
+                    deep_repair_btn = gr.Button("Deep Repair", variant="secondary")
+                    prune_btn = gr.Button("Prune", variant="secondary")
                     delete_btn = gr.Button("Delete selected", variant="stop")
                 delete_confirm = gr.Column(visible=False)
                 with delete_confirm:
@@ -591,9 +665,22 @@ def build_ui() -> gr.Blocks:
                     label="Progress",
                     lines=10,
                     interactive=False,
-                    placeholder="Add a directory and click Add & Scan, or select a row and Update/Fast Sync/Delete.",
+                    placeholder="Add a directory and click Add & Scan, or select a row and Fast Sync / Deep Repair / Prune / Delete.",
                 )
                 clear_btn = gr.Button("Clear Database", variant="secondary")
+
+                with gr.Accordion("Hardware", open=False):
+                    metal_toggle = gr.Checkbox(
+                        value=True,
+                        label="Enable Metal Acceleration",
+                        info="Use Apple GPU for embeddings. Uncheck to force CPU. Takes effect on next search or sync.",
+                    )
+
+                metal_toggle.change(
+                    fn=_on_metal_toggle,
+                    inputs=[metal_toggle],
+                    outputs=[],
+                )
 
                 def on_dir_row_select(evt: gr.SelectData, paths: list[str]) -> str:
                     if not paths or evt.index is None:
@@ -615,14 +702,18 @@ def build_ui() -> gr.Blocks:
                     outputs=[progress_log, status, dir_table, lib_dir_paths],
                 )
 
-                update_btn.click(
-                    fn=update_directory,
+                fast_sync_btn.click(
+                    fn=fast_sync_directory,
                     inputs=[lib_selected_path],
                     outputs=[progress_log, status, dir_table, lib_dir_paths],
                 )
-
-                fast_sync_btn.click(
-                    fn=fast_sync_directory,
+                deep_repair_btn.click(
+                    fn=deep_repair_directory,
+                    inputs=[lib_selected_path],
+                    outputs=[progress_log, status, dir_table, lib_dir_paths],
+                )
+                prune_btn.click(
+                    fn=prune_directory,
                     inputs=[lib_selected_path],
                     outputs=[progress_log, status, dir_table, lib_dir_paths],
                 )
