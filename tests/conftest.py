@@ -75,9 +75,13 @@ def db_conn() -> sqlite3.Connection:
 
 @pytest.fixture
 def clear_db(db_conn: sqlite3.Connection) -> None:
-    """Clear assets and vec_index before each test. Use with db_conn in tests that modify the DB."""
+    """Clear assets, vec_index, and indexed_directories before each test."""
     db_conn.execute("DELETE FROM vec_index")
     db_conn.execute("DELETE FROM assets")
+    try:
+        db_conn.execute("DELETE FROM indexed_directories")
+    except sqlite3.OperationalError:
+        pass  # table may not exist
     db_conn.commit()
 
 

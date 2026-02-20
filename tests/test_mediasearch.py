@@ -389,6 +389,45 @@ def test_get_first_paths_returns_by_id_asc(db_conn: sqlite3.Connection, clear_db
     assert paths == ["/first.jpg", "/second.mp4"]
 
 
+def test_add_directory_and_get_directories(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.init_schema()
+    db.add_directory("/Volumes/Photos")
+    db.add_directory("/Volumes/Backup")
+    dirs = db.get_directories()
+    assert len(dirs) == 2
+    paths = [d[0] for d in dirs]
+    assert "/Volumes/Photos" in paths
+    assert "/Volumes/Backup" in paths
+
+
+def test_get_directories_returns_item_count(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.init_schema()
+    db.add_directory("/Volumes/P")
+    db.batch_upsert_assets([
+        ("/Volumes/P/a.jpg", "h1", 1000.0, "IMAGE", None, None, None),
+        ("/Volumes/P/b.jpg", "h2", 2000.0, "IMAGE", None, None, None),
+    ])
+    dirs = db.get_directories()
+    assert len(dirs) == 1
+    assert dirs[0] == ("/Volumes/P", 2)
+
+
+def test_remove_directory_deletes_assets_and_vectors(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.init_schema()
+    db.add_directory("/Volumes/P")
+    a1 = db.upsert_asset("/Volumes/P/a.jpg", "h1", 1000.0, "IMAGE")
+    a2 = db.upsert_asset("/Volumes/P/b.jpg", "h2", 2000.0, "IMAGE")
+    db.batch_save_embeddings([(a1, [0.1] * EMBEDDING_DIM), (a2, [0.2] * EMBEDDING_DIM)])
+    n = db.remove_directory("/Volumes/P")
+    assert n == 2
+    assert db.get_assets_count() == 0
+    assert db.get_vec_index_count() == 0
+    assert db.get_directories() == []
+
+
 # ---- MediaDatabase: delete_asset_by_path ----
 def test_delete_asset_by_path_removes_asset_and_embedding(db_conn: sqlite3.Connection, clear_db: None) -> None:
     db = MediaDatabase.from_connection(db_conn)
