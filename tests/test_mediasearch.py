@@ -418,6 +418,55 @@ def test_get_directories_returns_item_count(db_conn: sqlite3.Connection, clear_d
     assert dirs[0][1] == 2
 
 
+def test_get_fragmentation_stats_in_memory_returns_zeros(db_conn: sqlite3.Connection) -> None:
+    """In-memory DB returns zeros for fragmentation stats."""
+    db = MediaDatabase.from_connection(db_conn)
+    stats = db.get_fragmentation_stats()
+    assert stats["page_count"] == 0
+    assert stats["freelist_count"] == 0
+    assert stats["free_mb"] == 0
+    assert stats["free_percent"] == 0
+
+
+def test_get_fragmentation_stats_file_db(tmp_path: Path) -> None:
+    """File-based DB returns page_count, freelist_count, page_size, free_mb, free_percent."""
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.enable_load_extension(True)
+    import sqlite_vec
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.executescript("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);")
+    conn.commit()
+    conn.close()
+    db = MediaDatabase(db_path)
+    db.init_schema()
+    stats = db.get_fragmentation_stats()
+    assert "page_count" in stats
+    assert "freelist_count" in stats
+    assert "page_size" in stats
+    assert stats["page_size"] == 4096
+    assert "free_mb" in stats
+    assert "free_percent" in stats
+
+
+def test_smart_vacuum_skips_when_healthy(tmp_path: Path) -> None:
+    """smart_vacuum skips when fragmentation is below threshold."""
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.enable_load_extension(True)
+    import sqlite_vec
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.executescript("CREATE TABLE t (x INTEGER);")
+    conn.commit()
+    conn.close()
+    db = MediaDatabase(db_path)
+    db.init_schema()
+    result = db.smart_vacuum()
+    assert "Skipping vacuum" in result
+
+
 def test_update_directory_scan_stats(db_conn: sqlite3.Connection, clear_db: None) -> None:
     """update_directory_scan_stats sets last_scanned and last_scan_duration; get_directories returns them."""
     db = MediaDatabase.from_connection(db_conn)

@@ -314,12 +314,13 @@ def deep_repair_directory(
 
 def prune_directory(
     path_text: str,
+    auto_maintenance: bool,
     progress: gr.Progress = gr.Progress(),
-) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
-    """Prune: remove ghost entries (files deleted from disk). Yields (log, status, df, paths)."""
+) -> Iterator[tuple[str, str, list[list[str | None]], list[str], str]]:
+    """Prune: remove ghost entries. If auto_maintenance, run smart_vacuum after. Yields (log, status, df, paths, db_health)."""
     path = Path(path_text).expanduser().resolve()
     if not path_text or not path.is_dir():
-        yield "Invalid or empty path.", get_status_text(), *library_load_directories()
+        yield "Invalid or empty path.", get_status_text(), *library_load_directories(), get_database_health_markdown()
         return
     db = MediaDatabase(DEFAULT_DB_PATH)
     try:
@@ -328,8 +329,11 @@ def prune_directory(
         for msg, _, prog in run_prune_with_progress(db, path):
             progress(prog, desc=msg)
             log_lines.append(msg)
-            yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
-        yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+            yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories(), get_database_health_markdown()
+        if auto_maintenance:
+            vac_msg = db.smart_vacuum()
+            log_lines.append(vac_msg)
+        yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories(), get_database_health_markdown()
     finally:
         db.close()
 
@@ -396,6 +400,26 @@ def get_status_text(count: int | None = None) -> str:
     if count is None:
         count = _asset_count()
     return f"**{count}** assets indexed"
+
+
+def get_database_health_markdown() -> str:
+    """Return markdown for Database Health bar from fragmentation stats. Thread-safe."""
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    try:
+        db.init_schema()
+        stats = db.get_fragmentation_stats()
+    finally:
+        db.close()
+    free_pct = stats["free_percent"]
+    free_mb = stats["free_mb"]
+    used_pct = max(0, 100 - free_pct)
+    if stats["page_count"] == 0:
+        return "**Database Health:** _No data yet_"
+    if free_pct > 20 and free_mb > 50:
+        bar = "🟥" * min(10, int(free_pct / 10)) + "⬜" * (10 - min(10, int(free_pct / 10)))
+        return f"**Database Health:** {bar} — {free_pct:.1f}% free (~{free_mb:.1f} MB). Run Prune with Automatic Maintenance to vacuum."
+    bar = "🟩" * min(10, int(used_pct / 10)) + "⬜" * (10 - min(10, int(used_pct / 10)))
+    return f"**Database Health:** {bar} — {used_pct:.1f}% used."
 
 
 def _catalog_stats_text(
@@ -669,6 +693,13 @@ def build_ui() -> gr.Blocks:
                 )
                 clear_btn = gr.Button("Clear Database", variant="secondary")
 
+                db_health_md = gr.Markdown(get_database_health_markdown(), label="Database Health")
+                auto_maintenance_toggle = gr.Checkbox(
+                    value=False,
+                    label="Automatic Maintenance",
+                    info="Run smart vacuum after Prune completes (fragmentation > 20% and > 50 MB free).",
+                )
+
                 with gr.Accordion("Hardware", open=False):
                     metal_toggle = gr.Checkbox(
                         value=True,
@@ -714,8 +745,8 @@ def build_ui() -> gr.Blocks:
                 )
                 prune_btn.click(
                     fn=prune_directory,
-                    inputs=[lib_selected_path],
-                    outputs=[progress_log, status, dir_table, lib_dir_paths],
+                    inputs=[lib_selected_path, auto_maintenance_toggle],
+                    outputs=[progress_log, status, dir_table, lib_dir_paths, db_health_md],
                 )
 
                 def show_delete_confirm(path: str) -> bool:
@@ -799,7 +830,7 @@ def build_ui() -> gr.Blocks:
         # show the full error (including "Original error: ..." from mediasearch).
         def load_model_and_status() -> tuple[
             str, str, list[list[str | None]], list[dict[str, object]],
-            list[list[str | None]], list[str],
+            list[list[str | None]], list[str], str,
         ]:
             try:
                 _embedder_instance().get_text_embedding("warmup")
@@ -808,12 +839,12 @@ def build_ui() -> gr.Blocks:
             stats = catalog_stats_load()
             df_data, assets = catalog_direct_load()
             lib_df, lib_paths = library_load_directories()
-            return get_status_text(), stats, df_data, assets, lib_df, lib_paths
+            return get_status_text(), stats, df_data, assets, lib_df, lib_paths, get_database_health_markdown()
 
         demo.load(
             fn=load_model_and_status,
             inputs=None,
-            outputs=[status, catalog_stats, catalog_df, catalog_direct_assets, dir_table, lib_dir_paths],
+            outputs=[status, catalog_stats, catalog_df, catalog_direct_assets, dir_table, lib_dir_paths, db_health_md],
         )
 
     return demo

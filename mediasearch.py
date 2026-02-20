@@ -351,6 +351,61 @@ class MediaDatabase:
             if not self._injected_conn and conn is not self._conn:
                 conn.close()
 
+    def get_fragmentation_stats(self) -> dict[str, float]:
+        """
+        Return database fragmentation stats for UI display.
+        Keys: page_count, freelist_count, page_size, free_mb, free_percent.
+        For in-memory DB, returns zeros.
+        """
+        if str(self.db_path) == ":memory:":
+            return {
+                "page_count": 0.0,
+                "freelist_count": 0.0,
+                "page_size": 4096.0,
+                "free_mb": 0.0,
+                "free_percent": 0.0,
+            }
+        conn = self._fresh_connection()
+        try:
+            page_count = conn.execute("PRAGMA page_count").fetchone()[0] or 0
+            freelist_count = conn.execute("PRAGMA freelist_count").fetchone()[0] or 0
+            page_size = conn.execute("PRAGMA page_size").fetchone()[0] or 4096
+            free_mb = (freelist_count * page_size) / (1024 * 1024)
+            free_percent = (freelist_count / page_count * 100) if page_count > 0 else 0.0
+            return {
+                "page_count": float(page_count),
+                "freelist_count": float(freelist_count),
+                "page_size": float(page_size),
+                "free_mb": free_mb,
+                "free_percent": free_percent,
+            }
+        finally:
+            if not self._injected_conn and conn is not self._conn:
+                conn.close()
+
+    def smart_vacuum(self, logger: logging.Logger | None = None) -> str:
+        """
+        Run VACUUM if fragmentation exceeds thresholds (free_percent > 20 and free_mb > 50).
+        After VACUUM, runs wal_checkpoint(TRUNCATE) to reclaim WAL space.
+        Returns message describing action taken.
+        """
+        if str(self.db_path) == ":memory:":
+            return "In-memory database: vacuum not applicable."
+        stats = self.get_fragmentation_stats()
+        free_percent = stats["free_percent"]
+        free_mb = stats["free_mb"]
+        if free_percent > 20 and free_mb > 50:
+            if logger:
+                logger.info("Fragmented database detected (%.1f%%). Running background vacuum...", free_percent)
+            conn = self.connect()
+            conn.execute("VACUUM")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.commit()
+            return f"Vacuum complete. Reclaimed ~{free_mb:.1f} MB."
+        if logger:
+            logger.info("Database health is good. Skipping vacuum.")
+        return "Database health is good. Skipping vacuum."
+
     def get_all_assets(self, limit: int = 50) -> list[dict[str, object]]:
         """Return last N assets (path, type, capture_date, hash). Thread-safe for Gradio workers."""
         conn = self._fresh_connection()

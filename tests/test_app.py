@@ -164,9 +164,9 @@ def test_prune_directory_invalid_path(tmp_path: Path) -> None:
     _init_minimal_db_for_app_tests(db_path)
 
     with patch("app.DEFAULT_DB_PATH", db_path), patch("mediasearch.DEFAULT_DB_PATH", db_path):
-        out = list(app.prune_directory(""))
+        out = list(app.prune_directory("", False))
         assert len(out) >= 1
-        log, _, _, _ = out[-1]
+        log, _, _, _, _ = out[-1]
         assert "Invalid or empty path" in log
 
 
