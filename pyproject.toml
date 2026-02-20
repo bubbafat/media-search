@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "ffmpeg-python>=0.2.0",
+    "huggingface-hub>=1.4.1",
+    "mlx-embeddings>=0.0.5",
     "mlx-vlm>=0.1.15",
     "opencv-python>=4.10.0.84",
     "pillow>=10.4.0",
