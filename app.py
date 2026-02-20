@@ -23,6 +23,7 @@ from mediasearch import (
     MediaDatabase,
     RawThumbnailer,
     VideoThumbnailer,
+    run_fast_sync_with_progress,
     run_rebuild_with_progress,
 )
 
@@ -238,6 +239,24 @@ def update_directory(path_text: str) -> Iterator[tuple[str, str, list[list[str |
         db.init_schema()
         log_lines: list[str] = []
         for msg in run_rebuild_with_progress(db, path):
+            log_lines.append(msg)
+            yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+        yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
+    finally:
+        db.close()
+
+
+def fast_sync_directory(path_text: str) -> Iterator[tuple[str, str, list[list[str | None]], list[str]]]:
+    """Fast Sync: incremental scan by mtime. Skips unchanged files. Yields (log, status, df, paths)."""
+    path = Path(path_text).expanduser().resolve()
+    if not path_text or not path.is_dir():
+        yield "Invalid or empty path.", get_status_text(), *library_load_directories()
+        return
+    db = MediaDatabase(DEFAULT_DB_PATH)
+    try:
+        db.init_schema()
+        log_lines: list[str] = []
+        for msg, _ in run_fast_sync_with_progress(db, path):
             log_lines.append(msg)
             yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
         yield "\n".join(log_lines), get_status_text(_asset_count()), *library_load_directories()
@@ -559,6 +578,7 @@ def build_ui() -> gr.Blocks:
                 )
                 with gr.Row():
                     update_btn = gr.Button("Update selected", variant="secondary")
+                    fast_sync_btn = gr.Button("Fast Sync", variant="secondary")
                     delete_btn = gr.Button("Delete selected", variant="stop")
                 delete_confirm = gr.Column(visible=False)
                 with delete_confirm:
@@ -571,7 +591,7 @@ def build_ui() -> gr.Blocks:
                     label="Progress",
                     lines=10,
                     interactive=False,
-                    placeholder="Add a directory and click Add & Scan, or select a row and Update/Delete.",
+                    placeholder="Add a directory and click Add & Scan, or select a row and Update/Fast Sync/Delete.",
                 )
                 clear_btn = gr.Button("Clear Database", variant="secondary")
 
@@ -597,6 +617,12 @@ def build_ui() -> gr.Blocks:
 
                 update_btn.click(
                     fn=update_directory,
+                    inputs=[lib_selected_path],
+                    outputs=[progress_log, status, dir_table, lib_dir_paths],
+                )
+
+                fast_sync_btn.click(
+                    fn=fast_sync_directory,
                     inputs=[lib_selected_path],
                     outputs=[progress_log, status, dir_table, lib_dir_paths],
                 )

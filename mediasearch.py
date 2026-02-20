@@ -10,6 +10,7 @@ Supports JPG, RAW (ARW), MP4/MOV. Uses Apple MLX for embeddings (M4 Mac Studio).
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 import logging
 import re
@@ -417,6 +418,12 @@ class MediaDatabase:
             "SELECT id, path, hash, mtime, type, capture_date, lat, lon FROM assets WHERE path = ?",
             (path,),
         ).fetchone()
+
+    def update_asset_mtime(self, asset_id: int, new_mtime: float) -> None:
+        """Update the mtime for an asset by id."""
+        conn = self.connect()
+        conn.execute("UPDATE assets SET mtime = ? WHERE id = ?", (new_mtime, asset_id))
+        conn.commit()
 
     def fetch_asset_rows_by_ids(
         self, pairs: list[tuple[int, float]]
@@ -1022,6 +1029,124 @@ def run_rebuild_with_progress(
         j = min(start + EMBED_BATCH_SIZE, n_embed)
         yield f"Embedding... {j}/{n_embed}"
     yield f"Done. {total} assets indexed."
+
+
+@dataclass
+class FastSyncCounts:
+    """Counts reported from a Fast Sync run."""
+
+    total: int = 0
+    changed: int = 0
+    skipped: int = 0
+
+    def summary_message(self) -> str:
+        return f"Sync complete: {self.total} files checked, {self.changed} new/changed indexed, {self.skipped} skipped (unchanged)."
+
+
+def run_fast_sync_with_progress(
+    db: MediaDatabase, path: Path
+) -> Iterator[tuple[str, FastSyncCounts]]:
+    """
+    Incremental scan by mtime: skip hashing/embedding for unchanged files.
+    For each file: if stored_mtime is NULL (new) or current_mtime > stored_mtime (modified),
+    perform sparse hashing, MLX embedding, and upsert. Else skip.
+    Yields (progress_message, counts).
+    """
+    path = Path(path).resolve()
+    if not path.is_dir():
+        raise NotADirectoryError(str(path))
+
+    yield "Initializing Fast Sync...", FastSyncCounts()
+    db.init_schema()
+    crawler = FileCrawler(path)
+    files = list(crawler.crawl())
+    total = len(files)
+    video_thumb = VideoThumbnailer()
+    raw_thumb = RawThumbnailer()
+    embedder = ImageEmbedder()
+
+    counts = FastSyncCounts(total=total)
+    batch: list[AssetRow] = []
+    to_embed: list[tuple[str, str, str]] = []
+
+    for i, fp in enumerate(files, start=1):
+        try:
+            str_path = str(fp)
+            current_mtime = fp.stat().st_mtime
+            existing = db.get_asset_by_path(str_path)
+            stored_mtime: float | None = float(existing["mtime"]) if existing else None
+
+            if stored_mtime is None or current_mtime > stored_mtime:
+                file_hash = crawler.get_hash(fp)
+                asset_type = FileCrawler.path_to_type(fp)
+                meta = get_metadata(fp)
+                batch.append((
+                    str_path,
+                    file_hash,
+                    current_mtime,
+                    asset_type,
+                    meta.get("capture_date") or None,
+                    meta.get("lat"),
+                    meta.get("lon"),
+                ))
+                to_embed.append((str_path, file_hash, asset_type))
+                counts.changed += 1
+                if asset_type == "VIDEO":
+                    try:
+                        video_thumb.ensure_thumbnail(fp, file_hash)
+                    except Exception:
+                        pass
+                elif asset_type == "RAW":
+                    raw_thumb.ensure_thumbnail(fp, file_hash)
+                if len(batch) >= BATCH_UPSERT_SIZE:
+                    db.batch_upsert_assets(batch)
+                    batch.clear()
+            else:
+                counts.skipped += 1
+
+            if i % 50 == 0 or i == total:
+                yield f"Scanning... {i}/{total} files ({counts.changed} changed, {counts.skipped} skipped)", counts
+        except OSError:
+            pass
+
+    if batch:
+        db.batch_upsert_assets(batch)
+
+    to_embed_with_id: list[tuple[int, Path]] = []
+    for str_path, file_hash, asset_type in to_embed:
+        try:
+            row = db.get_asset_by_path(str_path)
+            if not row:
+                continue
+            if asset_type == "VIDEO":
+                image_path = video_thumb.thumbnail_path(file_hash)
+                if not image_path.exists():
+                    continue
+            elif asset_type == "RAW":
+                preview = raw_thumb.ensure_thumbnail(Path(str_path), file_hash)
+                if preview is None:
+                    continue
+                image_path = preview
+            else:
+                image_path = Path(str_path)
+            to_embed_with_id.append((row["id"], image_path))
+        except Exception:
+            pass
+
+    n_embed = len(to_embed_with_id)
+    yield f"Computing MLX embeddings ({n_embed} new/changed)...", counts
+    for start in range(0, len(to_embed_with_id), EMBED_BATCH_SIZE):
+        batch_embed = to_embed_with_id[start : start + EMBED_BATCH_SIZE]
+        try:
+            paths = [p for _, p in batch_embed]
+            vecs = embedder.get_image_embeddings_batch(paths)
+            db.batch_save_embeddings([(aid, vec) for (aid, _), vec in zip(batch_embed, vecs)])
+        except Exception:
+            pass
+        j = min(start + EMBED_BATCH_SIZE, n_embed)
+        yield f"Embedding... {j}/{n_embed}", counts
+
+    yield counts.summary_message(), counts
 
 
 def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
