@@ -33,6 +33,26 @@ try:
 except ImportError:
     ffmpeg = None  # type: ignore[assignment]
 
+# MLX-CLIP for visual search (optional; requires Apple Silicon with Metal).
+CLIP_MODEL_NAME = "mlx-community/clip-vit-base-patch32"
+_embedder_model: object = None
+_embedder_processor: object = None
+
+def _get_clip_model() -> tuple[object, object]:
+    """Lazy-load CLIP model and processor via mlx_embeddings. Returns (model, processor)."""
+    global _embedder_model, _embedder_processor
+    if _embedder_model is not None:
+        return _embedder_model, _embedder_processor
+    try:
+        from mlx_embeddings.utils import load
+        _embedder_model, _embedder_processor = load(CLIP_MODEL_NAME)
+        return _embedder_model, _embedder_processor
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to load CLIP model {CLIP_MODEL_NAME}. "
+            "Requires mlx-embeddings and Apple Silicon with Metal."
+        ) from e
+
 # Default database path (project-local).
 DEFAULT_DB_PATH = Path(__file__).resolve().parent / "mediasearch.db"
 
@@ -293,6 +313,10 @@ class MediaDatabase:
         )
         conn.commit()
 
+    def save_embedding(self, asset_id: int, vector: list[float]) -> None:
+        """Insert or replace the embedding for an asset using sqlite_vec.serialize_float32."""
+        self.set_embedding(asset_id, vector)
+
     def search(self, query_embedding: list[float], k: int = 10) -> list[tuple[int, float]]:
         """
         KNN search. Returns list of (asset_id, distance) for the k nearest vectors.
@@ -463,6 +487,67 @@ class VideoThumbnailer:
         return out_path
 
 
+def _mlx_array_to_list(vec: object) -> list[float]:
+    """Convert MLX array or numpy array to list of floats (length EMBEDDING_DIM)."""
+    import mlx.core as mx
+    if hasattr(vec, "tolist"):
+        return vec.tolist()
+    arr = mx.asnumpy(vec) if hasattr(mx, "asnumpy") else vec
+    return list(arr.flatten().tolist())
+
+
+class ImageEmbedder:
+    """
+    MLX-CLIP embedder for image and text. Uses mlx-community/clip-vit-base-patch32
+    (via mlx_embeddings) to produce 512-dim vectors for visual search.
+    """
+
+    def __init__(self, model_name: str = CLIP_MODEL_NAME) -> None:
+        self.model_name = model_name
+        self._model: object | None = None
+        self._processor: object | None = None
+
+    def _ensure_loaded(self) -> None:
+        if self._model is None:
+            self._model, self._processor = _get_clip_model()
+
+    def get_image_embedding(self, image_path: Path | str) -> list[float]:
+        """Return a 512-dim embedding vector for the image at image_path."""
+        import mlx.core as mx
+        from PIL import Image
+        self._ensure_loaded()
+        path = Path(image_path)
+        if not path.is_file():
+            raise FileNotFoundError(str(path))
+        image = Image.open(path).convert("RGB")
+        proc, model = self._processor, self._model
+        inputs = proc(images=image, return_tensors="pt", padding=True)
+        pv = inputs["pixel_values"].numpy().transpose(0, 2, 3, 1)
+        pixel_values = mx.array(pv).astype(mx.float32)
+        if hasattr(model, "get_image_features"):
+            out = model.get_image_features(pixel_values=pixel_values)
+        else:
+            out = model(pixel_values=pixel_values)
+            out = getattr(out, "image_embeds", getattr(out, "last_hidden_state", out))
+        vec = out[0] if hasattr(out, "__getitem__") else out
+        return _mlx_array_to_list(vec)
+
+    def get_text_embedding(self, text_query: str) -> list[float]:
+        """Return a 512-dim embedding vector for the text query."""
+        import mlx.core as mx
+        self._ensure_loaded()
+        proc, model = self._processor, self._model
+        inputs = proc(text=[text_query], return_tensors="pt", padding=True, truncation=True)
+        input_ids = mx.array(inputs["input_ids"].numpy())
+        if hasattr(model, "get_text_features"):
+            out = model.get_text_features(input_ids=input_ids)
+        else:
+            out = model(input_ids=input_ids)
+            out = getattr(out, "text_embeds", getattr(out, "last_hidden_state", out))
+        vec = out[0] if hasattr(out, "__getitem__") else out
+        return _mlx_array_to_list(vec)
+
+
 def _progress_bar(current: int, total: int, width: int = 30) -> str:
     """Return a simple text progress bar and counter."""
     if total <= 0:
@@ -475,15 +560,17 @@ def _progress_bar(current: int, total: int, width: int = 30) -> str:
 
 
 def run_rebuild(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
-    """Full scan: wipe index, then index every file under path with metadata and video thumbnails."""
+    """Full scan: wipe index, index every file with metadata and video thumbnails, then embed with MLX-CLIP."""
     db.rebuild_schema()
     crawler = FileCrawler(path)
     files = list(crawler.crawl())
     total = len(files)
     thumbnailer = VideoThumbnailer()
+    embedder = ImageEmbedder()
     logger.info("Rebuild: indexing %d files under %s", total, path)
 
     batch: list[AssetRow] = []
+    to_embed: list[tuple[str, str, str]] = []  # (path, file_hash, asset_type)
     for i, fp in enumerate(files, start=1):
         try:
             file_hash = crawler.get_hash(fp)
@@ -499,6 +586,7 @@ def run_rebuild(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
                 meta.get("lat"),
                 meta.get("lon"),
             ))
+            to_embed.append((str(fp), file_hash, asset_type))
             if asset_type == "VIDEO":
                 try:
                     thumbnailer.ensure_thumbnail(fp, file_hash)
@@ -513,20 +601,42 @@ def run_rebuild(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
     if batch:
         db.batch_upsert_assets(batch)
     logger.info("")
+
+    # Embed: images/RAW use file path; videos use thumbnail path
+    for j, (str_path, file_hash, asset_type) in enumerate(to_embed, start=1):
+        try:
+            row = db.get_asset_by_path(str_path)
+            if not row:
+                continue
+            if asset_type == "VIDEO":
+                image_path = thumbnailer.thumbnail_path(file_hash)
+                if not image_path.exists():
+                    continue
+            else:
+                image_path = Path(str_path)
+            vec = embedder.get_image_embedding(image_path)
+            db.save_embedding(row["id"], vec)
+        except Exception as e:
+            logger.debug("Embed skip %s: %s", str_path, e)
+        if j % 50 == 0 or j == len(to_embed):
+            logger.info("\rEmbedding... [%d/%d]", j, len(to_embed))
+    logger.info("")
     logger.info("Rebuild complete. %d assets indexed.", total)
 
 
 def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
-    """Incremental scan: add new files, update changed (mtime/hash), remove missing; metadata and thumbnails."""
+    """Incremental scan: add/update assets, metadata, thumbnails, then embed new/changed with MLX-CLIP."""
     db.init_schema()
     crawler = FileCrawler(path)
     files = list(crawler.crawl())
     total = len(files)
     thumbnailer = VideoThumbnailer()
+    embedder = ImageEmbedder()
     logger.info("Update: scanning %d files under %s", total, path)
 
     indexed_paths: set[str] = set()
     batch: list[AssetRow] = []
+    to_embed: list[tuple[str, str, str]] = []
     for i, fp in enumerate(files, start=1):
         try:
             str_path = str(fp)
@@ -545,6 +655,7 @@ def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
                     meta.get("lat"),
                     meta.get("lon"),
                 ))
+                to_embed.append((str_path, file_hash, asset_type))
                 if asset_type == "VIDEO":
                     try:
                         thumbnailer.ensure_thumbnail(fp, file_hash)
@@ -561,6 +672,27 @@ def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
     if batch:
         db.batch_upsert_assets(batch)
 
+    # Embed new/updated assets
+    for j, (str_path, file_hash, asset_type) in enumerate(to_embed, start=1):
+        try:
+            row = db.get_asset_by_path(str_path)
+            if not row:
+                continue
+            if asset_type == "VIDEO":
+                image_path = thumbnailer.thumbnail_path(file_hash)
+                if not image_path.exists():
+                    continue
+            else:
+                image_path = Path(str_path)
+            vec = embedder.get_image_embedding(image_path)
+            db.save_embedding(row["id"], vec)
+        except Exception as e:
+            logger.debug("Embed skip %s: %s", str_path, e)
+        if j % 50 == 0 or j == len(to_embed):
+            logger.info("\rEmbedding... [%d/%d]", j, len(to_embed))
+    if to_embed:
+        logger.info("")
+
     # Remove assets whose paths no longer exist on disk
     conn = db.connect()
     for row in conn.execute("SELECT id, path FROM assets").fetchall():
@@ -573,13 +705,13 @@ def run_update(db: MediaDatabase, path: Path, logger: logging.Logger) -> None:
 
 def run_query(db: MediaDatabase, query_text: str, logger: logging.Logger) -> None:
     """
-    Search mode: embed query (stub for now) and run KNN against vec_index.
-    TODO: Replace placeholder embedding with MLX VLM embedding on M4.
+    Search mode: embed query with MLX-CLIP, run MATCH against vec_index,
+    return top 5 file paths sorted by distance.
     """
     db.init_schema()
-    # Placeholder: zero vector until MLX embedding is wired.
-    placeholder_embedding = [0.0] * EMBEDDING_DIM
-    results = db.search(placeholder_embedding, k=10)
+    embedder = ImageEmbedder()
+    query_vec = embedder.get_text_embedding(query_text)
+    results = db.search(query_vec, k=5)
 
     logger.info('Query: "%s"', query_text)
     if not results:

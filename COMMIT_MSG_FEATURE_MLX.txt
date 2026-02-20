@@ -1,0 +1,11 @@
+Phase 2: Integrate MLX-CLIP for visual search
+
+- ImageEmbedder: load mlx-community/clip-vit-base-patch32 via mlx_embeddings.utils.load();
+  get_image_embedding(image_path) and get_text_embedding(text_query) return 512-dim list.
+- MediaDatabase.save_embedding(asset_id, vector): uses sqlite_vec.serialize_float32, inserts into vec_index.
+- Indexing: after upserting assets, embed every image/RAW file path and every video thumbnail path;
+  rebuild and update both run an embedding pass (Embedding... [n/total]).
+- Search CLI: python mediasearch.py query "a sunny day at the park" embeds the text with CLIP,
+  runs MATCH on vec_index, returns top 5 file paths sorted by distance.
+
+Branch: feature/mlx-semantic-search

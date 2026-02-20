@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+try:
+    import ffmpeg
+except ImportError:
+    ffmpeg = None  # type: ignore[assignment]
 
 from mediasearch import (
     EMBEDDING_DIM,
@@ -19,6 +25,8 @@ from mediasearch import (
     VideoThumbnailer,
     get_metadata,
     main,
+    run_query,
+    run_update,
 )
 from mediasearch import (
     _parse_dms_single,
@@ -238,6 +246,46 @@ def test_get_metadata_fallback_gps_lat_lon(mock_exif_class: object, tmp_path: Pa
     assert out["lon"] is not None and -123.0 < out["lon"] < -122.0
 
 
+def test_get_metadata_when_exiftool_helper_is_none(tmp_path: Path) -> None:
+    """When PyExifTool is not installed, return default dict with None values."""
+    (tmp_path / "dummy.jpg").write_bytes(b"x")
+    with patch("mediasearch.ExifToolHelper", None):
+        out = get_metadata(tmp_path / "dummy.jpg")
+    assert out["capture_date"] is None
+    assert out["lat"] is None
+    assert out["lon"] is None
+
+
+@patch("mediasearch.ExifToolHelper")
+def test_get_metadata_get_tags_raises_returns_default(mock_exif_class: object, tmp_path: Path) -> None:
+    """When get_tags raises, return default dict (no crash)."""
+    (tmp_path / "f.jpg").write_bytes(b"x")
+    mock_exif_class.return_value.__enter__.return_value.get_tags.side_effect = OSError("exiftool not found")
+    out = get_metadata(tmp_path / "f.jpg")
+    assert out["capture_date"] is None
+    assert out["lat"] is None
+    assert out["lon"] is None
+
+
+@patch("mediasearch.ExifToolHelper")
+def test_get_metadata_capture_date_fallback_datetime_created(mock_exif_class: object, tmp_path: Path) -> None:
+    """When EXIF:DateTimeOriginal is missing, use Composite:DateTimeCreated for capture_date."""
+    (tmp_path / "f.jpg").write_bytes(b"x")
+    mock_exif_class.return_value.__enter__.return_value.get_tags.return_value = [
+        {
+            "EXIF:DateTimeOriginal": None,
+            "Composite:DateTimeCreated": "2024:06:20 14:00:00",
+            "Composite:GPSPosition": None,
+            "EXIF:GPSLatitude": None,
+            "EXIF:GPSLongitude": None,
+        }
+    ]
+    out = get_metadata(tmp_path / "f.jpg")
+    assert out["capture_date"] == "2024:06:20 14:00:00"
+    assert out["lat"] is None
+    assert out["lon"] is None
+
+
 # ---- MediaDatabase: batch_upsert_assets ----
 def test_batch_upsert_assets(db_conn: sqlite3.Connection, clear_db: None) -> None:
     db = MediaDatabase.from_connection(db_conn)
@@ -281,6 +329,36 @@ def test_delete_asset_by_path_nonexistent_no_op(db_conn: sqlite3.Connection, cle
     assert db_conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
 
 
+def test_set_embedding_wrong_length_raises(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    aid = db.upsert_asset("/p.jpg", "h", 1000.0, "IMAGE")
+    with pytest.raises(ValueError, match=f"embedding length must be {EMBEDDING_DIM}"):
+        db.set_embedding(aid, [0.1] * (EMBEDDING_DIM - 1))
+    with pytest.raises(ValueError, match=f"embedding length must be {EMBEDDING_DIM}"):
+        db.set_embedding(aid, [0.1] * (EMBEDDING_DIM + 1))
+
+
+def test_search_wrong_query_length_raises(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    with pytest.raises(ValueError, match=f"embedding length must be {EMBEDDING_DIM}"):
+        db.search([0.1] * (EMBEDDING_DIM - 1), k=5)
+    with pytest.raises(ValueError, match=f"embedding length must be {EMBEDDING_DIM}"):
+        db.search([0.1] * (EMBEDDING_DIM + 1), k=5)
+
+
+def test_rebuild_schema_drops_and_recreates_tables(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    db = MediaDatabase.from_connection(db_conn)
+    db.upsert_asset("/a.jpg", "h1", 1000.0, "IMAGE")
+    db.upsert_asset("/b.jpg", "h2", 2000.0, "IMAGE")
+    assert db_conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 2
+    db.rebuild_schema()
+    assert db_conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
+    r = db_conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'").fetchone()
+    assert r is not None
+    r = db_conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_index'").fetchone()
+    assert r is not None
+
+
 # ---- MediaDatabase: optional columns ----
 def test_upsert_asset_optional_capture_date_lat_lon(db_conn: sqlite3.Connection, clear_db: None) -> None:
     db = MediaDatabase.from_connection(db_conn)
@@ -310,6 +388,70 @@ def test_video_thumbnailer_init_creates_dir(tmp_path: Path) -> None:
     assert not thumb_dir.exists()
     VideoThumbnailer(thumb_dir=thumb_dir)
     assert thumb_dir.is_dir()
+
+
+def test_ensure_thumbnail_returns_existing_path(tmp_path: Path) -> None:
+    """When thumbnail file already exists, return it without calling ffmpeg."""
+    thumb_dir = tmp_path / "thumbs"
+    thumb_dir.mkdir()
+    existing = thumb_dir / "abc123.jpg"
+    existing.write_bytes(b"existing")
+    t = VideoThumbnailer(thumb_dir=thumb_dir)
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"fake")
+    with patch("mediasearch.ffmpeg") as mock_ffmpeg:
+        result = t.ensure_thumbnail(video, "abc123")
+    assert result == existing
+    mock_ffmpeg.input.assert_not_called()
+
+
+def test_ensure_thumbnail_creates_file_when_ffmpeg_succeeds(tmp_path: Path) -> None:
+    """When thumbnail missing, ffmpeg runs and creates the file."""
+    thumb_dir = tmp_path / "thumbs"
+    thumb_dir.mkdir()
+    t = VideoThumbnailer(thumb_dir=thumb_dir)
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"fake")
+    out_path = thumb_dir / "hash99.jpg"
+
+    def touch_thumb(*args: object, **kwargs: object) -> None:
+        out_path.touch()
+
+    with patch("mediasearch.ffmpeg.input") as mock_input:
+        mock_input.return_value.filter.return_value.output.return_value.overwrite_output.return_value.run.side_effect = touch_thumb
+        result = t.ensure_thumbnail(video, "hash99")
+    assert result == out_path
+    assert out_path.exists()
+
+
+def test_ensure_thumbnail_raises_on_ffmpeg_error(tmp_path: Path) -> None:
+    """When ffmpeg raises Error, raise RuntimeError with stderr message."""
+    if ffmpeg is None:
+        pytest.skip("ffmpeg not installed")
+    thumb_dir = tmp_path / "thumbs"
+    thumb_dir.mkdir()
+    t = VideoThumbnailer(thumb_dir=thumb_dir)
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"fake")
+    with patch("mediasearch.ffmpeg.input") as mock_input:
+        mock_input.return_value.filter.return_value.output.return_value.overwrite_output.return_value.run.side_effect = ffmpeg.Error(
+            cmd=["ffmpeg"], stdout=b"", stderr=b"Invalid data"
+        )
+        with pytest.raises(RuntimeError, match="FFmpeg thumbnail failed") as exc_info:
+            t.ensure_thumbnail(video, "x")
+    assert "Invalid data" in str(exc_info.value)
+
+
+def test_ensure_thumbnail_raises_when_ffmpeg_module_is_none(tmp_path: Path) -> None:
+    """When ffmpeg-python is not installed, raise RuntimeError."""
+    thumb_dir = tmp_path / "thumbs"
+    thumb_dir.mkdir()
+    t = VideoThumbnailer(thumb_dir=thumb_dir)
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"fake")
+    with patch("mediasearch.ffmpeg", None):
+        with pytest.raises(RuntimeError, match="ffmpeg-python is not installed"):
+            t.ensure_thumbnail(video, "y")
 
 
 # ---- _progress_bar ----
@@ -379,12 +521,53 @@ def test_cli_update_requires_path() -> None:
 
 
 def test_cli_query_accepts_query_string(tmp_path: Path) -> None:
-    with patch("sys.argv", ["mediasearch", "--db", str(tmp_path / "q.db"), "query", "sunset beach"]):
+    # Avoid loading MLX (ImageEmbedder) when no Metal device
+    with patch("sys.argv", ["mediasearch", "--db", str(tmp_path / "q.db"), "query", "sunset beach"]), patch(
+        "mediasearch.run_query"
+    ) as mock_run_query:
         exit_code = main()
     assert exit_code == 0
+    mock_run_query.assert_called_once()
+    assert mock_run_query.call_args[0][1] == "sunset beach"
 
 
 def test_cli_db_and_verbose_accepted(tmp_path: Path) -> None:
-    with patch("sys.argv", ["mediasearch", "--db", str(tmp_path / "x.db"), "query", "test"]):
+    with patch("sys.argv", ["mediasearch", "--db", str(tmp_path / "x.db"), "query", "test"]), patch(
+        "mediasearch.run_query"
+    ):
         exit_code = main()
     assert exit_code == 0
+
+
+# ---- run_update: stale asset removal ----
+def test_run_update_removes_assets_no_longer_on_disk(
+    db_conn: sqlite3.Connection, clear_db: None, tmp_path: Path
+) -> None:
+    """When crawl returns fewer paths than in DB, run_update deletes the missing assets."""
+    db = MediaDatabase.from_connection(db_conn)
+    db.upsert_asset("/stale/removed.jpg", "h1", 1000.0, "IMAGE")
+    assert db.get_asset_by_path("/stale/removed.jpg") is not None
+
+    logger = logging.getLogger("test_run_update")
+    with patch.object(FileCrawler, "crawl", return_value=iter([])):
+        run_update(db, tmp_path, logger)
+
+    assert db.get_asset_by_path("/stale/removed.jpg") is None
+
+
+# ---- run_query with mock embedder ----
+def test_run_query_searches_and_logs_results(db_conn: sqlite3.Connection, clear_db: None) -> None:
+    """run_query embeds text, runs search with k=5, and logs top paths (no MLX load)."""
+    db = MediaDatabase.from_connection(db_conn)
+    aid = db.upsert_asset("/photos/beach.jpg", "h", 1000.0, "IMAGE")
+    db.set_embedding(aid, [0.1] * EMBEDDING_DIM)
+
+    logger = logging.getLogger("test_run_query")
+    with patch("mediasearch.ImageEmbedder") as mock_embedder_class:
+        mock_embedder_class.return_value.get_text_embedding.return_value = [0.1] * EMBEDDING_DIM
+        run_query(db, "sunset beach", logger)
+
+    mock_embedder_class.return_value.get_text_embedding.assert_called_once_with("sunset beach")
+    results = db.search([0.1] * EMBEDDING_DIM, k=5)
+    assert len(results) >= 1
+    assert results[0][0] == aid
