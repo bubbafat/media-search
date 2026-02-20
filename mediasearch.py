@@ -44,6 +44,7 @@ def _get_clip_model() -> tuple[object, object]:
     global _embedder_model, _embedder_processor
     if _embedder_model is not None:
         return _embedder_model, _embedder_processor
+    print("[INFO] Downloading CLIP model weights (first run only)...", flush=True)
     try:
         from mlx_embeddings.utils import load
         _embedder_model, _embedder_processor = load(CLIP_MODEL_NAME)
@@ -507,6 +508,8 @@ class VideoThumbnailer:
         except ffmpeg.Error as e:
             err = (e.stderr or b"").decode(errors="replace")
             raise RuntimeError(f"FFmpeg thumbnail failed: {err}") from e
+        except Exception as e:
+            raise RuntimeError(f"FFmpeg thumbnail failed: {e}") from e
         return out_path
 
 

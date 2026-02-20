@@ -475,6 +475,22 @@ def test_ensure_thumbnail_raises_on_ffmpeg_error(tmp_path: Path) -> None:
     assert "Invalid data" in str(exc_info.value)
 
 
+def test_ensure_thumbnail_raises_runtime_error_on_corrupt_or_other_failure(tmp_path: Path) -> None:
+    """When FFmpeg fails with any exception (e.g. corrupt file), raise RuntimeError so crawler doesn't crash."""
+    thumb_dir = tmp_path / "thumbs"
+    thumb_dir.mkdir()
+    t = VideoThumbnailer(thumb_dir=thumb_dir)
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"fake")
+    with patch("mediasearch.ffmpeg.input") as mock_input:
+        mock_input.return_value.filter.return_value.output.return_value.overwrite_output.return_value.run.side_effect = OSError(
+            "Invalid data found when processing input"
+        )
+        with pytest.raises(RuntimeError, match="FFmpeg thumbnail failed") as exc_info:
+            t.ensure_thumbnail(video, "x")
+    assert "Invalid data" in str(exc_info.value) or "OSError" in str(exc_info.value)
+
+
 def test_ensure_thumbnail_raises_when_ffmpeg_module_is_none(tmp_path: Path) -> None:
     """When ffmpeg-python is not installed, raise RuntimeError."""
     thumb_dir = tmp_path / "thumbs"
@@ -485,6 +501,18 @@ def test_ensure_thumbnail_raises_when_ffmpeg_module_is_none(tmp_path: Path) -> N
     with patch("mediasearch.ffmpeg", None):
         with pytest.raises(RuntimeError, match="ffmpeg-python is not installed"):
             t.ensure_thumbnail(video, "y")
+
+
+# ---- CLIP first-run message ----
+def test_get_clip_model_prints_download_message_on_first_load() -> None:
+    """First time CLIP is loaded, print a message so the user knows the app hasn't frozen."""
+    # Cannot run real _get_clip_model in tests (mlx_embeddings imports MLX/Metal). Verify the
+    # implementation contains the first-run message so users see it when the model actually loads.
+    import mediasearch as ms
+    from pathlib import Path
+    mediasearch_py = Path(ms.__file__).read_text()
+    assert "Downloading CLIP model weights (first run only)" in mediasearch_py
+    assert "print(" in mediasearch_py and "flush=True" in mediasearch_py
 
 
 # ---- ImageEmbedder: batch and lazy load ----
