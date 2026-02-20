@@ -365,21 +365,29 @@ def reindex_all(
         db.close()
 
 
-def remove_directory(path_text: str) -> tuple[str, str, list[list[str | None]], list[str]]:
+def remove_directory(
+    path_text: str,
+    auto_maintenance: bool,
+) -> tuple[str, str, list[list[str | None]], list[str], str]:
     """
-    Remove directory and all its assets. Returns (progress_log, status, df, paths).
-    Thread-safe.
+    Remove directory and all its assets. If auto_maintenance, run smart_vacuum after.
+    Returns (progress_log, status, df, paths, db_health).
     """
     if not path_text or not path_text.strip():
-        return "No directory selected.", get_status_text(), *library_load_directories()
+        return "No directory selected.", get_status_text(), *library_load_directories(), get_database_health_markdown()
     db = MediaDatabase(DEFAULT_DB_PATH)
     try:
         db.init_schema()
         n = db.remove_directory(path_text.strip())
+        log = f"Deleted {n} assets for {path_text.strip()}."
+        if auto_maintenance:
+            vac_msg = db.smart_vacuum()
+            log += f"\n{vac_msg}"
         return (
-            f"Deleted {n} assets for {path_text.strip()}.",
+            log,
             get_status_text(_asset_count()),
             *library_load_directories(),
+            get_database_health_markdown(),
         )
     finally:
         db.close()
@@ -678,12 +686,10 @@ def build_ui() -> gr.Blocks:
                     deep_repair_btn = gr.Button("Deep Repair", variant="secondary")
                     prune_btn = gr.Button("Prune", variant="secondary")
                     delete_btn = gr.Button("Delete selected", variant="stop")
-                delete_confirm = gr.Column(visible=False)
-                with delete_confirm:
-                    gr.Markdown("⚠️ **This will remove all indexed data for this path. Continue?**")
-                    with gr.Row():
-                        confirm_delete_btn = gr.Button("Confirm Delete", variant="stop")
-                        cancel_delete_btn = gr.Button("Cancel", variant="secondary")
+                delete_confirm_md = gr.Markdown("⚠️ **This will remove all indexed data for this path. Continue?**", visible=False)
+                with gr.Row():
+                    confirm_delete_btn = gr.Button("Confirm Delete", variant="stop", visible=False)
+                    cancel_delete_btn = gr.Button("Cancel", variant="secondary", visible=False)
 
                 progress_log = gr.Textbox(
                     label="Progress",
@@ -697,7 +703,7 @@ def build_ui() -> gr.Blocks:
                 auto_maintenance_toggle = gr.Checkbox(
                     value=False,
                     label="Automatic Maintenance",
-                    info="Run smart vacuum after Prune completes (fragmentation > 20% and > 50 MB free).",
+                    info="Run smart vacuum after Prune or Delete completes (fragmentation > 20% and > 50 MB free).",
                 )
 
                 with gr.Accordion("Hardware", open=False):
@@ -749,32 +755,33 @@ def build_ui() -> gr.Blocks:
                     outputs=[progress_log, status, dir_table, lib_dir_paths, db_health_md],
                 )
 
-                def show_delete_confirm(path: str) -> bool:
-                    return bool(path and path.strip())
+                def show_delete_confirm(path: str) -> tuple:
+                    visible = bool(path and path.strip())
+                    return gr.update(visible=visible), gr.update(visible=visible), gr.update(visible=visible)
+
+                def hide_delete_confirm() -> tuple:
+                    return gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
 
                 delete_btn.click(
                     fn=show_delete_confirm,
                     inputs=[lib_selected_path],
-                    outputs=[delete_confirm],
+                    outputs=[delete_confirm_md, confirm_delete_btn, cancel_delete_btn],
                 )
-
-                def hide_delete_confirm() -> bool:
-                    return False
 
                 cancel_delete_btn.click(
                     fn=hide_delete_confirm,
                     inputs=None,
-                    outputs=[delete_confirm],
+                    outputs=[delete_confirm_md, confirm_delete_btn, cancel_delete_btn],
                 )
 
                 confirm_delete_btn.click(
                     fn=remove_directory,
-                    inputs=[lib_selected_path],
-                    outputs=[progress_log, status, dir_table, lib_dir_paths],
+                    inputs=[lib_selected_path, auto_maintenance_toggle],
+                    outputs=[progress_log, status, dir_table, lib_dir_paths, db_health_md],
                 ).then(
                     fn=hide_delete_confirm,
                     inputs=None,
-                    outputs=[delete_confirm],
+                    outputs=[delete_confirm_md, confirm_delete_btn, cancel_delete_btn],
                 )
 
                 reindex_all_btn.click(
