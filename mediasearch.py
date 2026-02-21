@@ -554,21 +554,31 @@ class MediaDatabase:
         """Insert or replace the embedding for an asset using sqlite_vec.serialize_float32."""
         self.set_embedding(asset_id, vector)
 
-    def search(self, query_embedding: list[float], k: int = 10) -> list[tuple[int, float]]:
+    def search(
+        self,
+        query_embedding: list[float],
+        k: int = 10,
+        threshold: float | None = None,
+    ) -> list[tuple[int, float]]:
         """
         KNN search. Returns list of (asset_id, distance) for the k nearest vectors.
+        If threshold is set, only returns results with distance < threshold.
         Uses a fresh connection for thread safety when called from Gradio workers.
         """
         if len(query_embedding) != EMBEDDING_DIM:
             raise ValueError(f"embedding length must be {EMBEDDING_DIM}, got {len(query_embedding)}")
+        fetch_k = k * 5 if threshold is not None else k
         conn = self._fresh_connection()
         try:
             blob = sqlite_vec.serialize_float32(query_embedding)
             rows = conn.execute(
                 "SELECT asset_id, distance FROM vec_index WHERE embedding MATCH ? AND k = ?",
-                (blob, k),
+                (blob, fetch_k),
             ).fetchall()
-            return [(r["asset_id"], r["distance"]) for r in rows]
+            results = [(r["asset_id"], r["distance"]) for r in rows]
+            if threshold is not None:
+                results = [(aid, d) for aid, d in results if d < threshold][:k]
+            return results
         finally:
             if not self._injected_conn and conn is not self._conn:
                 conn.close()

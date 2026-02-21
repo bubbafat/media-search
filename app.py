@@ -95,6 +95,11 @@ def _asset_count() -> int:
         return 0
 
 
+def _distance_to_confidence_pct(distance: float) -> int:
+    """Convert vector distance to confidence percentage (0–100). Lower distance = higher confidence."""
+    return round(max(0, min(100, 100 * (1 - distance))))
+
+
 def _search_results_to_gallery(
     db: MediaDatabase,
     thumbnailer: VideoThumbnailer,
@@ -123,7 +128,8 @@ def _search_results_to_gallery(
             display_path = path_str
         if not Path(display_path).exists():
             continue
-        gallery.append((display_path, f"{path.name} ({distance:.3f})"))
+        confidence = _distance_to_confidence_pct(distance)
+        gallery.append((display_path, f"{path.name} ({confidence}% Match)"))
         meta_list.append({
             "path": path_str,
             "display_path": display_path,
@@ -153,8 +159,11 @@ def _build_score_view(meta_list: list[ResultMeta]) -> str:
     return text
 
 
-def semantic_search(query: str) -> tuple[list[tuple[str | Path, str]], list[ResultMeta], str, str]:
-    """Tab 1: natural language query → top 20 results."""
+def semantic_search(
+    query: str,
+    threshold: float = 0.35,
+) -> tuple[list[tuple[str | Path, str]], list[ResultMeta], str, str]:
+    """Tab 1: natural language query → top 20 results. threshold filters by distance."""
     empty_score = "_Run a search to see raw distance scores._"
     if not query or not query.strip():
         return [], [], "Enter a search query.", empty_score
@@ -165,9 +174,9 @@ def semantic_search(query: str) -> tuple[list[tuple[str | Path, str]], list[Resu
         vec = embedder.get_text_embedding(query.strip())
     except Exception as e:
         return [], [], f"Embedding failed: {e}", empty_score
-    results = db.search(vec, k=20)
+    results = db.search(vec, k=20, threshold=threshold)
     if not results:
-        return [], [], "No results (index may be empty). Try indexing a directory first.", empty_score
+        return [], [], "No high-confidence matches found. Try loosening the Precision slider.", empty_score
     raw_thumbnailer = _raw_thumbnailer_instance()
     gallery, meta_list = _search_results_to_gallery(db, thumbnailer, raw_thumbnailer, results, k=20)
     score_view = _build_score_view(meta_list)
@@ -594,12 +603,21 @@ def build_ui() -> gr.Blocks:
         with gr.Tabs():
             # Tab 1: Semantic Search
             with gr.TabItem("Semantic Search"):
-                search_in = gr.Textbox(
-                    label="Search",
-                    placeholder='e.g. "blue car in the snow"',
-                    scale=9,
+                with gr.Row():
+                    search_in = gr.Textbox(
+                        label="Search",
+                        placeholder='e.g. "blue car in the snow"',
+                        scale=9,
+                    )
+                    search_btn = gr.Button("Search", variant="primary", scale=1)
+                match_precision = gr.Slider(
+                    minimum=0.1,
+                    maximum=0.7,
+                    value=0.35,
+                    step=0.05,
+                    label="Match Precision",
+                    info="Lower values show only exact matches; higher shows general themes.",
                 )
-                search_btn = gr.Button("Search", variant="primary", scale=1)
                 search_status = gr.Markdown("")
                 gallery = gr.Gallery(
                     label="Results",
@@ -615,7 +633,7 @@ def build_ui() -> gr.Blocks:
                     search_score_display = gr.Markdown("_Run a search to see raw distance scores._")
                 search_btn.click(
                     fn=semantic_search,
-                    inputs=[search_in],
+                    inputs=[search_in, match_precision],
                     outputs=[gallery, result_meta_semantic, search_status, search_score_display],
                 ).then(
                     fn=lambda: "_Click a result above to show path and metadata._",
