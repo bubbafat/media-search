@@ -9,6 +9,8 @@ wheels/
 medias
 mediasearch.db
 mediasearch.db-*
+media.db
+media.db-*
 
 # Virtual environments
 .venv
