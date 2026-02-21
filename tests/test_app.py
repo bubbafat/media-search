@@ -86,16 +86,15 @@ def test_library_load_directories_returns_three_columns(tmp_path: Path) -> None:
     import sqlite3
     import sqlite_vec
 
+    from database import _create_schema
+
     db_path = tmp_path / "test.db"
     conn = sqlite3.connect(str(db_path))
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY, path TEXT, hash TEXT, mtime REAL, type TEXT);
-        CREATE TABLE IF NOT EXISTS indexed_directories (id INTEGER PRIMARY KEY, path TEXT, added_at REAL, last_scanned REAL, last_scan_duration REAL);
-        INSERT INTO indexed_directories (path, added_at) VALUES ('/Volumes/P/', 1000.0);
-    """)
+    _create_schema(conn)
+    conn.execute("INSERT INTO indexed_directories (path, added_at) VALUES ('/Volumes/P/', 1000.0)")
     conn.commit()
     conn.close()
 
@@ -118,7 +117,8 @@ def test_fast_sync_directory_invalid_path(tmp_path: Path) -> None:
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
-    conn.executescript("CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY, path TEXT, hash TEXT, mtime REAL, type TEXT); CREATE TABLE IF NOT EXISTS indexed_directories (id INTEGER PRIMARY KEY, path TEXT, added_at REAL);")
+    from database import _create_schema
+    _create_schema(conn)
     conn.commit()
     conn.close()
 
@@ -139,23 +139,17 @@ def test_fast_sync_directory_invalid_path(tmp_path: Path) -> None:
 
 
 def _init_minimal_db_for_app_tests(db_path: Path) -> None:
-    """Create minimal DB schema so library_load_directories (called on invalid path) succeeds."""
+    """Create minimal DB schema via database module."""
     import sqlite3
     import sqlite_vec
+
+    from database import _create_schema
 
     conn = sqlite3.connect(str(db_path))
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY, path TEXT UNIQUE, hash TEXT, mtime REAL, type TEXT, capture_date TEXT, lat REAL, lon REAL);
-        CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
-        CREATE INDEX IF NOT EXISTS idx_assets_hash ON assets(hash);
-        CREATE TABLE IF NOT EXISTS indexed_directories (id INTEGER PRIMARY KEY, path TEXT, added_at REAL, last_scanned REAL, last_scan_duration REAL);
-    """)
-    row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
-    if row is None:
-        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[1152] distance_metric=cosine)")
+    _create_schema(conn)
     conn.commit()
     conn.close()
 

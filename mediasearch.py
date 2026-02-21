@@ -225,62 +225,18 @@ class MediaDatabase:
         self.close()
 
     def init_schema(self) -> None:
-        """Create assets table and vec_index virtual table if they do not exist."""
+        """Create all tables via DatabaseManager. Idempotent."""
+        from database import _create_schema
         conn = self.connect()
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS assets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL UNIQUE,
-                hash TEXT NOT NULL,
-                mtime REAL NOT NULL,
-                type TEXT NOT NULL,
-                capture_date TEXT,
-                lat REAL,
-                lon REAL
-            );
-            CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
-            CREATE INDEX IF NOT EXISTS idx_assets_hash ON assets(hash);
-        """)
-        # Migrate existing assets table: add new columns if missing
-        row = conn.execute("PRAGMA table_info(assets)").fetchall()
-        col_names = {r[1] for r in row} if row else set()
-        for col, typ in [("capture_date", "TEXT"), ("lat", "REAL"), ("lon", "REAL")]:
-            if col not in col_names:
-                conn.execute(f"ALTER TABLE assets ADD COLUMN {col} {typ}")
-        conn.commit()
-        # vec0 virtual table: must be created with explicit schema
-        if conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_index'"
-        ).fetchone() is None:
-            conn.execute("""
-                CREATE VIRTUAL TABLE vec_index USING vec0(
-                    asset_id INTEGER PRIMARY KEY,
-                    embedding FLOAT[1152] distance_metric=cosine
-                )
-            """)
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS indexed_directories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL UNIQUE,
-                added_at REAL NOT NULL,
-                last_scanned REAL,
-                last_scan_duration REAL
-            );
-        """)
-        # Migrate: add last_scanned, last_scan_duration if missing
-        dir_cols = {r[1] for r in conn.execute("PRAGMA table_info(indexed_directories)").fetchall()}
-        for col, typ in [("last_scanned", "REAL"), ("last_scan_duration", "REAL")]:
-            if col not in dir_cols:
-                conn.execute(f"ALTER TABLE indexed_directories ADD COLUMN {col} {typ}")
+        _create_schema(conn)
         conn.commit()
 
     def rebuild_schema(self) -> None:
-        """Drop and recreate assets and vec_index. Use for full re-index."""
+        """Drop and recreate all tables via DatabaseManager. Use for full re-index."""
+        from database import _rebuild_schema
         conn = self.connect()
-        conn.execute("DROP TABLE IF EXISTS vec_index")
-        conn.execute("DROP TABLE IF EXISTS assets")
+        _rebuild_schema(conn)
         conn.commit()
-        self.init_schema()
 
     def upsert_asset(
         self,
@@ -914,24 +870,28 @@ class ImageEmbedder:
             self._model, self._processor = _get_embedder_model()
         return self._model, self._processor
 
-    def get_image_embedding(self, image_path: Path | str) -> list[float]:
-        """Return a 1152-dim embedding vector for the image at image_path. Input resized to 384x384."""
+    def get_image_embedding_from_pil(self, image: object) -> list[float]:
+        """Return a 1152-dim embedding for a PIL Image. Input resized to 384x384."""
         import mlx.core as mx
-        from PIL import Image
-        path = Path(image_path)
-        if not path.is_file():
-            raise FileNotFoundError(str(path))
         model, proc = self._model_and_processor
-        image = Image.open(path).convert("RGB")
-        # Processor resizes to 384x384 (SigLIP patch14-384) and normalizes
-        inputs = proc(images=image, return_tensors="np", padding=True)
+        img = image.convert("RGB") if hasattr(image, "convert") else image
+        inputs = proc(images=img, return_tensors="np", padding=True)
         pv = inputs["pixel_values"]
         if len(pv.shape) == 4 and pv.shape[1] == 3:
-            pv = pv.transpose(0, 2, 3, 1)  # NCHW -> NHWC for MLX
+            pv = pv.transpose(0, 2, 3, 1)
         pixel_values = mx.array(pv).astype(mx.float32)
         out = model.get_image_features(pixel_values=pixel_values)
         vec = out[0] if hasattr(out, "__getitem__") else out
         return _mlx_array_to_list(vec)
+
+    def get_image_embedding(self, image_path: Path | str) -> list[float]:
+        """Return a 1152-dim embedding vector for the image at image_path. Input resized to 384x384."""
+        from PIL import Image
+        path = Path(image_path)
+        if not path.is_file():
+            raise FileNotFoundError(str(path))
+        image = Image.open(path).convert("RGB")
+        return self.get_image_embedding_from_pil(image)
 
     def get_image_embeddings_batch(
         self, image_paths: list[Path | str]

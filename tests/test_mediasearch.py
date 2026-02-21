@@ -908,13 +908,8 @@ def test_run_fast_sync_invalid_path_raises(tmp_path: Path) -> None:
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
     conn.row_factory = sqlite3.Row
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY, path TEXT UNIQUE, hash TEXT, mtime REAL, type TEXT, capture_date TEXT, lat REAL, lon REAL);
-        CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
-    """)
-    row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
-    if row is None:
-        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[1152])")
+    from database import _create_schema
+    _create_schema(conn)
     conn.commit()
     conn.close()
     db = MediaDatabase(db_path)
@@ -959,13 +954,8 @@ def test_run_fast_sync_processes_new_and_modified_counts(tmp_path: Path) -> None
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
     conn.row_factory = sqlite3.Row
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY, path TEXT UNIQUE, hash TEXT, mtime REAL, type TEXT, capture_date TEXT, lat REAL, lon REAL);
-        CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
-    """)
-    row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
-    if row is None:
-        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[1152])")
+    from database import _create_schema
+    _create_schema(conn)
     conn.commit()
     conn.close()
 
@@ -1028,13 +1018,8 @@ def test_run_rebuild_with_progress_is_incremental_does_not_wipe_existing(
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
     conn.row_factory = sqlite3.Row
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS assets (id INTEGER PRIMARY KEY, path TEXT UNIQUE, hash TEXT, mtime REAL, type TEXT, capture_date TEXT, lat REAL, lon REAL);
-        CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
-    """)
-    row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
-    if row is None:
-        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[1152])")
+    from database import _create_schema
+    _create_schema(conn)
     conn.commit()
     # Pre-insert an asset (simulating prior scan)
     conn.execute(

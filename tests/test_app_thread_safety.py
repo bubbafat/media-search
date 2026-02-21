@@ -30,35 +30,13 @@ from mediasearch import EMBEDDING_DIM, MediaDatabase
 
 
 def _init_test_db(path: Path) -> None:
-    """Create a real file-based DB with sqlite_vec at path."""
+    """Create a real file-based DB with schema via database module."""
     conn = sqlite3.connect(str(path))
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS assets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            path TEXT NOT NULL UNIQUE,
-            hash TEXT NOT NULL,
-            mtime REAL NOT NULL,
-            type TEXT NOT NULL,
-            capture_date TEXT,
-            lat REAL,
-            lon REAL
-        );
-        CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
-        CREATE INDEX IF NOT EXISTS idx_assets_hash ON assets(hash);
-    """)
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_index'"
-    ).fetchone()
-    if row is None:
-        conn.execute("""
-            CREATE VIRTUAL TABLE vec_index USING vec0(
-                asset_id INTEGER PRIMARY KEY,
-                embedding FLOAT[1152] distance_metric=cosine
-            )
-        """)
+    from database import _create_schema
+    _create_schema(conn)
     conn.commit()
     conn.close()
 

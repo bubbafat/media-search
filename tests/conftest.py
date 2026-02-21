@@ -33,31 +33,9 @@ def _memory_conn_with_sqlite_vec() -> sqlite3.Connection:
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
-    """Create assets and vec_index tables (same as MediaDatabase.init_schema)."""
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS assets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            path TEXT NOT NULL UNIQUE,
-            hash TEXT NOT NULL,
-            mtime REAL NOT NULL,
-            type TEXT NOT NULL,
-            capture_date TEXT,
-            lat REAL,
-            lon REAL
-        );
-        CREATE INDEX IF NOT EXISTS idx_assets_path ON assets(path);
-        CREATE INDEX IF NOT EXISTS idx_assets_hash ON assets(hash);
-    """)
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_index'"
-    ).fetchone()
-    if row is None:
-        conn.execute("""
-            CREATE VIRTUAL TABLE vec_index USING vec0(
-                asset_id INTEGER PRIMARY KEY,
-                embedding FLOAT[1152] distance_metric=cosine
-            )
-        """)
+    """Create all tables via database module (single source of truth)."""
+    from database import _create_schema
+    _create_schema(conn)
     conn.commit()
 
 
