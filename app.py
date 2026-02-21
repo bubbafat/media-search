@@ -95,8 +95,8 @@ def _asset_count() -> int:
         return 0
 
 
-def _distance_to_confidence_pct(distance: float) -> int:
-    """Convert vector distance to confidence percentage (0–100). Lower distance = higher confidence."""
+def _distance_to_similarity_pct(distance: float) -> int:
+    """Convert cosine distance (0.0–1.0) to similarity percentage: (1 - distance) * 100."""
     return round(max(0, min(100, 100 * (1 - distance))))
 
 
@@ -128,8 +128,8 @@ def _search_results_to_gallery(
             display_path = path_str
         if not Path(display_path).exists():
             continue
-        confidence = _distance_to_confidence_pct(distance)
-        gallery.append((display_path, f"{path.name} ({confidence}% Match)"))
+        similarity = _distance_to_similarity_pct(distance)
+        gallery.append((display_path, f"{path.name} ({similarity}% Match)"))
         meta_list.append({
             "path": path_str,
             "display_path": display_path,
@@ -143,7 +143,7 @@ def _search_results_to_gallery(
 
 
 def _build_score_view(meta_list: list[ResultMeta]) -> str:
-    """Build Score View debug text from result metadata. Warn if all distances > 0.9."""
+    """Build Score View debug text from result metadata (cosine distance + similarity %)."""
     if not meta_list:
         return "_No results._"
     lines = []
@@ -151,19 +151,23 @@ def _build_score_view(meta_list: list[ResultMeta]) -> str:
         dist = m.get("distance")
         path = m.get("path") or ""
         name = Path(path).name if path else f"#{i}"
-        lines.append(f"{i}. `{name}` → **{dist:.4f}**" if dist is not None else f"{i}. `{name}` → —")
+        if dist is not None:
+            sim = _distance_to_similarity_pct(dist)
+            lines.append(f"{i}. `{name}` → **{dist:.4f}** ({sim}% Match)")
+        else:
+            lines.append(f"{i}. `{name}` → —")
     text = "\n".join(lines)
     distances = [m["distance"] for m in meta_list if m.get("distance") is not None]
-    if distances and all(d > 0.9 for d in distances):
-        text += "\n\n⚠️ **All distances > 0.9** — AI doesn't see a strong match. Possible vector normalization issue."
+    if distances and all(d > 0.8 for d in distances):
+        text += "\n\n⚠️ **All distances > 0.8** — AI doesn't see a strong match. Try a broader query or check that embeddings are indexed."
     return text
 
 
 def semantic_search(
     query: str,
-    threshold: float = 0.35,
+    threshold: float = 0.4,
 ) -> tuple[list[tuple[str | Path, str]], list[ResultMeta], str, str]:
-    """Tab 1: natural language query → top 20 results. threshold filters by distance."""
+    """Tab 1: natural language query → top 20 results. threshold filters by cosine distance (0–1)."""
     empty_score = "_Run a search to see raw distance scores._"
     if not query or not query.strip():
         return [], [], "Enter a search query.", empty_score
@@ -611,12 +615,12 @@ def build_ui() -> gr.Blocks:
                     )
                     search_btn = gr.Button("Search", variant="primary", scale=1)
                 match_precision = gr.Slider(
-                    minimum=0.1,
-                    maximum=0.7,
-                    value=0.35,
+                    minimum=0.0,
+                    maximum=1.0,
+                    value=0.4,
                     step=0.05,
-                    label="Match Precision",
-                    info="Lower values show only exact matches; higher shows general themes.",
+                    label="Match Precision (Strict → Loose)",
+                    info="0.0 = strict (exact matches only), 1.0 = loose (broad themes).",
                 )
                 search_status = gr.Markdown("")
                 gallery = gr.Gallery(

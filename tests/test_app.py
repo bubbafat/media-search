@@ -23,7 +23,9 @@ def test_build_score_view_with_results() -> None:
     assert "b.jpg" in text
     assert "0.1200" in text or "0.12" in text
     assert "0.4500" in text or "0.45" in text
-    assert "0.9" not in text or "All distances" not in text  # No warning for good matches
+    assert "88% Match" in text  # (1 - 0.12) * 100
+    assert "55% Match" in text  # (1 - 0.45) * 100
+    assert "All distances" not in text
 
 
 def test_build_score_view_warns_when_all_distances_high() -> None:
@@ -33,8 +35,8 @@ def test_build_score_view_warns_when_all_distances_high() -> None:
     ]
     text = app._build_score_view(meta_list)
     assert "0.9" in text
+    assert "All distances > 0.8" in text
     assert "Indexing Incomplete" not in text  # that's _catalog_stats_text
-    assert "normalization" in text or "strong match" in text
 
 
 def test_build_score_view_handles_none_distance() -> None:
@@ -153,7 +155,7 @@ def _init_minimal_db_for_app_tests(db_path: Path) -> None:
     """)
     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
     if row is None:
-        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[512])")
+        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[512] distance_metric=cosine)")
     conn.commit()
     conn.close()
 

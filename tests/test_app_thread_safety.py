@@ -56,7 +56,7 @@ def _init_test_db(path: Path) -> None:
         conn.execute("""
             CREATE VIRTUAL TABLE vec_index USING vec0(
                 asset_id INTEGER PRIMARY KEY,
-                embedding FLOAT[512]
+                embedding FLOAT[512] distance_metric=cosine
             )
         """)
     conn.commit()

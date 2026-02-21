@@ -160,7 +160,7 @@ class MediaDatabase:
 
     Schema:
       - assets: id, path, hash (unique), mtime, type, capture_date, lat, lon
-      - vec_index: vec0 virtual table (asset_id integer, embedding float[512])
+      - vec_index: vec0 virtual table (asset_id integer, embedding float[512] distance_metric=cosine)
     """
 
     def __init__(self, db_path: Path) -> None:
@@ -256,7 +256,7 @@ class MediaDatabase:
             conn.execute("""
                 CREATE VIRTUAL TABLE vec_index USING vec0(
                     asset_id INTEGER PRIMARY KEY,
-                    embedding FLOAT[512]
+                    embedding FLOAT[512] distance_metric=cosine
                 )
             """)
         conn.executescript("""
@@ -561,16 +561,26 @@ class MediaDatabase:
         threshold: float | None = None,
     ) -> list[tuple[int, float]]:
         """
-        KNN search. Returns list of (asset_id, distance) for the k nearest vectors.
+        KNN search using cosine distance. Returns list of (asset_id, distance)
+        for the k nearest vectors. Cosine distance ranges from 0.0 (identical)
+        to 2.0 (opposite), but normalized CLIP vectors typically stay in 0.0–1.0.
         If threshold is set, only returns results with distance < threshold.
         Uses a fresh connection for thread safety when called from Gradio workers.
         """
+        import numpy as np
+
         if len(query_embedding) != EMBEDDING_DIM:
             raise ValueError(f"embedding length must be {EMBEDDING_DIM}, got {len(query_embedding)}")
+        vec = np.array(query_embedding, dtype=np.float32)
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec = vec / norm
+        normalized = vec.tolist()
+
         fetch_k = k * 5 if threshold is not None else k
         conn = self._fresh_connection()
         try:
-            blob = sqlite_vec.serialize_float32(query_embedding)
+            blob = sqlite_vec.serialize_float32(normalized)
             rows = conn.execute(
                 "SELECT asset_id, distance FROM vec_index WHERE embedding MATCH ? AND k = ?",
                 (blob, fetch_k),
