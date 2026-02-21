@@ -155,7 +155,7 @@ def _init_minimal_db_for_app_tests(db_path: Path) -> None:
     """)
     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
     if row is None:
-        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[512] distance_metric=cosine)")
+        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[1152] distance_metric=cosine)")
     conn.commit()
     conn.close()
 

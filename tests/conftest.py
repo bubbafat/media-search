@@ -55,7 +55,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         conn.execute("""
             CREATE VIRTUAL TABLE vec_index USING vec0(
                 asset_id INTEGER PRIMARY KEY,
-                embedding FLOAT[512] distance_metric=cosine
+                embedding FLOAT[1152] distance_metric=cosine
             )
         """)
     conn.commit()

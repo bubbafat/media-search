@@ -771,15 +771,15 @@ def test_ensure_thumbnail_raises_when_ffmpeg_module_is_none(tmp_path: Path) -> N
             t.ensure_thumbnail(video, "y")
 
 
-# ---- CLIP first-run message ----
-def test_get_clip_model_prints_download_message_on_first_load() -> None:
-    """First time CLIP is loaded, print a message so the user knows the app hasn't frozen."""
-    # Cannot run real _get_clip_model in tests (mlx_embeddings imports MLX/Metal). Verify the
+# ---- Embedder first-run message ----
+def test_get_embedder_model_prints_download_message_on_first_load() -> None:
+    """First time SigLIP is loaded, print a message so the user knows the app hasn't frozen."""
+    # Cannot run real _get_embedder_model in tests (mlx_embeddings imports MLX/Metal). Verify the
     # implementation contains the first-run message so users see it when the model actually loads.
     import mediasearch as ms
     from pathlib import Path
     mediasearch_py = Path(ms.__file__).read_text()
-    assert "Downloading CLIP model weights (first run only)" in mediasearch_py
+    assert "Downloading SigLIP model weights (first run only)" in mediasearch_py
     assert "print(" in mediasearch_py and "flush=True" in mediasearch_py
 
 
@@ -787,7 +787,7 @@ def test_get_clip_model_prints_download_message_on_first_load() -> None:
 def test_get_image_embeddings_batch_empty_returns_empty_without_loading() -> None:
     """get_image_embeddings_batch([]) returns [] and does not load the model."""
     embedder = ImageEmbedder()
-    with patch("mediasearch._get_clip_model") as mock_load:
+    with patch("mediasearch._get_embedder_model") as mock_load:
         result = embedder.get_image_embeddings_batch([])
     assert result == []
     mock_load.assert_not_called()
@@ -914,7 +914,7 @@ def test_run_fast_sync_invalid_path_raises(tmp_path: Path) -> None:
     """)
     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
     if row is None:
-        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[512])")
+        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[1152])")
     conn.commit()
     conn.close()
     db = MediaDatabase(db_path)
@@ -965,7 +965,7 @@ def test_run_fast_sync_processes_new_and_modified_counts(tmp_path: Path) -> None
     """)
     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
     if row is None:
-        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[512])")
+        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[1152])")
     conn.commit()
     conn.close()
 
@@ -1034,7 +1034,7 @@ def test_run_rebuild_with_progress_is_incremental_does_not_wipe_existing(
     """)
     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_index'").fetchone()
     if row is None:
-        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[512])")
+        conn.execute("CREATE VIRTUAL TABLE vec_index USING vec0(asset_id INTEGER PRIMARY KEY, embedding FLOAT[1152])")
     conn.commit()
     # Pre-insert an asset (simulating prior scan)
     conn.execute(

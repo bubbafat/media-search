@@ -34,8 +34,9 @@ try:
 except ImportError:
     ffmpeg = None  # type: ignore[assignment]
 
-# MLX-CLIP for visual search (optional; requires Apple Silicon with Metal).
-CLIP_MODEL_NAME = "mlx-community/clip-vit-base-patch32"
+# SigLIP for visual search (optional; requires Apple Silicon with Metal).
+# mlx-community/siglip-so400m-patch14-384 uses 384x384 input and produces 1152-dim embeddings.
+EMBEDDER_MODEL_NAME = "mlx-community/siglip-so400m-patch14-384"
 _embedder_model: object | None = None
 _embedder_processor: object | None = None
 _use_metal: bool = True
@@ -49,24 +50,22 @@ def set_embedding_device(use_metal: bool) -> None:
     _embedder_processor = None
 
 
-def _get_clip_model() -> tuple[object, object]:
-    """Load CLIP model and processor (cached per process). Returns (model, processor)."""
+def _get_embedder_model() -> tuple[object, object]:
+    """Load SigLIP model and processor (cached per process). Returns (model, processor)."""
     global _embedder_model, _embedder_processor
     if _embedder_model is not None:
         return _embedder_model, _embedder_processor
     if not _use_metal:
         import mlx.core as mx
         mx.set_default_device(mx.cpu)
-    print("[INFO] Downloading CLIP model weights (first run only)...", flush=True)
+    print("[INFO] Downloading SigLIP model weights (first run only)...", flush=True)
     try:
-        # mlx-community/clip-vit-base-patch32 uses weights.npz and is not supported by
-        # mlx_embeddings (no "clip" model type). Load via our mlx-examples-style loader.
-        from _clip_mlx import load_clip_from_hf
-        _embedder_model, _embedder_processor = load_clip_from_hf(CLIP_MODEL_NAME)
+        from mlx_embeddings import load
+        _embedder_model, _embedder_processor = load(EMBEDDER_MODEL_NAME)
         return _embedder_model, _embedder_processor
     except Exception as e:
         raise RuntimeError(
-            f"Failed to load CLIP model {CLIP_MODEL_NAME}. "
+            f"Failed to load SigLIP model {EMBEDDER_MODEL_NAME}. "
             "Requires Apple Silicon with Metal. "
             f"Original error: {e}"
         ) from e
@@ -84,14 +83,14 @@ MEDIA_EXTENSIONS: dict[str, str] = {
     ".mov": "VIDEO",
 }
 
-# Vector dimension for embeddings (e.g. MLX VLM or similar).
-EMBEDDING_DIM = 512
+# Vector dimension for SigLIP-so400m embeddings.
+EMBEDDING_DIM = 1152
 
 # ExifTool binary (Homebrew on Apple Silicon).
 EXIFTOOL_PATH = "/opt/homebrew/bin/exiftool"
 
-# Video thumbnail size (square frame for embedding models).
-THUMB_SIZE = 224
+# Video thumbnail size (square frame for embedding models). SigLIP expects 384x384 input.
+THUMB_SIZE = 384
 THUMB_TIME_SEC = 1.0
 
 # Sparse hash: for files larger than this, hash first/middle/last 1MB only.
@@ -160,7 +159,7 @@ class MediaDatabase:
 
     Schema:
       - assets: id, path, hash (unique), mtime, type, capture_date, lat, lon
-      - vec_index: vec0 virtual table (asset_id integer, embedding float[512] distance_metric=cosine)
+      - vec_index: vec0 virtual table (asset_id integer, embedding float[1152] distance_metric=cosine)
     """
 
     def __init__(self, db_path: Path) -> None:
@@ -256,7 +255,7 @@ class MediaDatabase:
             conn.execute("""
                 CREATE VIRTUAL TABLE vec_index USING vec0(
                     asset_id INTEGER PRIMARY KEY,
-                    embedding FLOAT[512] distance_metric=cosine
+                    embedding FLOAT[1152] distance_metric=cosine
                 )
             """)
         conn.executescript("""
@@ -898,12 +897,12 @@ def _mlx_array_to_list(vec: object) -> list[float]:
 
 class ImageEmbedder:
     """
-    MLX-CLIP embedder for image and text. Uses mlx-community/clip-vit-base-patch32
-    (via mlx_embeddings) to produce 512-dim vectors for visual search.
+    SigLIP embedder for image and text. Uses mlx-community/siglip-so400m-patch14-384
+    (via mlx_embeddings) with 384x384 input resolution to produce 1152-dim vectors.
     Model is loaded lazily on first use (get_image_embedding or get_text_embedding).
     """
 
-    def __init__(self, model_name: str = CLIP_MODEL_NAME) -> None:
+    def __init__(self, model_name: str = EMBEDDER_MODEL_NAME) -> None:
         self.model_name = model_name
         self._model: object | None = None
         self._processor: object | None = None
@@ -912,11 +911,11 @@ class ImageEmbedder:
     def _model_and_processor(self) -> tuple[object, object]:
         """Load model and processor on first access (lazy); cached for the process."""
         if self._model is None:
-            self._model, self._processor = _get_clip_model()
+            self._model, self._processor = _get_embedder_model()
         return self._model, self._processor
 
     def get_image_embedding(self, image_path: Path | str) -> list[float]:
-        """Return a 512-dim embedding vector for the image at image_path."""
+        """Return a 1152-dim embedding vector for the image at image_path. Input resized to 384x384."""
         import mlx.core as mx
         from PIL import Image
         path = Path(image_path)
@@ -924,23 +923,20 @@ class ImageEmbedder:
             raise FileNotFoundError(str(path))
         model, proc = self._model_and_processor
         image = Image.open(path).convert("RGB")
+        # Processor resizes to 384x384 (SigLIP patch14-384) and normalizes
         inputs = proc(images=image, return_tensors="np", padding=True)
         pv = inputs["pixel_values"]
         if len(pv.shape) == 4 and pv.shape[1] == 3:
-            pv = pv.transpose(0, 2, 3, 1)
+            pv = pv.transpose(0, 2, 3, 1)  # NCHW -> NHWC for MLX
         pixel_values = mx.array(pv).astype(mx.float32)
-        if hasattr(model, "get_image_features"):
-            out = model.get_image_features(pixel_values=pixel_values)
-        else:
-            out = model(pixel_values=pixel_values)
-            out = getattr(out, "image_embeds", getattr(out, "last_hidden_state", out))
+        out = model.get_image_features(pixel_values=pixel_values)
         vec = out[0] if hasattr(out, "__getitem__") else out
         return _mlx_array_to_list(vec)
 
     def get_image_embeddings_batch(
         self, image_paths: list[Path | str]
     ) -> list[list[float]]:
-        """Return 512-dim embedding vectors for a batch of images (GPU-efficient)."""
+        """Return 1152-dim embedding vectors for a batch of images (GPU-efficient). Inputs resized to 384x384."""
         if not image_paths:
             return []
         import mlx.core as mx
@@ -955,26 +951,18 @@ class ImageEmbedder:
         inputs = proc(images=images, return_tensors="np", padding=True)
         pv = inputs["pixel_values"]
         if len(pv.shape) == 4 and pv.shape[1] == 3:
-            pv = pv.transpose(0, 2, 3, 1)
+            pv = pv.transpose(0, 2, 3, 1)  # NCHW -> NHWC for MLX
         pixel_values = mx.array(pv).astype(mx.float32)
-        if hasattr(model, "get_image_features"):
-            out = model.get_image_features(pixel_values=pixel_values)
-        else:
-            out = model(pixel_values=pixel_values)
-            out = getattr(out, "image_embeds", getattr(out, "last_hidden_state", out))
+        out = model.get_image_features(pixel_values=pixel_values)
         return [_mlx_array_to_list(out[i]) for i in range(len(images))]
 
     def get_text_embedding(self, text_query: str) -> list[float]:
-        """Return a 512-dim embedding vector for the text query."""
+        """Return a 1152-dim embedding vector for the text query."""
         import mlx.core as mx
         model, proc = self._model_and_processor
         inputs = proc(text=[text_query], return_tensors="np", padding=True, truncation=True)
         input_ids = mx.array(inputs["input_ids"])
-        if hasattr(model, "get_text_features"):
-            out = model.get_text_features(input_ids=input_ids)
-        else:
-            out = model(input_ids=input_ids)
-            out = getattr(out, "text_embeds", getattr(out, "last_hidden_state", out))
+        out = model.get_text_features(input_ids=input_ids)
         vec = out[0] if hasattr(out, "__getitem__") else out
         return _mlx_array_to_list(vec)
 
