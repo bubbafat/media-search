@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Ingestion script: scan directory, tag images via Moondream2, embed via SigLIP, store in database.
-Uses database.DatabaseManager for storage; tagging and mediasearch for model inference.
+Uses MediaDatabase (unified database layer) for storage; tagging and mediasearch for model inference.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from database import DatabaseManager, EMBEDDING_DIM
+from media_database import MediaDatabase
 from mediasearch import ImageEmbedder
 from tagging import get_image_tags
 
@@ -28,7 +28,7 @@ def get_file_type(path: Path) -> str:
 
 
 def ingest_directory(
-    db: DatabaseManager,
+    db: MediaDatabase,
     embedder: ImageEmbedder,
     root: Path,
     extensions: frozenset[str],
@@ -97,8 +97,8 @@ def main() -> int:
 
     exts = frozenset(e.strip().lower() for e in args.extensions.split(",") if e.strip())
 
-    with DatabaseManager(args.db) as db:
-        db.create_tables()
+    with MediaDatabase(args.db) as db:
+        db.init_schema()
         embedder = ImageEmbedder()
         logger.info("Ingesting from %s...", args.path)
         count = ingest_directory(db, embedder, args.path, exts)

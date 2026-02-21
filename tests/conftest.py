@@ -53,8 +53,9 @@ def db_conn() -> sqlite3.Connection:
 
 @pytest.fixture
 def clear_db(db_conn: sqlite3.Connection) -> None:
-    """Clear assets, vec_index, and indexed_directories before each test."""
+    """Clear tags, vec_index, assets, and indexed_directories before each test."""
     db_conn.execute("DELETE FROM vec_index")
+    db_conn.execute("DELETE FROM tags")
     db_conn.execute("DELETE FROM assets")
     try:
         db_conn.execute("DELETE FROM indexed_directories")

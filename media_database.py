@@ -1,13 +1,16 @@
 """
-MediaDatabase — SQLite + sqlite-vec layer for asset metadata and vector embeddings.
-Used by mediasearch and the Gradio app for indexing and semantic search.
+MediaDatabase — Unified SQLite + sqlite-vec layer for asset metadata, tags, and vector embeddings.
+Used by mediasearch, the Gradio app, and ingest.py for indexing, tagging, and semantic search.
 """
 
 from __future__ import annotations
 
 import logging
 import sqlite3
+import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import sqlite_vec
 
@@ -89,6 +92,20 @@ class MediaDatabase:
     def __exit__(self, *args: object) -> None:
         self.close()
 
+    @contextmanager
+    def cursor(self) -> Iterator[sqlite3.Cursor]:
+        """Context manager for a cursor. Ensures rollback on exception."""
+        conn = self.connect()
+        cur = conn.cursor()
+        try:
+            yield cur
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cur.close()
+
     def init_schema(self) -> None:
         """Create all tables via database module. Idempotent."""
         from database import _create_schema
@@ -160,6 +177,116 @@ class MediaDatabase:
             rows,
         )
         conn.commit()
+
+    def add_asset(
+        self,
+        path: str,
+        file_type: str,
+        *,
+        file_hash: str = "",
+        mtime: float = 0.0,
+        capture_date: str | None = None,
+        lat: float | None = None,
+        lon: float | None = None,
+    ) -> int:
+        """
+        Insert asset. Returns asset_id. On path conflict, updates and returns existing id.
+        Supports optional metadata (hash, mtime, capture_date, lat, lon) for flexible ingestion.
+        """
+        conn = self.connect()
+        conn.execute(
+            """
+            INSERT INTO assets (path, hash, mtime, type, capture_date, lat, lon)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                hash = excluded.hash,
+                mtime = excluded.mtime,
+                type = excluded.type,
+                capture_date = excluded.capture_date,
+                lat = excluded.lat,
+                lon = excluded.lon
+            """,
+            (path, file_hash, mtime, file_type, capture_date, lat, lon),
+        )
+        conn.commit()
+        row = conn.execute("SELECT id FROM assets WHERE path = ?", (path,)).fetchone()
+        assert row is not None
+        return row["id"]
+
+    def link_tags(self, asset_id: int, tags: list[str]) -> None:
+        """Replace tags for asset_id. Clears existing tags, inserts new ones."""
+        conn = self.connect()
+        conn.execute("DELETE FROM tags WHERE asset_id = ?", (asset_id,))
+        for tag in tags:
+            tag_clean = tag.strip().lower()
+            if tag_clean:
+                conn.execute(
+                    "INSERT OR IGNORE INTO tags (asset_id, tag) VALUES (?, ?)",
+                    (asset_id, tag_clean),
+                )
+        conn.commit()
+
+    def add_tags(self, asset_id: int, tags: list[str]) -> None:
+        """Alias for link_tags."""
+        self.link_tags(asset_id, tags)
+
+    def ingest_asset(
+        self,
+        file_path: str,
+        file_type: str,
+        tags: list[str],
+        embedding: list[float],
+        *,
+        file_hash: str = "",
+        mtime: float = 0.0,
+        capture_date: str | None = None,
+        lat: float | None = None,
+        lon: float | None = None,
+    ) -> int:
+        """
+        Insert asset, tags, and embedding in a single transaction.
+        Returns asset_id. On failure, rolls back (no partial insert).
+        Supports optional metadata for future unified ingestion pipeline.
+        """
+        if len(embedding) != EMBEDDING_DIM:
+            raise ValueError(f"embedding length must be {EMBEDDING_DIM}, got {len(embedding)}")
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO assets (path, hash, mtime, type, capture_date, lat, lon)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    hash = excluded.hash,
+                    mtime = excluded.mtime,
+                    type = excluded.type,
+                    capture_date = excluded.capture_date,
+                    lat = excluded.lat,
+                    lon = excluded.lon
+                """,
+                (file_path, file_hash, mtime, file_type, capture_date, lat, lon),
+            )
+            row = cur.execute(
+                "SELECT id FROM assets WHERE path = ?", (file_path,)
+            ).fetchone()
+            assert row is not None
+            asset_id = row[0]
+
+            cur.execute("DELETE FROM tags WHERE asset_id = ?", (asset_id,))
+            for tag in tags:
+                tag_clean = tag.strip().lower()
+                if tag_clean:
+                    cur.execute(
+                        "INSERT OR IGNORE INTO tags (asset_id, tag) VALUES (?, ?)",
+                        (asset_id, tag_clean),
+                    )
+
+            blob = sqlite_vec.serialize_float32(embedding)
+            cur.execute(
+                "INSERT OR REPLACE INTO vec_index (asset_id, embedding) VALUES (?, ?)",
+                (asset_id, blob),
+            )
+
+        return asset_id
 
     def get_assets_count(self) -> int:
         """Return COUNT(*) FROM assets. Thread-safe."""
@@ -374,6 +501,14 @@ class MediaDatabase:
         """Insert or replace the embedding for an asset using sqlite_vec.serialize_float32."""
         self.set_embedding(asset_id, vector)
 
+    def add_embedding(self, asset_id: int, embedding: list[float]) -> None:
+        """Store or replace embedding for asset_id. Alias for set_embedding."""
+        self.set_embedding(asset_id, embedding)
+
+    def upsert_vector(self, asset_id: int, embedding: list[float]) -> None:
+        """Alias for add_embedding."""
+        self.add_embedding(asset_id, embedding)
+
     def search(
         self,
         query_embedding: list[float],
@@ -414,19 +549,19 @@ class MediaDatabase:
                 conn.close()
 
     def delete_asset_by_path(self, path: str) -> None:
-        """Remove asset and its embedding by path."""
+        """Remove asset, its tags, and embedding by path."""
         conn = self.connect()
         row = conn.execute("SELECT id FROM assets WHERE path = ?", (path,)).fetchone()
         if row is None:
             return
         asset_id = row["id"]
+        conn.execute("DELETE FROM tags WHERE asset_id = ?", (asset_id,))
         conn.execute("DELETE FROM vec_index WHERE asset_id = ?", (asset_id,))
         conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
         conn.commit()
 
     def add_directory(self, path: str) -> None:
         """Save a root directory to indexed_directories. Path is normalized (resolved, trailing /)."""
-        import time
         p = str(Path(path).expanduser().resolve())
         if not p.endswith("/"):
             p = p + "/"
@@ -478,7 +613,6 @@ class MediaDatabase:
 
     def update_directory_scan_stats(self, path: str, duration_seconds: float) -> None:
         """Set last_scanned and last_scan_duration for the directory. Path normalized."""
-        import time
         p = str(Path(path).expanduser().resolve())
         if not p.endswith("/"):
             p = p + "/"
@@ -506,6 +640,7 @@ class MediaDatabase:
         ).fetchall()
         ids = [r["id"] for r in rows]
         for aid in ids:
+            conn.execute("DELETE FROM tags WHERE asset_id = ?", (aid,))
             conn.execute("DELETE FROM vec_index WHERE asset_id = ?", (aid,))
         conn.execute("DELETE FROM assets WHERE path LIKE ? OR path = ?", (p + "%", p.rstrip("/")))
         conn.execute("DELETE FROM indexed_directories WHERE path = ?", (p,))
