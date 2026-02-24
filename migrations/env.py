@@ -5,11 +5,18 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-# Import SQLModel metadata for autogenerate when models exist
-# from sqlmodel import SQLModel
-# from src.models import *  # noqa: F401, F403
-# target_metadata = SQLModel.metadata
-target_metadata = None
+# Import SQLModel metadata and all models so Alembic can autogenerate
+from sqlmodel import SQLModel
+
+from src.models.entities import (  # noqa: F401 - register tables with metadata
+    AIModel,
+    Asset,
+    Library,
+    VideoFrame,
+    WorkerStatus,
+)
+
+target_metadata = SQLModel.metadata
 
 config = context.config
 if config.config_file_name is not None:

@@ -1,10 +1,19 @@
 # Project Laws
 
+## Requirements
+- The broad project requirements are in docs/specs/requirements.md - refer to this document when making plans. If a request is incompatible with one of the requirements, do not perform any actions until you have notified me and sought input.
+
 ## Postgres Only
 Use PostgreSQL 16+ features (JSONB, TSVector, FOR UPDATE SKIP LOCKED). Never use SQLite.
 
 ## Test-Driven
-Every feature implementation MUST be accompanied by a pytest file using testcontainers-python.
+- Every feature implementation MUST be accompanied by a pytest file using testcontainers-python.
+
+- **Migration Verification:** Every time an Alembic migration is generated, a corresponding test in `tests/test_migrations.py` must be updated/added. 
+- This test must:
+  1. Use `testcontainers` to start a fresh Postgres instance.
+  2. Run `alembic upgrade head` to verify the migration script is syntactically correct and respects Postgres 16 constraints.
+  3. Run `alembic downgrade base` (or -1) to ensure the migration is reversible.
 
 ## Repository Pattern
 Database access must be abstracted into Repository classes. No ORM calls in business logic.
@@ -14,3 +23,4 @@ All workers must inherit from BaseWorker and implement handle_signal(command).
 
 ## Environment
 The development environment is using uv so any time a command is given that requires uv (whether executed by you or displayed for me), ensure that the full uv command is shown.
+

@@ -1,4 +1,27 @@
 """SQLModel table/entity definitions. Used by Repository layer only."""
 
-# Import models here, e.g.:
-# from src.models.foo import Foo
+from src.models.entities import (
+    AIModel,
+    Asset,
+    AssetStatus,
+    AssetType,
+    Library,
+    ScanStatus,
+    VideoFrame,
+    WorkerCommand,
+    WorkerStatus,
+    WorkerState,
+)
+
+__all__ = [
+    "AIModel",
+    "Asset",
+    "AssetStatus",
+    "AssetType",
+    "Library",
+    "ScanStatus",
+    "VideoFrame",
+    "WorkerCommand",
+    "WorkerStatus",
+    "WorkerState",
+]
