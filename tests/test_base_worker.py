@@ -23,30 +23,30 @@ class _ConcreteWorker(BaseWorker):
         super().__init__(*args, **kwargs)
         self.process_task_calls: list[float] = []
 
-    def handle_signal(self, command: str) -> None:
-        if command == "pause":
-            self._state = WorkerState.paused
-            self._repo.set_state(self.worker_id, WorkerState.paused)
-        elif command == "resume":
-            self._state = WorkerState.idle
-            self._repo.set_state(self.worker_id, WorkerState.idle)
-        elif command == "shutdown":
-            self.should_exit = True
-            self._repo.set_state(self.worker_id, WorkerState.offline)
-
     def process_task(self) -> None:
         self.process_task_calls.append(time.monotonic())
 
 
+def _create_repo_and_tables(engine, session_factory) -> WorkerRepository:
+    """Helper to initialize WorkerRepository and create the worker_status table."""
+    SQLModel.metadata.create_all(engine)
+    return WorkerRepository(session_factory)
+
+
+def _start_worker_in_thread(worker: BaseWorker) -> threading.Thread:
+    """Start a worker.run() loop in a daemon thread and return the thread."""
+    thread = threading.Thread(target=worker.run)
+    thread.start()
+    return thread
+
+
 def test_worker_start_creates_worker_status_record(engine, _session_factory):
     """Starting a worker creates a WorkerStatus row."""
-    SQLModel.metadata.create_all(engine)
-    repo = WorkerRepository(_session_factory)
+    repo = _create_repo_and_tables(engine, _session_factory)
     worker = _ConcreteWorker("test-worker-1", repo, heartbeat_interval_seconds=60)
     worker.should_exit = True
 
-    thread = threading.Thread(target=worker.run)
-    thread.start()
+    thread = _start_worker_in_thread(worker)
     time.sleep(0.3)
     thread.join(timeout=2)
 
@@ -62,16 +62,14 @@ def test_worker_start_creates_worker_status_record(engine, _session_factory):
 
 def test_heartbeat_updates_last_seen_at(engine, _session_factory):
     """Heartbeat thread updates last_seen_at periodically."""
-    SQLModel.metadata.create_all(engine)
-    repo = WorkerRepository(_session_factory)
+    repo = _create_repo_and_tables(engine, _session_factory)
     worker = _ConcreteWorker(
         "heartbeat-worker",
         repo,
         heartbeat_interval_seconds=0.5,
     )
 
-    thread = threading.Thread(target=worker.run)
-    thread.start()
+    thread = _start_worker_in_thread(worker)
     time.sleep(0.2)
 
     session = _session_factory()
@@ -98,8 +96,7 @@ def test_heartbeat_updates_last_seen_at(engine, _session_factory):
 
 def test_pause_command_transitions_state_and_stops_process_task(engine, _session_factory):
     """When DB command is 'pause', worker transitions to paused and stops calling process_task."""
-    SQLModel.metadata.create_all(engine)
-    repo = WorkerRepository(_session_factory)
+    repo = _create_repo_and_tables(engine, _session_factory)
     worker = _ConcreteWorker(
         "pause-worker",
         repo,
@@ -113,8 +110,7 @@ def test_pause_command_transitions_state_and_stops_process_task(engine, _session
     finally:
         session.close()
 
-    thread = threading.Thread(target=worker.run)
-    thread.start()
+    thread = _start_worker_in_thread(worker)
 
     time.sleep(0.25)
     n_before_pause = len(worker.process_task_calls)
@@ -147,8 +143,7 @@ def test_pause_command_transitions_state_and_stops_process_task(engine, _session
 
 def test_shutdown_command_causes_graceful_exit(engine, _session_factory):
     """Setting command to 'shutdown' causes worker to set state offline and exit the loop."""
-    SQLModel.metadata.create_all(engine)
-    repo = WorkerRepository(_session_factory)
+    repo = _create_repo_and_tables(engine, _session_factory)
     worker = _ConcreteWorker(
         "shutdown-worker",
         repo,
@@ -201,17 +196,11 @@ from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
 from src.models.entities import WorkerState
 
+
 class MinimalWorker(BaseWorker):
-    def handle_signal(self, command):
-        if command == "pause":
-            self._state = WorkerState.paused
-            self._repo.set_state(self.worker_id, WorkerState.paused)
-        elif command == "resume":
-            self._state = WorkerState.idle
-            self._repo.set_state(self.worker_id, WorkerState.idle)
-        elif command == "shutdown":
-            self.should_exit = True
-            self._repo.set_state(self.worker_id, WorkerState.offline)
+    # Use the default BaseWorker.handle_signal implementation.
+    pass
+
 
 engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
 session_factory = sessionmaker(engine, autocommit=False, autoflush=False, expire_on_commit=False)

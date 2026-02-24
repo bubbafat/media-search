@@ -1,7 +1,8 @@
 """Worker status repository: register, heartbeat, command, state. No ORM in business logic."""
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from sqlalchemy.orm import Session
 
@@ -14,19 +15,36 @@ def _utcnow() -> datetime:
 
 
 class WorkerRepository:
-    """Database access for worker_status. All worker status reads/writes go through this."""
+    """
+    Database access for worker_status.
+
+    All worker status reads/writes go through this coarse-grained repository, so workers and
+    higher-level components do not talk to the ORM directly.
+    """
 
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
 
-    def _session(self) -> Session:
-        return self._session_factory()
+    @contextmanager
+    def _session_scope(self, write: bool = False) -> Iterator[Session]:
+        """
+        Provide a transactional scope for a series of ORM operations.
+
+        When write=True, the session is committed on successful exit; otherwise it is treated
+        as read-only. In all cases, the session is closed in a finally block.
+        """
+        session = self._session_factory()
+        try:
+            yield session
+            if write:
+                session.commit()
+        finally:
+            session.close()
 
     def register_worker(self, worker_id: str, state: str | WorkerState) -> None:
-        """Upsert a row in worker_status (insert or update state/command)."""
+        """Upsert a row in worker_status (insert or update state/command for a single worker)."""
         state_str = state.value if isinstance(state, WorkerState) else state
-        session = self._session()
-        try:
+        with self._session_scope(write=True) as session:
             row = session.get(WorkerStatusEntity, worker_id)
             now = _utcnow()
             if row is None:
@@ -42,53 +60,35 @@ class WorkerRepository:
             else:
                 row.state = WorkerState(state_str)
                 row.last_seen_at = now
-            session.commit()
-        finally:
-            session.close()
 
     def update_heartbeat(self, worker_id: str, stats: dict[str, Any] | None = None) -> None:
         """Update last_seen_at and optional stats for the worker."""
-        session = self._session()
-        try:
+        with self._session_scope(write=True) as session:
             row = session.get(WorkerStatusEntity, worker_id)
             if row is not None:
                 row.last_seen_at = _utcnow()
                 if stats is not None:
                     row.stats = stats
-                session.commit()
-        finally:
-            session.close()
 
     def get_command(self, worker_id: str) -> str:
         """Return the current value of the command column (e.g. 'none', 'pause', 'shutdown')."""
-        session = self._session()
-        try:
+        with self._session_scope(write=False) as session:
             row = session.get(WorkerStatusEntity, worker_id)
             if row is None:
                 return WorkerCommand.none.value
             return row.command.value
-        finally:
-            session.close()
 
     def set_state(self, worker_id: str, state: str | WorkerState) -> None:
         """Update the worker's current state."""
         state_str = state.value if isinstance(state, WorkerState) else state
-        session = self._session()
-        try:
+        with self._session_scope(write=True) as session:
             row = session.get(WorkerStatusEntity, worker_id)
             if row is not None:
                 row.state = WorkerState(state_str)
-                session.commit()
-        finally:
-            session.close()
 
     def clear_command(self, worker_id: str) -> None:
         """Set the worker's command back to 'none' after handling."""
-        session = self._session()
-        try:
+        with self._session_scope(write=True) as session:
             row = session.get(WorkerStatusEntity, worker_id)
             if row is not None:
                 row.command = WorkerCommand.none
-                session.commit()
-        finally:
-            session.close()

@@ -4,7 +4,7 @@ import logging
 import signal
 import threading
 import time
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Any
 
 from src.core.logging import get_flight_logger
@@ -31,10 +31,40 @@ class BaseWorker(ABC):
         self.should_exit = False
         self._heartbeat_thread: threading.Thread | None = None
 
-    @abstractmethod
+    def _set_state(self, new_state: WorkerState, persist: bool = True) -> None:
+        """
+        Update the in-memory worker state and, when persist is True, write it to the repository.
+        Subclasses should prefer this helper over mutating _state and calling repo.set_state directly.
+        """
+        self._state = new_state
+        if persist:
+            self._repo.set_state(self.worker_id, new_state)
+
+    def _handle_pause(self) -> None:
+        """Transition to paused state."""
+        self._set_state(WorkerState.paused)
+
+    def _handle_resume(self) -> None:
+        """Transition back to idle state."""
+        self._set_state(WorkerState.idle)
+
+    def _handle_shutdown(self) -> None:
+        """Transition to offline and request run-loop exit."""
+        self.should_exit = True
+        self._set_state(WorkerState.offline)
+
     def handle_signal(self, command: str) -> None:
-        """Process one command (pause, resume, shutdown). Manages transition between idle, processing, paused."""
-        ...
+        """
+        Default signal handler: supports pause, resume, shutdown, and forensic_dump.
+        Subclasses may override this method, but should normally call super().handle_signal(command)
+        to preserve the standard lifecycle transitions.
+        """
+        if command == "pause":
+            self._handle_pause()
+        elif command == "resume":
+            self._handle_resume()
+        elif command == "shutdown":
+            self._handle_shutdown()
 
     def process_task(self) -> None:
         """One unit of work. Override in subclasses; default no-op."""
@@ -85,9 +115,10 @@ class BaseWorker(ABC):
         try:
             while not self.should_exit:
                 cmd = self._repo.get_command(self.worker_id)
-                if cmd in ("pause", "resume", "shutdown", "forensic_dump"):
-                    self.handle_signal(cmd)
-                    if cmd == "forensic_dump":
+                if cmd != "none":
+                    if cmd in ("pause", "resume", "shutdown"):
+                        self.handle_signal(cmd)
+                    elif cmd == "forensic_dump":
                         fl = get_flight_logger()
                         if fl is not None:
                             fl.dump(self.worker_id)
@@ -104,6 +135,7 @@ class BaseWorker(ABC):
                 time.sleep(0.1)
         finally:
             self.should_exit = True
-            self._repo.set_state(self.worker_id, WorkerState.offline)
+            # Ensure the worker is marked offline when the loop exits, regardless of how we left it.
+            self._set_state(WorkerState.offline)
             if self._heartbeat_thread is not None:
                 self._heartbeat_thread.join(timeout=2.0)

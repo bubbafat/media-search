@@ -60,12 +60,24 @@ class FlightLogger(logging.Handler):
 
 
 def get_flight_logger() -> FlightLogger | None:
-    """Return the global FlightLogger handler if setup_logging() has been called."""
+    """
+    Return the global FlightLogger handler created by setup_logging(), if any.
+
+    This is intended primarily for worker lifecycle code (e.g. forensic_dump handling)
+    and for tests; application code should generally not mutate handlers directly.
+    """
     return _flight_logger
 
 
 def setup_logging() -> None:
-    """Configure root logger: DEBUG so all records reach handlers; FlightLogger buffers all; console at config level."""
+    """
+    Configure application logging.
+
+    Invariants:
+    - The root logger is set to DEBUG so that all records reach handlers.
+    - A console handler logs at the configured level from Settings.log_level.
+    - A FlightLogger handler captures all levels at DEBUG into an in-memory circular buffer.
+    """
     global _flight_logger
     cfg = get_config()
     console_level = getattr(logging, cfg.log_level.upper(), logging.INFO)
