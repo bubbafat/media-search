@@ -20,7 +20,7 @@
 - `slug` (String, PK): URL-safe unique identifier (e.g., `nas-main`).
 - `name` (String): Human-readable name.
 - `is_active` (Boolean): The master "Pause" switch. If `false`, no assets in this library may be claimed by any worker.
-- `scan_status` (Enum): `idle`, `scan_requested`, `scanning`.
+- `scan_status` (Enum): `idle`, `full_scan_requested`, `fast_scan_requested`, `scanning`.
 - `target_tagger_id` (FK): Links to `AIModel`. Defines the "Goal" state for assets within this library.
 - `sampling_limit` (Integer): The hard cap on frames extracted per video (Default: 100).
 - `sampling_policy` (JSONB): Configuration for the extraction strategy (e.g., threshold for mean-frame analysis).

@@ -1,16 +1,35 @@
-"""Verify Alembic migrations run and produce the expected schema (testcontainers Postgres)."""
+"""Verify Alembic migrations: empty DB → upgrade head → downgrade base (own Postgres, run with pytest -m migration)."""
 
 import os
 
-from sqlalchemy import text
+import pytest
+from sqlalchemy import create_engine, text
+from testcontainers.postgres import PostgresContainer
 
 from src.core import config as config_module
 
+EXPECTED_TABLES = ["aimodel", "asset", "library", "videoframe", "workerstatus"]
 
-def test_migration_upgrade_head(engine, postgres_container):
-    """Run Alembic upgrade head against testcontainer; verify expected tables exist."""
-    url = postgres_container.get_connection_url()
-    # Ensure config picks up the test DB URL when env.py calls get_url()
+
+@pytest.fixture(scope="module")
+def migration_postgres():
+    """Dedicated Postgres 16 container for migration tests only (empty DB)."""
+    with PostgresContainer("postgres:16") as postgres:
+        yield postgres
+
+
+@pytest.fixture(scope="module")
+def migration_engine(migration_postgres):
+    """Engine bound to the migration test container."""
+    url = migration_postgres.get_connection_url()
+    return create_engine(url, pool_pre_ping=True)
+
+
+@pytest.mark.migration
+@pytest.mark.order(1)
+def test_migration_01_upgrade_head(migration_postgres, migration_engine):
+    """Run Alembic upgrade head on empty DB; verify expected tables exist."""
+    url = migration_postgres.get_connection_url()
     prev = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = url
     config_module._config = None  # type: ignore[attr-defined]
@@ -23,7 +42,7 @@ def test_migration_upgrade_head(engine, postgres_container):
         alembic_cfg.set_main_option("script_location", "migrations")
         command.upgrade(alembic_cfg, "head")
 
-        with engine.connect() as conn:
+        with migration_engine.connect() as conn:
             result = conn.execute(
                 text(
                     "SELECT table_name FROM information_schema.tables "
@@ -33,7 +52,43 @@ def test_migration_upgrade_head(engine, postgres_container):
                 )
             )
             tables = [row[0] for row in result]
-        assert tables == ["aimodel", "asset", "library", "videoframe", "workerstatus"]
+        assert tables == EXPECTED_TABLES
+    finally:
+        if prev is not None:
+            os.environ["DATABASE_URL"] = prev
+        else:
+            os.environ.pop("DATABASE_URL", None)
+        config_module._config = None  # type: ignore[attr-defined]
+
+
+@pytest.mark.migration
+@pytest.mark.order(2)
+def test_migration_02_downgrade_base(migration_postgres, migration_engine):
+    """Run Alembic downgrade base; verify migration is reversible (tables dropped)."""
+    url = migration_postgres.get_connection_url()
+    prev = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = url
+    config_module._config = None  # type: ignore[attr-defined]
+
+    try:
+        from alembic import command
+        from alembic.config import Config
+
+        alembic_cfg = Config("alembic.ini")
+        alembic_cfg.set_main_option("script_location", "migrations")
+        command.downgrade(alembic_cfg, "base")
+
+        with migration_engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'public' "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'videoframe', 'workerstatus') "
+                    "ORDER BY table_name"
+                )
+            )
+            tables = [row[0] for row in result]
+        assert tables == []
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

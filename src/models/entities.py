@@ -44,6 +44,7 @@ class WorkerCommand(str, Enum):
     pause = "pause"
     resume = "resume"
     shutdown = "shutdown"
+    forensic_dump = "forensic_dump"
 
 
 # --- Tables (FK order: AIModel -> Library -> Asset -> VideoFrame; WorkerStatus standalone) ---
