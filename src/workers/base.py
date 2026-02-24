@@ -1,12 +1,13 @@
 """Base worker: lifecycle, heartbeat, signal handling. All workers must inherit and implement handle_signal(command)."""
 
+import logging
 import signal
 import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Any
 
-from src.core.flight_log import FlightLogger
+from src.core.logging import get_flight_logger
 from src.models.entities import WorkerState
 from src.repository.worker_repo import WorkerRepository
 
@@ -21,12 +22,10 @@ class BaseWorker(ABC):
         self,
         worker_id: str,
         repository: WorkerRepository,
-        flight_logger: FlightLogger,
         heartbeat_interval_seconds: float = 15.0,
     ) -> None:
         self.worker_id = worker_id
         self._repo = repository
-        self._flight_log = flight_logger
         self._heartbeat_interval = heartbeat_interval_seconds
         self._state = WorkerState.idle
         self.should_exit = False
@@ -57,7 +56,7 @@ class BaseWorker(ABC):
                     stats=self.get_heartbeat_stats(),
                 )
             except Exception:  # noqa: S110
-                self._flight_log.append("ERROR", "Heartbeat failed", exc_info=True)
+                logging.error("Heartbeat failed", exc_info=True)
 
     def _install_signal_handlers(self) -> None:
         """Register SIGINT and SIGTERM to set should_exit for graceful shutdown (main thread only)."""
@@ -86,8 +85,12 @@ class BaseWorker(ABC):
         try:
             while not self.should_exit:
                 cmd = self._repo.get_command(self.worker_id)
-                if cmd in ("pause", "resume", "shutdown"):
+                if cmd in ("pause", "resume", "shutdown", "forensic_dump"):
                     self.handle_signal(cmd)
+                    if cmd == "forensic_dump":
+                        fl = get_flight_logger()
+                        if fl is not None:
+                            fl.dump(self.worker_id)
                     self._repo.clear_command(self.worker_id)
 
                 if self.should_exit:

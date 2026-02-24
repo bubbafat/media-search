@@ -10,7 +10,6 @@ import time
 import pytest
 from sqlmodel import SQLModel
 
-from src.core.flight_log import FlightLogger
 from src.models.entities import WorkerCommand, WorkerState
 from src.models.entities import WorkerStatus as WorkerStatusEntity
 from src.repository.worker_repo import WorkerRepository
@@ -43,8 +42,7 @@ def test_worker_start_creates_worker_status_record(engine, _session_factory):
     """Starting a worker creates a WorkerStatus row."""
     SQLModel.metadata.create_all(engine)
     repo = WorkerRepository(_session_factory)
-    flight_log = FlightLogger("test-worker-1")
-    worker = _ConcreteWorker("test-worker-1", repo, flight_log, heartbeat_interval_seconds=60)
+    worker = _ConcreteWorker("test-worker-1", repo, heartbeat_interval_seconds=60)
     worker.should_exit = True
 
     thread = threading.Thread(target=worker.run)
@@ -66,11 +64,9 @@ def test_heartbeat_updates_last_seen_at(engine, _session_factory):
     """Heartbeat thread updates last_seen_at periodically."""
     SQLModel.metadata.create_all(engine)
     repo = WorkerRepository(_session_factory)
-    flight_log = FlightLogger("heartbeat-worker")
     worker = _ConcreteWorker(
         "heartbeat-worker",
         repo,
-        flight_log,
         heartbeat_interval_seconds=0.5,
     )
 
@@ -104,11 +100,9 @@ def test_pause_command_transitions_state_and_stops_process_task(engine, _session
     """When DB command is 'pause', worker transitions to paused and stops calling process_task."""
     SQLModel.metadata.create_all(engine)
     repo = WorkerRepository(_session_factory)
-    flight_log = FlightLogger("pause-worker")
     worker = _ConcreteWorker(
         "pause-worker",
         repo,
-        flight_log,
         heartbeat_interval_seconds=10,
     )
 
@@ -155,11 +149,9 @@ def test_shutdown_command_causes_graceful_exit(engine, _session_factory):
     """Setting command to 'shutdown' causes worker to set state offline and exit the loop."""
     SQLModel.metadata.create_all(engine)
     repo = WorkerRepository(_session_factory)
-    flight_log = FlightLogger("shutdown-worker")
     worker = _ConcreteWorker(
         "shutdown-worker",
         repo,
-        flight_log,
         heartbeat_interval_seconds=10,
     )
 
@@ -205,7 +197,6 @@ import sys
 sys.path.insert(0, os.getcwd())
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from src.core.flight_log import FlightLogger
 from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
 from src.models.entities import WorkerState
@@ -225,8 +216,7 @@ class MinimalWorker(BaseWorker):
 engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
 session_factory = sessionmaker(engine, autocommit=False, autoflush=False, expire_on_commit=False)
 repo = WorkerRepository(session_factory)
-flight_log = FlightLogger("sigterm-worker")
-worker = MinimalWorker("sigterm-worker", repo, flight_log, heartbeat_interval_seconds=60)
+worker = MinimalWorker("sigterm-worker", repo, heartbeat_interval_seconds=60)
 worker.run()
 """,
         ],

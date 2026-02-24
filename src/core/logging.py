@@ -1,18 +1,92 @@
-"""Structured logging setup."""
+"""Structured logging setup and FlightLogger circular-buffer handler for forensics."""
 
 import logging
 import sys
+from collections import deque
+from datetime import datetime, timezone
+from pathlib import Path
 
 from src.core.config import get_config
 
+FLIGHT_LOG_CAPACITY = 50_000
+DEFAULT_FORENSICS_DIR = "logs/forensics"
+
+
+_flight_logger: "FlightLogger | None" = None
+
+
+class FlightLogger(logging.Handler):
+    """
+    Circular buffer handler: keeps last 50,000 log records (all levels) in memory.
+    dump(worker_id, asset_id=None) writes buffer to logs/forensics/{worker_id}_{timestamp}.log.
+    """
+
+    def __init__(
+        self,
+        capacity: int = FLIGHT_LOG_CAPACITY,
+        forensics_dir: str | Path = DEFAULT_FORENSICS_DIR,
+    ) -> None:
+        super().__init__(level=logging.DEBUG)
+        self._buffer: deque[logging.LogRecord] = deque(maxlen=capacity)
+        self._forensics_dir = Path(forensics_dir)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._buffer.append(record)
+
+    def dump(
+        self,
+        worker_id: str,
+        asset_id: int | None = None,
+    ) -> str:
+        """Write buffer to forensics dir; return path to the written file."""
+        self._forensics_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        if asset_id is not None:
+            name = f"{worker_id}_{asset_id}_{timestamp}.log"
+        else:
+            name = f"{worker_id}_{timestamp}.log"
+        filepath = self._forensics_dir / name
+        formatter = self.formatter or logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        with open(filepath, "w") as f:
+            for record in self._buffer:
+                f.write(formatter.format(record) + "\n")
+        return str(filepath)
+
+    def __len__(self) -> int:
+        return len(self._buffer)
+
+
+def get_flight_logger() -> FlightLogger | None:
+    """Return the global FlightLogger handler if setup_logging() has been called."""
+    return _flight_logger
+
 
 def setup_logging() -> None:
-    """Configure root logger (level, format, handlers)."""
+    """Configure root logger: DEBUG so all records reach handlers; FlightLogger buffers all; console at config level."""
+    global _flight_logger
     cfg = get_config()
-    level = getattr(logging, cfg.log_level.upper(), logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        stream=sys.stdout,
-    )
+    console_level = getattr(logging, cfg.log_level.upper(), logging.INFO)
+
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    formatter = logging.Formatter(fmt, datefmt=datefmt)
+
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    # Remove existing handlers so we don't duplicate when called again
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(console_level)
+    console.setFormatter(formatter)
+    root.addHandler(console)
+
+    flight = FlightLogger(capacity=FLIGHT_LOG_CAPACITY)
+    flight.setLevel(logging.DEBUG)
+    flight.setFormatter(formatter)
+    root.addHandler(flight)
+    _flight_logger = flight
