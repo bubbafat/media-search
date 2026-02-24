@@ -1,0 +1,16 @@
+# Project Laws
+
+## Postgres Only
+Use PostgreSQL 16+ features (JSONB, TSVector, FOR UPDATE SKIP LOCKED). Never use SQLite.
+
+## Test-Driven
+Every feature implementation MUST be accompanied by a pytest file using testcontainers-python.
+
+## Repository Pattern
+Database access must be abstracted into Repository classes. No ORM calls in business logic.
+
+## BaseWorker Hook
+All workers must inherit from BaseWorker and implement handle_signal(command).
+
+## Environment
+The development environment is using uv so any time a command is given that requires uv (whether executed by you or displayed for me), ensure that the full uv command is shown.

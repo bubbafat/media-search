@@ -1,0 +1,5 @@
+# Alembic migrations (PostgreSQL 16+ only)
+
+Run from project root:
+  alembic revision --autogenerate -m "description"
+  alembic upgrade head
