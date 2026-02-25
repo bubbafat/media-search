@@ -45,7 +45,7 @@ def library_add(
         slug = lib_repo.add(name, absolute_path)
         typer.echo(f"Added library '{name}' with slug '{slug}'.")
     except ValueError as e:
-        typer.echo(str(e), err=True)
+        typer.secho(str(e), fg=typer.colors.RED)
         raise typer.Exit(1)
 
 

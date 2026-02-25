@@ -103,12 +103,18 @@ class LibraryRepository:
         """
         slug = _slugify(name)
         with self._session_scope(write=True) as session:
-            existing = session.execute(
-                text("SELECT 1 FROM library WHERE slug = :slug"),
+            row = session.execute(
+                text("SELECT deleted_at FROM library WHERE slug = :slug"),
                 {"slug": slug},
             ).fetchone()
-            if existing:
-                raise ValueError(f"Library slug already exists: {slug}")
+            if row is not None:
+                deleted_at = row[0]
+                if deleted_at is None:
+                    raise ValueError(f"An active library with the slug '{slug}' already exists.")
+                raise ValueError(
+                    f"A deleted library with the slug '{slug}' exists in the trash. "
+                    "Please restore it or use a different name."
+                )
             session.execute(
                 text(
                     "INSERT INTO library (slug, name, absolute_path, is_active, scan_status, sampling_limit) "
