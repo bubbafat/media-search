@@ -5,6 +5,18 @@ from pathlib import Path
 from src.core.config import get_config
 
 
+def get_library_root(library_slug: str) -> Path:
+    """
+    Return the absolute path of the library root for the given slug.
+    Raises ValueError if the slug is not in config.library_roots.
+    """
+    settings = get_config()
+    absolute_root = settings.library_roots.get(library_slug)
+    if absolute_root is None:
+        raise ValueError(f"Unknown library slug: {library_slug}")
+    return Path(absolute_root).resolve()
+
+
 def resolve_path(library_slug: str, rel_path: str) -> Path:
     """
     Resolve a library-relative path to an absolute Path. Verifies the file exists

@@ -53,6 +53,17 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             )
             tables = [row[0] for row in result]
         assert tables == EXPECTED_TABLES
+
+        # Assert asset has unique index on (library_id, rel_path) for ON CONFLICT
+        with migration_engine.connect() as conn:
+            idx = conn.execute(
+                text(
+                    "SELECT indexname, indexdef FROM pg_indexes "
+                    "WHERE tablename = 'asset' AND indexname = 'ix_asset_library_rel_path'"
+                )
+            ).fetchone()
+            assert idx is not None, "ix_asset_library_rel_path index must exist on asset"
+            assert "UNIQUE" in idx[1], "ix_asset_library_rel_path must be a unique index"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

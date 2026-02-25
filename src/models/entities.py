@@ -71,7 +71,9 @@ class Library(SQLModel, table=True):
 
 class Asset(SQLModel, table=True):
     __tablename__ = "asset"
-    __table_args__ = (Index("ix_asset_library_rel_path", "library_id", "rel_path"),)
+    __table_args__ = (
+        Index("ix_asset_library_rel_path", "library_id", "rel_path", unique=True),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     library_id: str = Field(foreign_key="library.slug")

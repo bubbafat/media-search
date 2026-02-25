@@ -1,5 +1,8 @@
 """Pytest fixtures. Use testcontainers-python for PostgreSQL in tests."""
 
+import contextlib
+import threading
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -38,3 +41,23 @@ def session(engine, _session_factory):
         session.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture
+def run_worker():
+    """
+    Yields a context manager that starts a worker in a daemon thread and stops it on exit.
+    Usage: with run_worker(worker): ... (do assertions while worker runs).
+    """
+
+    @contextlib.contextmanager
+    def _run(worker):
+        thread = threading.Thread(target=worker.run, daemon=True)
+        thread.start()
+        try:
+            yield worker
+        finally:
+            worker.should_exit = True
+            thread.join(timeout=5.0)
+
+    return _run
