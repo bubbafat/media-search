@@ -93,16 +93,16 @@ When a Video Worker processes an asset, it must follow this exact sequence:
 
 ## 6. Verification & Testing
 - **Testcontainers:** Every integration test must utilize a `postgres:16-alpine` container via the `testcontainers-python` library.
+- **Migration Enforcement:** - Every Alembic migration must have a test verifying `upgrade head` and `downgrade base`.
+    - Verification tests must explicitly assert the presence of the `Asset` composite index and the `TSVECTOR` column type in the resulting schema.
 
-
+---
 
 ## 7. Data Locality & The Proxy Pipeline
 To ensure high performance, UI responsiveness, and absolute security of the user's source media, MediaSearch v2 strictly enforces a **Proxy Architecture**. 
 
 - **Read-Only Source:** The user's original media directories (e.g., network NAS mounts) must be treated as **Read-Only**. Workers must never write hidden files, thumbnails, or metadata sidecars to the source directories.
 - **Local Application Cache:** All derivative files must be written to a dedicated, high-speed local storage directory (e.g., `/data`). To prevent filesystem limits, all cached files must be sharded by asset ID (e.g., `/data/thumbnails/{asset_id % 1000}/`).
-
-
 
 ### 7.1 The Three-Stage Processing State Machine
 Processing heavy media over a network requires separating I/O-bound tasks from GPU-bound tasks to prevent "Double-Read Penalties."
@@ -125,13 +125,9 @@ Deleting libraries with millions of associated assets and video frames via a sta
 - **Soft Deletion (`library remove`):** Sets `deleted_at = now()` on the Library. All standard Repositories automatically append `WHERE deleted_at IS NULL` to queries, instantly hiding the data without locking tables.
 - **Collision Prevention:** The system must actively prevent the creation of a new library if its generated slug matches a soft-deleted library in the trash, prompting the user to either restore the old library or choose a different name.
 
-
-
 ### 8.3 Chunked Hard Deletion ("Garbage Collection")
 When a library is permanently deleted (`trash empty`), the repository must execute a **Chunked Deletion Loop**:
 1. Iterate over the library's assets, deleting them in batches of 5,000 using `WHERE id IN (SELECT id ... LIMIT 5000)`.
 2. Commit the transaction after every batch to release DB locks and allow concurrent UI/Worker queries.
 3. Once all assets and frames are purged, physically delete the `Library` row.
 4. Physical local proxy files (thumbnails) orphaned by this process are eventually swept by a separate background Garbage Collector worker.
-- **Migration Enforcement:** - Every Alembic migration must have a test verifying `upgrade head` and `downgrade base`.
-    - Verification tests must explicitly assert the presence of the `Asset` composite index and the `TSVECTOR` column type in the resulting schema.
