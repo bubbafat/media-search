@@ -1,12 +1,13 @@
 """Asset and library scan repository: upsert assets, claim library for scanning, set scan status."""
 
+from collections.abc import Sequence
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from src.models.entities import AssetType, Library, ScanStatus
+from src.models.entities import Asset, AssetStatus, AssetType, Library, ScanStatus
 
 
 class AssetRepository:
@@ -128,3 +129,17 @@ class AssetRepository:
                 text("UPDATE library SET scan_status = :status WHERE slug = :slug"),
                 {"status": status.value, "slug": library_slug},
             )
+
+    def get_assets_by_library(
+        self,
+        library_id: str,
+        limit: int = 50,
+        status: AssetStatus | None = None,
+    ) -> Sequence[Asset]:
+        """Return assets for a library, optionally filtered by status, ordered by id desc."""
+        with self._session_scope(write=False) as session:
+            query = select(Asset).where(Asset.library_id == library_id)
+            if status is not None:
+                query = query.where(Asset.status == status)
+            query = query.order_by(Asset.id.desc()).limit(limit)
+            return session.execute(query).scalars().all()
