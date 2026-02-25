@@ -17,6 +17,7 @@ def test_asset_fk_to_library_and_aimodel(session, engine):
     library = Library(
         slug="lib1",
         name="Library 1",
+        absolute_path="/tmp/lib1",
         target_tagger_id=aimodel.id,
     )
     session.add(library)
