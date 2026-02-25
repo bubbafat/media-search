@@ -15,6 +15,7 @@ from src.core.config import get_config
 from src.models.entities import AssetStatus, ScanStatus, WorkerState
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
+from src.repository.search_repo import SearchRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.ai_worker import AIWorker
@@ -260,6 +261,38 @@ def asset_show(
         typer.echo(f"type: {asset.type.value}")
         typer.echo(f"status: {asset.status.value}")
         typer.echo(f"size: {size_kb} KB")
+
+
+@app.command("search")
+def search(
+    query: str = typer.Argument(None, help="Global search (e.g., 'man in blue shirt')"),
+    ocr: bool = typer.Option(False, "--ocr", help="Search only within extracted OCR text"),
+    library: str | None = typer.Option(None, "--library", help="Filter by library slug"),
+    limit: int = typer.Option(50, "--limit", help="Maximum number of results"),
+) -> None:
+    """Search assets by full-text query on visual analysis (vibe or OCR)."""
+    session_factory = _get_session_factory()
+    search_repo = SearchRepository(session_factory)
+    query_string = query if not ocr else None
+    ocr_query = query if ocr else None
+    assets = search_repo.search_assets(
+        query_string=query_string,
+        ocr_query=ocr_query,
+        library_slug=library,
+        limit=limit,
+    )
+    if not assets:
+        typer.secho("No matching assets found.", fg=typer.colors.YELLOW)
+        return
+    table = Table(title=None)
+    table.add_column("Library")
+    table.add_column("Relative Path")
+    table.add_column("Type")
+    table.add_column("Status")
+    for a in assets:
+        table.add_row(a.library_id, a.rel_path, a.type.value, a.status.value)
+    console = Console()
+    console.print(table)
 
 
 @app.command()

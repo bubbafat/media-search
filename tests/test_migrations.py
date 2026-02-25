@@ -199,6 +199,17 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 ).fetchone()
                 assert row is not None, f"asset.{col} must exist"
                 assert row[1] == udt, f"asset.{col} must be {udt} (udt_name={row[1]!r})"
+
+        # Assert asset has GIN FTS index on visual_analysis (migration 010)
+        with migration_engine.connect() as conn:
+            idx = conn.execute(
+                text(
+                    "SELECT indexname, indexdef FROM pg_indexes "
+                    "WHERE tablename = 'asset' AND indexname = 'ix_asset_fts'"
+                )
+            ).fetchone()
+            assert idx is not None, "ix_asset_fts index must exist on asset"
+            assert "gin" in idx[1].lower(), "ix_asset_fts must be a GIN index"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

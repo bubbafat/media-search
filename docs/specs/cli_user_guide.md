@@ -18,6 +18,7 @@ uv run media-search --help
 | `library`       | Add, remove, restore, and list libraries |
 | `trash`         | Manage soft-deleted libraries (list, empty one, empty all) |
 | `asset`         | List discovered assets for a library |
+| `search`        | Full-text search over asset visual analysis (vibe or OCR) |
 | `scan`          | Run a one-shot scan for a library (no daemon) |
 | `proxy`         | Start the proxy worker (thumbnails and proxies for pending assets) |
 | `ai`            | Manage AI models and workers (start worker, list/add/remove models) |
@@ -196,6 +197,34 @@ Exits with code 1 if the library is not found or soft-deleted, or if the asset i
 ```bash
 uv run media-search asset show nas-main photos/2024/IMG_001.jpg
 uv run media-search asset show nas-main photos/2024/IMG_001.jpg --metadata
+```
+
+---
+
+## search
+
+### search [query]
+
+Full-text search over asset `visual_analysis` (AI description, tags, and extracted text). By default the query is applied to the whole JSON (vibe search). With `--ocr`, the query is applied only to the extracted OCR text. Only one search path is used per run: either global or OCR, not both.
+
+Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **Status**. Ordered by asset modification time (newest first), limited by `--limit`. If no assets match, a yellow message is printed.
+
+| Argument | Description |
+|----------|-------------|
+| `query`  | Search string (optional; if omitted, returns assets subject to `--library` and `--limit`) |
+
+| Option | Description |
+|--------|-------------|
+| `--ocr` | Search only within extracted OCR text instead of the full visual analysis |
+| `--library` | Filter results to this library slug only |
+| `--limit` | Maximum number of results (default 50) |
+
+**Example:**
+
+```bash
+uv run media-search search "man in blue shirt"
+uv run media-search search "hamburger" --ocr
+uv run media-search search "beach" --library nas-main --limit 20
 ```
 
 ---

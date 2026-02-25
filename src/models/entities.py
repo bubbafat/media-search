@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
-from sqlalchemy import Column, Index, UniqueConstraint
+from sqlalchemy import Column, Index, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -79,6 +79,11 @@ class Asset(SQLModel, table=True):
     __tablename__ = "asset"
     __table_args__ = (
         Index("ix_asset_library_rel_path", "library_id", "rel_path", unique=True),
+        Index(
+            "ix_asset_fts",
+            text("to_tsvector('english', visual_analysis)"),
+            postgresql_using="gin",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
