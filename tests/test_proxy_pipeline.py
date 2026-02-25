@@ -193,3 +193,161 @@ def test_update_asset_status_sets_error_message(engine, _session_factory):
         assert row.error_message == "File corrupted"
     finally:
         session.close()
+
+
+def test_claim_asset_by_status_with_library_slug_returns_asset_from_that_library(
+    engine, _session_factory
+):
+    """claim_asset_by_status(library_slug=X) only claims assets from library X."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="lib-a",
+                name="Lib A",
+                absolute_path="/tmp/lib-a",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.add(
+            Library(
+                slug="lib-b",
+                name="Lib B",
+                absolute_path="/tmp/lib-b",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("lib-a", "a.jpg", AssetType.image, 1000.0, 5000)
+    asset_repo.upsert_asset("lib-b", "b.jpg", AssetType.image, 1000.0, 5000)
+
+    claimed = asset_repo.claim_asset_by_status(
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="lib-a"
+    )
+    assert claimed is not None
+    assert claimed.library_id == "lib-a"
+    assert claimed.rel_path == "a.jpg"
+
+    # No more pending in lib-a
+    again = asset_repo.claim_asset_by_status(
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="lib-a"
+    )
+    assert again is None
+
+    # Can still claim from lib-b
+    from_b = asset_repo.claim_asset_by_status(
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="lib-b"
+    )
+    assert from_b is not None
+    assert from_b.library_id == "lib-b"
+    assert from_b.rel_path == "b.jpg"
+
+
+def test_claim_asset_by_status_with_library_slug_returns_none_when_no_pending_in_that_library(
+    engine, _session_factory
+):
+    """claim_asset_by_status(library_slug=X) returns None when library X has no pending assets."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="lib-a",
+                name="Lib A",
+                absolute_path="/tmp/lib-a",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.add(
+            Library(
+                slug="lib-b",
+                name="Lib B",
+                absolute_path="/tmp/lib-b",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    # Only lib-a has a pending asset
+    asset_repo.upsert_asset("lib-a", "a.jpg", AssetType.image, 1000.0, 5000)
+
+    claimed = asset_repo.claim_asset_by_status(
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="lib-b"
+    )
+    assert claimed is None
+
+
+def test_count_pending(engine, _session_factory):
+    """count_pending returns count of pending assets in non-deleted libraries."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="cnt-lib",
+                name="Count Lib",
+                absolute_path="/tmp/cnt",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    assert asset_repo.count_pending() == 0
+    asset_repo.upsert_asset("cnt-lib", "a.jpg", AssetType.image, 1000.0, 100)
+    asset_repo.upsert_asset("cnt-lib", "b.jpg", AssetType.image, 1000.0, 200)
+    assert asset_repo.count_pending() == 2
+    assert asset_repo.count_pending("cnt-lib") == 2
+
+
+def test_count_pending_filtered_by_library(engine, _session_factory):
+    """count_pending(library_slug) returns only pending assets for that library."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="cnt-a",
+                name="Cnt A",
+                absolute_path="/tmp/cnt-a",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.add(
+            Library(
+                slug="cnt-b",
+                name="Cnt B",
+                absolute_path="/tmp/cnt-b",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("cnt-a", "a1.jpg", AssetType.image, 1000.0, 100)
+    asset_repo.upsert_asset("cnt-a", "a2.jpg", AssetType.image, 1000.0, 100)
+    asset_repo.upsert_asset("cnt-b", "b1.jpg", AssetType.image, 1000.0, 100)
+
+    assert asset_repo.count_pending() == 3
+    assert asset_repo.count_pending("cnt-a") == 2
+    assert asset_repo.count_pending("cnt-b") == 1
+    assert asset_repo.count_pending("other") == 0

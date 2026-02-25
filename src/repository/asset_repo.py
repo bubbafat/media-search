@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterator
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from src.models.entities import Asset, AssetStatus, AssetType, Library, ScanStatus
@@ -134,6 +134,34 @@ class AssetRepository:
                 {"status": status.value, "slug": library_slug},
             )
 
+    def count_pending(self, library_slug: str | None = None) -> int:
+        """Return count of assets with status pending in non-deleted libraries, optionally for one library."""
+        with self._session_scope(write=False) as session:
+            q = """
+                SELECT COUNT(*) FROM asset a
+                JOIN library l ON a.library_id = l.slug
+                WHERE l.deleted_at IS NULL AND a.status = 'pending'
+            """
+            params: dict = {}
+            if library_slug is not None:
+                q += " AND a.library_id = :library_slug"
+                params["library_slug"] = library_slug
+            val = session.execute(text(q), params).scalar()
+        return int(val) if val is not None else 0
+
+    def count_assets_by_library(
+        self,
+        library_id: str,
+        status: AssetStatus | None = None,
+    ) -> int:
+        """Return total count of assets for a library, optionally filtered by status."""
+        with self._session_scope(write=False) as session:
+            query = select(func.count()).select_from(Asset).where(Asset.library_id == library_id)
+            if status is not None:
+                query = query.where(Asset.status == status)
+            val = session.execute(query).scalar()
+        return int(val) if val is not None else 0
+
     def get_assets_by_library(
         self,
         library_id: str,
@@ -154,10 +182,12 @@ class AssetRepository:
         current_status: AssetStatus,
         supported_exts: list[str],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        library_slug: str | None = None,
     ) -> Asset | None:
         """
         Claim one asset with status == current_status in a non-deleted library,
         with rel_path ending (case-insensitive) in supported_exts.
+        When library_slug is set, only assets from that library are considered.
         Uses FOR UPDATE SKIP LOCKED. Sets status=processing, worker_id, lease_expires_at.
         Returns the Asset with library (slug, absolute_path) populated.
         """
@@ -166,9 +196,14 @@ class AssetRepository:
         # Build regex for rel_path suffix: \.(jpg|jpeg|png|...)$
         suffixes = "|".join(re.escape(ext.lstrip(".")) for ext in supported_exts)
         pattern = r"\." + suffixes + r"$"
+        params: dict = {"status": current_status.value, "pattern": pattern}
+        library_clause = ""
+        if library_slug is not None:
+            library_clause = " AND a.library_id = :library_slug"
+            params["library_slug"] = library_slug
         with self._session_scope(write=True) as session:
             row = session.execute(
-                text("""
+                text(f"""
                     SELECT a.id, a.library_id, a.rel_path, a.type, a.mtime, a.size,
                            a.tags_model_id, a.retry_count, a.error_message,
                            l.slug AS lib_slug, l.absolute_path AS lib_absolute_path
@@ -177,10 +212,11 @@ class AssetRepository:
                     WHERE l.deleted_at IS NULL
                       AND a.status = :status
                       AND a.rel_path ~* :pattern
+                      {library_clause}
                     FOR UPDATE OF a SKIP LOCKED
                     LIMIT 1
                 """),
-                {"status": current_status.value, "pattern": pattern},
+                params,
             ).fetchone()
             if row is None:
                 return None

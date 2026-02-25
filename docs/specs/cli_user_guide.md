@@ -130,15 +130,19 @@ uv run media-search trash empty nas-old --force
 
 Permanently delete all trashed libraries and their assets. Cannot be undone. Prompts for confirmation unless `--force` is used.
 
+With `--verbose` / `-v`, prints progress (e.g. `Emptying 1/3: slug`) before each library.
+
 | Option | Description |
 |--------|-------------|
 | `--force` | Skip confirmation prompt |
+| `--verbose`, `-v` | Print progress (Emptying 1/N: slug) |
 
 **Example:**
 
 ```bash
 uv run media-search trash empty-all
 uv run media-search trash empty-all --force
+uv run media-search trash empty-all --force --verbose
 ```
 
 ---
@@ -147,7 +151,7 @@ uv run media-search trash empty-all --force
 
 ### asset list \<library_slug\>
 
-List discovered assets for a library. Output is a Rich table: ID, Rel Path, Type, Status, Size (KB). A summary line reports how many assets are shown.
+List discovered assets for a library. Output is a Rich table: ID, Rel Path, Type, Status, Size (KB). A summary line reports how many assets are shown and the total (e.g. "Showing 50 of 213 assets for library 'disneyland'.").
 
 | Argument | Description |
 |----------|-------------|
@@ -179,13 +183,15 @@ Run a one-shot scan for the given library. Does not start the scanner worker dae
 
 Exits with code 1 if the library is not found or is soft-deleted; the message suggests using `library list` to see valid slugs.
 
+With `--verbose` / `-v`, progress is printed every 100 files (e.g. `Scanner: files_processed=100`). Total is shown only at the end.
+
 | Argument | Description |
 |----------|-------------|
 | `slug`   | Library slug to scan once |
 
 | Option | Description |
 |--------|-------------|
-| `--verbose`, `-v` | Enable DEBUG logging to stdout |
+| `--verbose`, `-v` | Enable DEBUG logging and progress every 100 files |
 
 **Example:**
 
@@ -202,10 +208,16 @@ uv run media-search scan nas-main --verbose
 
 Start the proxy worker. It runs until interrupted (Ctrl+C). The worker claims pending assets, generates thumbnails and proxy images on local storage, and updates their status to proxied (or poisoned on error). Worker ID is auto-generated from hostname and a short UUID unless overridden.
 
+When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted (same message as `scan`).
+
+With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g. `Proxied asset 123 (disneyland/photo.jpg) 5/200`). Total is the pending count at start.
+
 | Option | Description |
 |--------|-------------|
 | `--heartbeat` | Heartbeat interval in seconds (default: 15.0) |
 | `--worker-name` | Force a specific worker ID; defaults to auto-generated |
+| `--library` | Limit to this library slug only (optional) |
+| `--verbose`, `-v` | Print progress (each asset and N/total) |
 
 **Example:**
 
@@ -213,6 +225,8 @@ Start the proxy worker. It runs until interrupted (Ctrl+C). The worker claims pe
 uv run media-search proxy
 uv run media-search proxy --heartbeat 10
 uv run media-search proxy --worker-name my-proxy-1
+uv run media-search proxy --library disneyland
+uv run media-search proxy --library disneyland --verbose
 ```
 
 ---

@@ -120,14 +120,20 @@ def trash_empty(
 @trash_app.command("empty-all")
 def trash_empty_all(
     force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (Emptying 1/N: slug)."),
 ) -> None:
     """Permanently delete all trashed libraries and their assets. Cannot be undone."""
     if not force:
         typer.confirm("Permanently delete ALL trashed libraries?", abort=True)
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
-    count = lib_repo.hard_delete_all_trashed()
-    typer.secho(f"Permanently deleted {count} library(ies).", fg=typer.colors.GREEN)
+    trashed = lib_repo.list_trashed()
+    n = len(trashed)
+    for i, lib in enumerate(trashed, 1):
+        if verbose:
+            typer.echo(f"Emptying {i}/{n}: {lib.slug}")
+        lib_repo.hard_delete(lib.slug)
+    typer.secho(f"Permanently deleted {n} library(ies).", fg=typer.colors.GREEN)
 
 
 @library_app.command("list")
@@ -186,6 +192,7 @@ def asset_list(
             raise typer.Exit(1)
 
     assets = asset_repo.get_assets_by_library(lib.slug, limit=limit, status=status_enum)
+    total = asset_repo.count_assets_by_library(lib.slug, status=status_enum)
 
     table = Table(title=None)
     table.add_column("ID", style="dim")
@@ -199,7 +206,7 @@ def asset_list(
         table.add_row(id_str, a.rel_path, a.type.value, a.status.value, str(size_kb))
     console = Console()
     console.print(table)
-    typer.echo(f"Showing {len(assets)} assets for library '{library_slug}'.")
+    typer.echo(f"Showing {len(assets)} of {total} assets for library '{library_slug}'.")
 
 
 @app.command()
@@ -239,6 +246,7 @@ def scan(
         heartbeat_interval_seconds=15.0,
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
+        progress_interval=100 if verbose else None,
     )
     scanner.process_task(library_slug=slug)
     stats = scanner.get_heartbeat_stats()
@@ -254,6 +262,8 @@ def scan(
 def proxy(
     heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
+    library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
 ) -> None:
     """Start the proxy worker: claims pending assets, generates thumbnails and proxies."""
     worker_id = (
@@ -264,9 +274,28 @@ def proxy(
     typer.secho(f"Starting Proxy Worker: {worker_id}")
 
     session_factory = _get_session_factory()
+    if library_slug is not None:
+        lib_repo = LibraryRepository(session_factory)
+        lib = lib_repo.get_by_slug(library_slug)
+        if lib is None:
+            typer.echo(
+                f"Library not found or deleted: '{library_slug}'. Use 'library list' to see valid slugs.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
     asset_repo = AssetRepository(session_factory)
     worker_repo = WorkerRepository(session_factory)
     system_metadata_repo = SystemMetadataRepository(session_factory)
+
+    if verbose:
+        root = logging.getLogger("src.workers")
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.INFO)
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+
+    initial_pending = asset_repo.count_pending(library_slug) if verbose else None
 
     worker = ProxyWorker(
         worker_id=worker_id,
@@ -274,6 +303,9 @@ def proxy(
         heartbeat_interval_seconds=heartbeat,
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
+        library_slug=library_slug,
+        verbose=verbose,
+        initial_pending_count=initial_pending,
     )
     try:
         worker.run()

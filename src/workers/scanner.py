@@ -38,6 +38,7 @@ def _scan_dir(
     worker_id: str,
     worker_repo: WorkerRepository,
     should_stop: Callable[[], bool],
+    stats_interval: int = STATS_INTERVAL,
 ) -> int:
     """Recursively walk current_dir with os.scandir; rel_path is always relative to library_root. Returns file count."""
     count = 0
@@ -60,6 +61,7 @@ def _scan_dir(
                     worker_id,
                     worker_repo,
                     should_stop,
+                    stats_interval,
                 )
             elif entry.is_file(follow_symlinks=False):
                 path = Path(entry.path)
@@ -76,7 +78,7 @@ def _scan_dir(
                 atype = _asset_type_for_path(path)
                 asset_repo.upsert_asset(library_id, rel_path, atype, mtime, size)
                 count += 1
-                if count % STATS_INTERVAL == 0:
+                if count % stats_interval == 0:
                     worker_repo.update_heartbeat(worker_id, stats={"files_processed": count})
                     _log.info("Scanner: files_processed=%s", count)
                     if should_stop():
@@ -100,6 +102,7 @@ class ScannerWorker(BaseWorker):
         *,
         asset_repo: AssetRepository,
         system_metadata_repo: SystemMetadataRepository,
+        progress_interval: int | None = None,
     ) -> None:
         super().__init__(
             worker_id,
@@ -109,6 +112,9 @@ class ScannerWorker(BaseWorker):
         )
         self._asset_repo = asset_repo
         self._last_files_processed: int = 0
+        self._stats_interval = (
+            progress_interval if progress_interval is not None else STATS_INTERVAL
+        )
 
     def get_heartbeat_stats(self) -> dict | None:
         return {"files_processed": self._last_files_processed}
@@ -151,6 +157,7 @@ class ScannerWorker(BaseWorker):
                 self.worker_id,
                 self._repo,
                 should_stop,
+                self._stats_interval,
             )
         finally:
             self._asset_repo.set_library_scan_status(library.slug, ScanStatus.idle)

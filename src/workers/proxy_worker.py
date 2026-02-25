@@ -29,6 +29,9 @@ class ProxyWorker(BaseWorker):
         *,
         asset_repo: AssetRepository,
         system_metadata_repo: SystemMetadataRepository,
+        library_slug: str | None = None,
+        verbose: bool = False,
+        initial_pending_count: int | None = None,
     ) -> None:
         super().__init__(
             worker_id,
@@ -38,10 +41,17 @@ class ProxyWorker(BaseWorker):
         )
         self.asset_repo = asset_repo
         self.storage = LocalMediaStore()
+        self._library_slug = library_slug
+        self._verbose = verbose
+        self._initial_pending = initial_pending_count
+        self._processed_count = 0
 
     def process_task(self) -> None:
         asset = self.asset_repo.claim_asset_by_status(
-            self.worker_id, AssetStatus.pending, SUPPORTED_EXTS
+            self.worker_id,
+            AssetStatus.pending,
+            SUPPORTED_EXTS,
+            library_slug=self._library_slug,
         )
         if asset is None:
             return
@@ -52,6 +62,17 @@ class ProxyWorker(BaseWorker):
             self.storage.save_thumbnail(asset.library.slug, asset.id, image)
             self.storage.save_proxy(asset.library.slug, asset.id, image)
             self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
+            self._processed_count += 1
+            if self._verbose:
+                total = self._initial_pending if self._initial_pending is not None else "?"
+                _log.info(
+                    "Proxied asset %s (%s/%s) %s/%s",
+                    asset.id,
+                    asset.library.slug,
+                    asset.rel_path,
+                    self._processed_count,
+                    total,
+                )
         except Exception as e:
             _log.error(
                 "Proxy worker failed for asset %s (%s): %s",

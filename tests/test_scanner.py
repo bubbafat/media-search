@@ -311,3 +311,35 @@ def test_signal_respect_pause(engine, _session_factory, run_worker, tmp_path):
         assert state == WorkerState.paused.value
         scan_status = _get_library_scan_status(_session_factory, library_slug)
         assert scan_status == ScanStatus.idle.value
+
+
+def test_scan_with_progress_interval_uses_smaller_interval(engine, _session_factory, tmp_path):
+    """Scanner with progress_interval=10 reports correct file count after one-shot scan."""
+    worker_repo, asset_repo, system_metadata_repo = _create_tables_and_repos(engine, _session_factory)
+    library_slug = "progress-lib"
+    _persist_library(_session_factory, library_slug, str(tmp_path))
+    for i in range(25):
+        (tmp_path / f"img{i:02d}.jpg").write_bytes(b"jpeg")
+
+    settings = Settings(
+        database_url="",
+        library_roots={library_slug: str(tmp_path)},
+        worker_id="scanner-progress-test",
+    )
+    with unittest.mock.patch("src.core.path_resolver.get_config", return_value=settings):
+        worker = ScannerWorker(
+            "scanner-progress-test",
+            worker_repo,
+            heartbeat_interval_seconds=60.0,
+            asset_repo=asset_repo,
+            system_metadata_repo=system_metadata_repo,
+            progress_interval=10,
+        )
+    assert worker._stats_interval == 10
+    worker_repo.register_worker("scanner-progress-test", WorkerState.idle)
+
+    worker.process_task(library_slug=library_slug)
+
+    assert worker._last_files_processed == 25
+    assets = _get_assets(_session_factory, library_slug)
+    assert len(assets) == 25
