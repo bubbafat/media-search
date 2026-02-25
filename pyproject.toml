@@ -19,7 +19,11 @@ dependencies = [
     "uvicorn>=0.32",
     "jinja2>=3.1",
     "httpx>=0.27",
+    "typer>=0.12",
 ]
+
+[project.scripts]
+media-search = "src.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -30,7 +34,8 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["src*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

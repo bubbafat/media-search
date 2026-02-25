@@ -35,7 +35,12 @@ def _create_tables_and_repos(engine, session_factory):
     )
 
 
-def _persist_library(session_factory, slug: str, scan_status: ScanStatus = ScanStatus.full_scan_requested):
+def _persist_library(
+    session_factory,
+    slug: str,
+    absolute_path: str,
+    scan_status: ScanStatus = ScanStatus.full_scan_requested,
+):
     """Insert or update a library and commit so the worker can see it."""
     session = session_factory()
     try:
@@ -43,11 +48,13 @@ def _persist_library(session_factory, slug: str, scan_status: ScanStatus = ScanS
         if existing is not None:
             existing.scan_status = scan_status
             existing.is_active = True
+            existing.absolute_path = absolute_path
         else:
             session.add(
                 Library(
                     slug=slug,
                     name=f"Test {slug}",
+                    absolute_path=absolute_path,
                     is_active=True,
                     scan_status=scan_status,
                     sampling_limit=100,
@@ -109,7 +116,7 @@ def scanner_worker(engine, _session_factory, run_worker, tmp_path, request):
     worker_repo, asset_repo, system_metadata_repo = _create_tables_and_repos(engine, _session_factory)
     # Unique library per test so assets from other tests don't leak
     library_slug = f"test-lib-{request.node.name}"
-    _persist_library(_session_factory, library_slug)
+    _persist_library(_session_factory, library_slug, absolute_path=str(tmp_path))
 
     settings = Settings(
         database_url="",
@@ -148,7 +155,12 @@ def test_fast_scan_requested_library_is_claimed(engine, _session_factory, run_wo
     """A library with scan_status=fast_scan_requested is claimed and scanned like full_scan_requested."""
     worker_repo, asset_repo, system_metadata_repo = _create_tables_and_repos(engine, _session_factory)
     library_slug = "fast-scan-lib"
-    _persist_library(_session_factory, library_slug, scan_status=ScanStatus.fast_scan_requested)
+    _persist_library(
+        _session_factory,
+        library_slug,
+        str(tmp_path),
+        scan_status=ScanStatus.fast_scan_requested,
+    )
 
     settings = Settings(
         database_url="",
@@ -271,7 +283,7 @@ def test_signal_respect_pause(engine, _session_factory, run_worker, tmp_path):
     """Issue a pause command mid-scan; verify the scanner stops and waits."""
     worker_repo, asset_repo, system_metadata_repo = _create_tables_and_repos(engine, _session_factory)
     library_slug = "pause-lib"
-    _persist_library(_session_factory, library_slug)
+    _persist_library(_session_factory, library_slug, str(tmp_path))
     # Create enough files to keep the scanner busy
     for i in range(120):
         (tmp_path / f"f{i:03d}.jpg").write_bytes(b"x")

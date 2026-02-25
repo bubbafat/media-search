@@ -94,6 +94,34 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             assert row[1] == "tsvector", (
                 f"videoframe.search_vector must be tsvector (data_type={row[0]!r}, udt_name={row[1]!r})"
             )
+
+        # Assert library has absolute_path and deleted_at (paths in DB, soft delete)
+        with migration_engine.connect() as conn:
+            cols = conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'library' "
+                    "AND column_name IN ('absolute_path', 'deleted_at') ORDER BY column_name"
+                )
+            ).fetchall()
+            column_names = [c[0] for c in cols]
+            assert "absolute_path" in column_names, "library.absolute_path column must exist"
+            assert "deleted_at" in column_names, "library.deleted_at column must exist"
+
+        # Assert all timestamp columns are WITH TIME ZONE (project rule: never store local time)
+        with migration_engine.connect() as conn:
+            for table, column in [("asset", "lease_expires_at"), ("worker_status", "last_seen_at"), ("library", "deleted_at")]:
+                row = conn.execute(
+                    text(
+                        "SELECT udt_name FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name = :t AND column_name = :c"
+                    ),
+                    {"t": table, "c": column},
+                ).fetchone()
+                assert row is not None, f"{table}.{column} must exist"
+                assert row[0] == "timestamptz", (
+                    f"{table}.{column} must be timestamp with time zone (udt_name={row[0]!r})"
+                )
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

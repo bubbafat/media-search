@@ -75,21 +75,36 @@ class AssetRepository:
                 },
             )
 
-    def claim_library_for_scanning(self) -> Library | None:
+    def claim_library_for_scanning(self, slug: str | None = None) -> Library | None:
         """
-        Find a library with is_active=True and scan_status in ('full_scan_requested', 'fast_scan_requested'),
-        lock it with FOR UPDATE SKIP LOCKED, set scan_status='scanning', and return it.
+        Find a library with is_active=True, deleted_at IS NULL, and scan_status in
+        ('full_scan_requested', 'fast_scan_requested'), optionally for a specific slug.
+        Lock with FOR UPDATE SKIP LOCKED, set scan_status='scanning', and return it.
         """
         with self._session_scope(write=True) as session:
-            row = session.execute(
-                text("""
-                    SELECT slug, name, is_active, scan_status, target_tagger_id, sampling_limit
-                    FROM library
-                    WHERE is_active = true AND scan_status IN ('full_scan_requested', 'fast_scan_requested')
-                    FOR UPDATE SKIP LOCKED
-                    LIMIT 1
-                """)
-            ).fetchone()
+            if slug is not None:
+                row = session.execute(
+                    text("""
+                        SELECT slug, name, absolute_path, is_active, scan_status, target_tagger_id, sampling_limit
+                        FROM library
+                        WHERE slug = :slug AND is_active = true AND deleted_at IS NULL
+                          AND scan_status IN ('full_scan_requested', 'fast_scan_requested')
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    """),
+                    {"slug": slug},
+                ).fetchone()
+            else:
+                row = session.execute(
+                    text("""
+                        SELECT slug, name, absolute_path, is_active, scan_status, target_tagger_id, sampling_limit
+                        FROM library
+                        WHERE is_active = true AND deleted_at IS NULL
+                          AND scan_status IN ('full_scan_requested', 'fast_scan_requested')
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    """)
+                ).fetchone()
             if row is None:
                 return None
             session.execute(
@@ -99,10 +114,11 @@ class AssetRepository:
             return Library(
                 slug=row[0],
                 name=row[1] or "",
-                is_active=row[2],
+                absolute_path=row[2] or "",
+                is_active=row[3],
                 scan_status=ScanStatus.scanning,
-                target_tagger_id=row[4],
-                sampling_limit=row[5] or 100,
+                target_tagger_id=row[5],
+                sampling_limit=row[6] or 100,
             )
 
     def set_library_scan_status(self, library_slug: str, status: ScanStatus) -> None:

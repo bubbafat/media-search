@@ -2,13 +2,18 @@
 
 import io
 import logging
+import os
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from testcontainers.postgres import PostgresContainer
 
+from src.core import config as config_module
 from src.core.config import get_config, reset_config
 from src.core.logging import FlightLogger, FLIGHT_LOG_CAPACITY
-from src.core.path_resolver import resolve_path
+from src.core.path_resolver import _reset_session_factory_for_tests, resolve_path
 
 
 def test_settings_loads_from_yaml(tmp_path):
@@ -43,21 +48,61 @@ library_roots: {}
     assert len(cfg.worker_id) > 0
 
 
-def test_resolve_path_joins_mapped_slug_and_verifies_exists(tmp_path):
+@pytest.fixture(scope="module")
+def path_resolver_db():
+    """Postgres container with migrations and a library row (slug=mylib) for path_resolver tests."""
+    with PostgresContainer("postgres:16-alpine") as postgres:
+        url = postgres.get_connection_url()
+        prev = os.environ.get("DATABASE_URL")
+        os.environ["DATABASE_URL"] = url
+        config_module._config = None  # type: ignore[attr-defined]
+        try:
+            from alembic import command
+            from alembic.config import Config
+
+            alembic_cfg = Config("alembic.ini")
+            alembic_cfg.set_main_option("script_location", "migrations")
+            command.upgrade(alembic_cfg, "head")
+
+            engine = create_engine(url, pool_pre_ping=True)
+            with engine.connect() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO library (slug, name, absolute_path, is_active, scan_status, sampling_limit) "
+                        "VALUES ('mylib', 'My Lib', '/tmp/placeholder', true, 'idle', 100)"
+                    )
+                )
+                conn.commit()
+            yield url
+        finally:
+            if prev is not None:
+                os.environ["DATABASE_URL"] = prev
+            else:
+                os.environ.pop("DATABASE_URL", None)
+            config_module._config = None  # type: ignore[attr-defined]
+
+
+def test_resolve_path_joins_mapped_slug_and_verifies_exists(tmp_path, path_resolver_db):
     """resolve_path returns absolute path for mapped slug when file exists; raises for unknown slug."""
     lib_root = tmp_path / "library_root"
     lib_root.mkdir()
     (lib_root / "some").mkdir()
     (lib_root / "some" / "rel.txt").write_text("ok")
 
+    url = path_resolver_db
+    engine = create_engine(url, pool_pre_ping=True)
+    with engine.connect() as conn:
+        conn.execute(
+            text("UPDATE library SET absolute_path = :p WHERE slug = 'mylib'"),
+            {"p": str(lib_root.resolve())},
+        )
+        conn.commit()
+
     yaml_path = tmp_path / "worker_config.yml"
-    yaml_path.write_text(f"""
-database_url: postgresql://localhost/db
-library_roots:
-  mylib: {lib_root}
-""")
+    yaml_path.write_text(f"database_url: {url}\n")
     reset_config()
     get_config(config_path=yaml_path)
+    _reset_session_factory_for_tests()
 
     result = resolve_path("mylib", "some/rel.txt")
     assert result == (lib_root / "some" / "rel.txt").resolve()
@@ -68,35 +113,45 @@ library_roots:
         resolve_path("unknown_slug", "x")
 
 
-def test_resolve_path_raises_for_missing_file(tmp_path):
+def test_resolve_path_raises_for_missing_file(tmp_path, path_resolver_db):
     """resolve_path raises FileNotFoundError when the resolved path does not exist."""
     lib_root = tmp_path / "library_root"
     lib_root.mkdir()
+    url = path_resolver_db
+    engine = create_engine(url, pool_pre_ping=True)
+    with engine.connect() as conn:
+        conn.execute(
+            text("UPDATE library SET absolute_path = :p WHERE slug = 'mylib'"),
+            {"p": str(lib_root.resolve())},
+        )
+        conn.commit()
     yaml_path = tmp_path / "worker_config.yml"
-    yaml_path.write_text(f"""
-database_url: postgresql://localhost/db
-library_roots:
-  mylib: {lib_root}
-""")
+    yaml_path.write_text(f"database_url: {url}\n")
     reset_config()
     get_config(config_path=yaml_path)
+    _reset_session_factory_for_tests()
 
     with pytest.raises(FileNotFoundError, match="Path does not exist"):
         resolve_path("mylib", "nonexistent.txt")
 
 
-def test_resolve_path_rejects_traversal(tmp_path):
+def test_resolve_path_rejects_traversal(tmp_path, path_resolver_db):
     """resolve_path raises ValueError when rel_path escapes library root."""
     lib_root = tmp_path / "library_root"
     lib_root.mkdir()
+    url = path_resolver_db
+    engine = create_engine(url, pool_pre_ping=True)
+    with engine.connect() as conn:
+        conn.execute(
+            text("UPDATE library SET absolute_path = :p WHERE slug = 'mylib'"),
+            {"p": str(lib_root.resolve())},
+        )
+        conn.commit()
     yaml_path = tmp_path / "worker_config.yml"
-    yaml_path.write_text(f"""
-database_url: postgresql://localhost/db
-library_roots:
-  mylib: {lib_root}
-""")
+    yaml_path.write_text(f"database_url: {url}\n")
     reset_config()
     get_config(config_path=yaml_path)
+    _reset_session_factory_for_tests()
 
     with pytest.raises(ValueError, match="escapes library root"):
         resolve_path("mylib", "../../etc/passwd")

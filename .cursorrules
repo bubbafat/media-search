@@ -24,3 +24,5 @@ All workers must inherit from BaseWorker and implement handle_signal(command).
 ## Environment
 The development environment is using uv so any time a command is given that requires uv (whether executed by you or displayed for me), ensure that the full uv command is shown.
 
+## Data Rules
+- All timestamps in the database should be with timezone - we never store data in local time (though we may display it in local time)

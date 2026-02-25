@@ -113,8 +113,8 @@ class ScannerWorker(BaseWorker):
     def get_heartbeat_stats(self) -> dict | None:
         return {"files_processed": self._last_files_processed}
 
-    def process_task(self) -> None:
-        library = self._asset_repo.claim_library_for_scanning()
+    def process_task(self, library_slug: str | None = None) -> None:
+        library = self._asset_repo.claim_library_for_scanning(slug=library_slug)
         if library is None:
             _log.info("No libraries require scanning")
             return
@@ -122,14 +122,22 @@ class ScannerWorker(BaseWorker):
         def should_stop():
             return self.should_exit or self._state == WorkerState.paused
 
-        try:
-            root = get_library_root(library.slug)
-        except ValueError as e:
-            _log.warning("Scanner: %s; resetting library to idle", e)
-            self._asset_repo.set_library_scan_status(library.slug, ScanStatus.idle)
-            return
-        except OSError as e:
-            _log.warning("Scanner: %s; resetting library to idle", e)
+        if library.absolute_path:
+            root = Path(library.absolute_path).resolve()
+        else:
+            try:
+                root = get_library_root(library.slug)
+            except ValueError as e:
+                _log.warning("Scanner: %s; resetting library to idle", e)
+                self._asset_repo.set_library_scan_status(library.slug, ScanStatus.idle)
+                return
+            except OSError as e:
+                _log.warning("Scanner: %s; resetting library to idle", e)
+                self._asset_repo.set_library_scan_status(library.slug, ScanStatus.idle)
+                return
+
+        if not root.exists():
+            _log.warning("Scanner: library root does not exist %s; resetting library to idle", root)
             self._asset_repo.set_library_scan_status(library.slug, ScanStatus.idle)
             return
 

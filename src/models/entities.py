@@ -64,10 +64,12 @@ class Library(SQLModel, table=True):
 
     slug: str = Field(primary_key=True)
     name: str = ""
+    absolute_path: str = Field(...)
     is_active: bool = True
     scan_status: ScanStatus = Field(default=ScanStatus.idle)
     target_tagger_id: int | None = Field(default=None, foreign_key="aimodel.id")
     sampling_limit: int = 100
+    deleted_at: datetime | None = Field(default=None)
 
 
 class Asset(SQLModel, table=True):
