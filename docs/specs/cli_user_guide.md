@@ -177,6 +177,8 @@ uv run media-search asset list nas-main --limit 100 --status pending
 
 Run a one-shot scan for the given library. Does not start the scanner worker daemon; it runs the scanner logic once and exits. Useful for immediate discovery or testing. The library’s scan status is set so a running scanner worker would also pick up work.
 
+Exits with code 1 if the library is not found or is soft-deleted; the message suggests using `library list` to see valid slugs.
+
 | Argument | Description |
 |----------|-------------|
 | `slug`   | Library slug to scan once |

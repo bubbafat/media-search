@@ -216,6 +216,15 @@ def scan(
         root.setLevel(logging.DEBUG)
 
     session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    lib = lib_repo.get_by_slug(slug)
+    if lib is None:
+        typer.echo(
+            f"Library not found or deleted: '{slug}'. Use 'library list' to see valid slugs.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     asset_repo = AssetRepository(session_factory)
     worker_repo = WorkerRepository(session_factory)
     system_metadata_repo = SystemMetadataRepository(session_factory)
