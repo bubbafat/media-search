@@ -122,6 +122,49 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 assert row[0] == "timestamptz", (
                     f"{table}.{column} must be timestamp with time zone (udt_name={row[0]!r})"
                 )
+
+        # Assert asset.error_message column exists and is nullable (migration 008)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT column_name, is_nullable FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'asset' AND column_name = 'error_message'"
+                )
+            ).fetchone()
+            assert row is not None, "asset.error_message column must exist"
+            assert row[1] == "YES", "asset.error_message must be nullable"
+
+        # Assert asset.status accepts proxied and processing (migration 008 enum values)
+        with migration_engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO library (slug, name, absolute_path, is_active, scan_status, sampling_limit) "
+                    "VALUES ('mig08', 'Mig08', '/tmp/mig08', true, 'idle', 100)"
+                )
+            )
+            conn.commit()
+        with migration_engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO asset (library_id, rel_path, type, mtime, size, status, retry_count) "
+                    "VALUES ('mig08', 'x.jpg', 'image', 0, 0, 'proxied', 0)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO asset (library_id, rel_path, type, mtime, size, status, retry_count) "
+                    "VALUES ('mig08', 'y.png', 'image', 0, 0, 'processing', 0)"
+                )
+            )
+            conn.commit()
+            row = conn.execute(
+                text("SELECT status FROM asset WHERE rel_path = 'x.jpg'")
+            ).fetchone()
+            assert row is not None and row[0] == "proxied"
+            row = conn.execute(
+                text("SELECT status FROM asset WHERE rel_path = 'y.png'")
+            ).fetchone()
+            assert row is not None and row[0] == "processing"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

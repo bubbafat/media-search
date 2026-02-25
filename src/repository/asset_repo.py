@@ -1,13 +1,17 @@
 """Asset and library scan repository: upsert assets, claim library for scanning, set scan status."""
 
+import re
 from collections.abc import Sequence
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterator
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from src.models.entities import Asset, AssetStatus, AssetType, Library, ScanStatus
+
+DEFAULT_LEASE_SECONDS = 300
 
 
 class AssetRepository:
@@ -143,3 +147,102 @@ class AssetRepository:
                 query = query.where(Asset.status == status)
             query = query.order_by(Asset.id.desc()).limit(limit)
             return session.execute(query).scalars().all()
+
+    def claim_asset_by_status(
+        self,
+        worker_id: str,
+        current_status: AssetStatus,
+        supported_exts: list[str],
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    ) -> Asset | None:
+        """
+        Claim one asset with status == current_status in a non-deleted library,
+        with rel_path ending (case-insensitive) in supported_exts.
+        Uses FOR UPDATE SKIP LOCKED. Sets status=processing, worker_id, lease_expires_at.
+        Returns the Asset with library (slug, absolute_path) populated.
+        """
+        if not supported_exts:
+            return None
+        # Build regex for rel_path suffix: \.(jpg|jpeg|png|...)$
+        suffixes = "|".join(re.escape(ext.lstrip(".")) for ext in supported_exts)
+        pattern = r"\." + suffixes + r"$"
+        with self._session_scope(write=True) as session:
+            row = session.execute(
+                text("""
+                    SELECT a.id, a.library_id, a.rel_path, a.type, a.mtime, a.size,
+                           a.tags_model_id, a.retry_count, a.error_message,
+                           l.slug AS lib_slug, l.absolute_path AS lib_absolute_path
+                    FROM asset a
+                    JOIN library l ON a.library_id = l.slug
+                    WHERE l.deleted_at IS NULL
+                      AND a.status = :status
+                      AND a.rel_path ~* :pattern
+                    FOR UPDATE OF a SKIP LOCKED
+                    LIMIT 1
+                """),
+                {"status": current_status.value, "pattern": pattern},
+            ).fetchone()
+            if row is None:
+                return None
+            asset_id = row[0]
+            session.execute(
+                text("""
+                    UPDATE asset
+                    SET status = 'processing', worker_id = :worker_id,
+                        lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval
+                    WHERE id = :id
+                """),
+                {
+                    "worker_id": worker_id,
+                    "lease_seconds": lease_seconds,
+                    "id": asset_id,
+                },
+            )
+            lease_expires = datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
+            library = Library(
+                slug=row[9],
+                name="",
+                absolute_path=row[10] or "",
+                is_active=True,
+                scan_status=ScanStatus.idle,
+                target_tagger_id=None,
+                sampling_limit=100,
+            )
+            asset = Asset(
+                id=row[0],
+                library_id=row[1],
+                rel_path=row[2],
+                type=AssetType(row[3]),
+                mtime=row[4],
+                size=row[5],
+                status=AssetStatus.processing,
+                tags_model_id=row[6],
+                worker_id=worker_id,
+                lease_expires_at=lease_expires,
+                retry_count=row[7],
+                error_message=row[8],
+            )
+            asset.library = library
+            return asset
+
+    def update_asset_status(
+        self,
+        asset_id: int,
+        status: AssetStatus,
+        error_message: str | None = None,
+    ) -> None:
+        """Set asset status, clear worker_id and lease_expires_at; optionally set error_message."""
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("""
+                    UPDATE asset
+                    SET status = :status, worker_id = NULL, lease_expires_at = NULL,
+                        error_message = :error_message
+                    WHERE id = :id
+                """),
+                {
+                    "status": status.value,
+                    "error_message": error_message,
+                    "id": asset_id,
+                },
+            )

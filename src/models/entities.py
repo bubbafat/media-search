@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from sqlalchemy import Column, Index
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, Relationship, SQLModel
 
 
 # --- Enums (stored as strings in DB) ---
@@ -26,6 +26,8 @@ class AssetType(str, Enum):
 
 class AssetStatus(str, Enum):
     pending = "pending"
+    processing = "processing"
+    proxied = "proxied"
     extracting = "extracting"
     analyzing = "analyzing"
     completed = "completed"
@@ -89,6 +91,9 @@ class Asset(SQLModel, table=True):
     worker_id: str | None = Field(default=None)
     lease_expires_at: datetime | None = Field(default=None)
     retry_count: int = 0
+    error_message: str | None = Field(default=None)
+
+    library: "Library" = Relationship()
 
 
 class VideoFrame(SQLModel, table=True):

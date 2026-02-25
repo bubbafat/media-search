@@ -1,0 +1,142 @@
+# MediaSearch API / Data Model User Guide
+
+This document describes the MediaSearch **data model**: entities (tables), enums, and how they relate. The system uses PostgreSQL 16+ and is accessed via **repositories** and **workers**; there are no REST CRUD HTTP endpoints for these entities. The only HTTP surface is the Mission Control dashboard (see [UI User Guide](ui_user_guide.md)).
+
+---
+
+## Enums
+
+Enums are stored as strings in the database.
+
+| Enum | Values | Meaning |
+|------|--------|---------|
+| `ScanStatus` | `idle`, `full_scan_requested`, `fast_scan_requested`, `scanning` | Library scan state |
+| `AssetType` | `image`, `video` | Type of media file |
+| `AssetStatus` | `pending`, `processing`, `proxied`, `extracting`, `analyzing`, `completed`, `failed`, `poisoned` | Pipeline state for an asset |
+| `WorkerState` | `idle`, `processing`, `paused`, `offline` | Worker runtime state |
+| `WorkerCommand` | `none`, `pause`, `resume`, `shutdown`, `forensic_dump` | Command sent to a worker via `worker_status` |
+
+---
+
+## Entities (tables)
+
+### AIModel
+
+Registry of AI models used for tagging/analysis. Referenced by libraries (target tagger) and assets (which model produced current tags).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int (PK) | Primary key |
+| `slug` | str | Unique identifier (e.g. `clip`) |
+| `version` | str | Model version |
+
+---
+
+### Library
+
+A media library: a root path (e.g. NAS mount) and configuration for scanning and AI processing.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `slug` | str (PK) | URL-safe unique identifier (e.g. `nas-main`) |
+| `name` | str | Human-readable name |
+| `absolute_path` | str | Physical path to library root |
+| `is_active` | bool | Master “pause” switch |
+| `scan_status` | ScanStatus | Current scan state |
+| `target_tagger_id` | int? (FK → aimodel.id) | Target AI model for assets |
+| `sampling_limit` | int | Max frames per video (default 100) |
+| `deleted_at` | datetime? | Soft-delete timestamp; non-null = in trash |
+
+---
+
+### Asset
+
+A single media file (image or video) belonging to a library. Moves through pipeline states (pending → proxied → completed, etc.).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int (PK) | Primary key |
+| `library_id` | str (FK → library.slug) | Parent library |
+| `rel_path` | str | Path relative to library root |
+| `type` | AssetType | `image` or `video` |
+| `mtime` | float | File mtime (Unix) for dirty checks |
+| `size` | int | File size in bytes |
+| `status` | AssetStatus | Pipeline status |
+| `tags_model_id` | int? (FK → aimodel.id) | AI model that produced current tags |
+| `worker_id` | str? | Worker that has claimed this asset |
+| `lease_expires_at` | datetime? | Claim expiry for recovery |
+| `retry_count` | int | Incremented on claim; high count can lead to `poisoned` |
+| `error_message` | str? | Last processing error if any |
+
+**Unique constraint:** `(library_id, rel_path)`.
+
+---
+
+### VideoFrame
+
+A frame extracted from a video asset; used for search and analysis.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int (PK) | Primary key |
+| `asset_id` | int (FK → asset.id) | Parent video asset |
+| `timestamp_ms` | int | Offset in video (milliseconds) |
+| `is_keyframe` | bool | True if from a native I-frame |
+| `search_vector` | TSVector | Full-text search vector (PostgreSQL) |
+
+---
+
+### WorkerStatus
+
+Per-worker registration and control. Standalone; no FK from other tables.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `worker_id` | str (PK) | Unique worker identifier (e.g. hostname + UUID) |
+| `last_seen_at` | datetime | Heartbeat timestamp |
+| `state` | WorkerState | Current state |
+| `command` | WorkerCommand | Command for worker to obey |
+| `stats` | JSONB? | Optional heartbeat stats |
+
+---
+
+### SystemMetadata
+
+Key/value store for system-wide settings (e.g. schema version). Standalone.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | str (PK) | Setting name |
+| `value` | str | Setting value |
+
+---
+
+## Relationships
+
+```mermaid
+erDiagram
+    AIModel ||--o{ Library : "target_tagger_id"
+    AIModel ||--o{ Asset : "tags_model_id"
+    Library ||--o{ Asset : "library_id"
+    Asset ||--o{ VideoFrame : "asset_id"
+    WorkerStatus as WorkerStatus
+    SystemMetadata as SystemMetadata
+```
+
+- **Library → Asset:** One library has many assets; asset has `library_id` → `library.slug`.
+- **Asset → VideoFrame:** One (video) asset has many frames; frame has `asset_id` → `asset.id`.
+- **AIModel:** Referenced by `Library.target_tagger_id` and `Asset.tags_model_id`.
+- **WorkerStatus:** Standalone; workers update their row for heartbeat and commands.
+- **SystemMetadata:** Standalone; used for schema version and similar globals.
+
+---
+
+## Dashboard response models (UIRepository)
+
+The Mission Control dashboard is backed by read-only queries that return structured data (not exposed as JSON HTTP APIs). The repository uses these Pydantic-style models:
+
+- **SystemHealth** — `schema_version`, `db_status` (e.g. connected / error).
+- **WorkerFleetItem** — `worker_id`, `state`, `version` (schema version).
+- **LibraryStats** — `total_assets`, `pending_assets` (counts from `asset` table).
+
+These feed the single HTML dashboard route; there are no REST endpoints that return these as JSON.

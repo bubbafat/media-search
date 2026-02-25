@@ -1,7 +1,7 @@
 # Project Laws
 
 ## Requirements
-- The broad project requirements are in docs/specs/requirements.md - refer to this document when making plans. If a request is incompatible with one of the requirements, do not perform any actions until you have notified me and sought input.
+- The requirements are in @docs/specs/system_architecture.md - refer to this document when making plans. If a request is incompatible with one of the requirements, do not perform any actions until you have notified me and sought input.
 
 ## Postgres Only
 Use PostgreSQL 16+ features (JSONB, TSVector, FOR UPDATE SKIP LOCKED). Never use SQLite.
@@ -26,3 +26,6 @@ The development environment is using uv so any time a command is given that requ
 
 ## Data Rules
 - All timestamps in the database should be with timezone - we never store data in local time (though we may display it in local time)
+
+## Documentation
+When new entities, CLI commands, or UI changes are made, update the user guide files in docs/specs: api_user_guide.md, cli_user_guide.md, and ui_user_guide.md

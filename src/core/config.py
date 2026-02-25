@@ -25,6 +25,7 @@ class Settings(BaseModel):
     model_config = {"extra": "ignore"}
 
     database_url: str = DEFAULT_DATABASE_URL
+    data_dir: str = "./data"
     library_roots: dict[str, str] = {}
     worker_id: str | None = None
     log_level: str = "INFO"
@@ -61,8 +62,11 @@ class ConfigLoader:
             data = yaml.safe_load(f)
         if not data:
             data = {}
-        if apply_env_override and self._env.get("DATABASE_URL"):
-            data["database_url"] = self._env["DATABASE_URL"]
+        if apply_env_override:
+            if self._env.get("DATABASE_URL"):
+                data["database_url"] = self._env["DATABASE_URL"]
+            if self._env.get("DATA_DIR"):
+                data["data_dir"] = self._env["DATA_DIR"]
         settings = Settings.model_validate(data)
         if settings.worker_id is None or settings.worker_id == "":
             settings = settings.model_copy(update={"worker_id": socket.gethostname()})
@@ -82,8 +86,13 @@ class ConfigLoader:
             return self.load_from_yaml(path, apply_env_override=True)
 
         settings = Settings(worker_id=socket.gethostname())
+        overrides: dict[str, str] = {}
         if self._env.get("DATABASE_URL"):
-            settings = settings.model_copy(update={"database_url": self._env["DATABASE_URL"]})
+            overrides["database_url"] = self._env["DATABASE_URL"]
+        if self._env.get("DATA_DIR"):
+            overrides["data_dir"] = self._env["DATA_DIR"]
+        if overrides:
+            settings = settings.model_copy(update=overrides)
         return settings
 
 
