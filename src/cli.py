@@ -16,6 +16,7 @@ from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
+from src.workers.ai_worker import AIWorker
 from src.workers.proxy_worker import ProxyWorker
 from src.workers.scanner import ScannerWorker
 
@@ -26,6 +27,8 @@ trash_app = typer.Typer(help="Manage soft-deleted libraries.")
 app.add_typer(trash_app, name="trash")
 asset_app = typer.Typer(help="Manage individual assets.")
 app.add_typer(asset_app, name="asset")
+ai_app = typer.Typer(help="Manage AI models and workers")
+app.add_typer(ai_app, name="ai")
 
 
 def _get_session_factory():
@@ -313,6 +316,114 @@ def proxy(
         worker.run()
     except KeyboardInterrupt:
         typer.secho(f"Worker {worker_id} shutting down...")
+
+
+@ai_app.command("start")
+def ai_start(
+    heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
+    worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
+    library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
+) -> None:
+    """Start the AI worker: claims proxied assets, runs vision analysis, marks completed."""
+    worker_id = (
+        worker_name
+        if worker_name is not None
+        else f"ai-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+    )
+    typer.secho(f"Starting AI Worker: {worker_id}")
+
+    session_factory = _get_session_factory()
+    if library_slug is not None:
+        lib_repo = LibraryRepository(session_factory)
+        lib = lib_repo.get_by_slug(library_slug)
+        if lib is None:
+            typer.echo(
+                f"Library not found or deleted: '{library_slug}'. Use 'library list' to see valid slugs.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+
+    if verbose:
+        root = logging.getLogger("src.workers")
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.INFO)
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+
+    worker = AIWorker(
+        worker_id=worker_id,
+        repository=worker_repo,
+        heartbeat_interval_seconds=heartbeat,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_metadata_repo,
+        library_slug=library_slug,
+        verbose=verbose,
+    )
+    try:
+        worker.run()
+    except KeyboardInterrupt:
+        typer.secho(f"Worker {worker_id} shutting down...")
+
+
+@ai_app.command("list")
+def ai_list() -> None:
+    """List all registered AI models (ID, Name, Version)."""
+    session_factory = _get_session_factory()
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+    models = system_metadata_repo.get_all_ai_models()
+    if not models:
+        typer.echo("No AI models registered.")
+        return
+    table = Table(title=None)
+    table.add_column("ID", style="dim")
+    table.add_column("Name")
+    table.add_column("Version")
+    for m in models:
+        id_str = str(m.id) if m.id is not None else ""
+        table.add_row(id_str, m.name, m.version)
+    console = Console()
+    console.print(table)
+
+
+@ai_app.command("add")
+def ai_add(
+    name: str = typer.Argument(..., help="Model name"),
+    version: str = typer.Argument(..., help="Model version"),
+) -> None:
+    """Register an AI model by name and version."""
+    session_factory = _get_session_factory()
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+    model = system_metadata_repo.add_ai_model(name, version)
+    typer.echo(f"Added AI model '{model.name}' version '{model.version}' (id={model.id}).")
+
+
+@ai_app.command("remove")
+def ai_remove(
+    name: str = typer.Argument(..., help="Model name to remove (all versions)."),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Remove an AI model by name. Fails if any asset references it."""
+    if not force:
+        typer.confirm(
+            f"Remove AI model '{name}' (all versions)? This will fail if any asset references it.",
+            abort=True,
+        )
+    session_factory = _get_session_factory()
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+    try:
+        removed = system_metadata_repo.remove_ai_model(name)
+        if removed:
+            typer.secho(f"Removed AI model '{name}'.", fg=typer.colors.GREEN)
+        else:
+            typer.echo(f"No AI model named '{name}' found.")
+    except ValueError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(1)
 
 
 def main() -> None:

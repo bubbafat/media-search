@@ -9,7 +9,7 @@ def test_asset_fk_to_library_and_aimodel(session, engine):
     """Create Library and AIModel, insert an Asset, verify FK linkage."""
     SQLModel.metadata.create_all(engine)
 
-    aimodel = AIModel(slug="clip", version="1")
+    aimodel = AIModel(name="clip", version="1")
     session.add(aimodel)
     session.flush()
     assert aimodel.id is not None

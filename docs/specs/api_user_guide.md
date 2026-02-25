@@ -22,13 +22,15 @@ Enums are stored as strings in the database.
 
 ### AIModel
 
-Registry of AI models used for tagging/analysis. Referenced by libraries (target tagger) and assets (which model produced current tags).
+Registry of AI models used for tagging/analysis. Referenced by libraries (target tagger) and assets (which model produced current tags or analysis).
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | int (PK) | Primary key |
-| `slug` | str | Unique identifier (e.g. `clip`) |
+| `name` | str | Model name (e.g. `mock-analyzer`, `clip`) |
 | `version` | str | Model version |
+
+**Unique constraint:** `(name, version)`.
 
 ---
 
@@ -63,10 +65,12 @@ A single media file (image or video) belonging to a library. Moves through pipel
 | `size` | int | File size in bytes |
 | `status` | AssetStatus | Pipeline status |
 | `tags_model_id` | int? (FK → aimodel.id) | AI model that produced current tags |
+| `analysis_model_id` | int? (FK → aimodel.id) | AI model that produced current visual analysis |
 | `worker_id` | str? | Worker that has claimed this asset |
 | `lease_expires_at` | datetime? | Claim expiry for recovery |
 | `retry_count` | int | Incremented on claim; high count can lead to `poisoned` |
 | `error_message` | str? | Last processing error if any |
+| `visual_analysis` | jsonb? | Last vision result: description, tags, ocr_text (from analysis_model_id) |
 
 **Unique constraint:** `(library_id, rel_path)`.
 

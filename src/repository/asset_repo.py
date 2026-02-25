@@ -238,7 +238,7 @@ class AssetRepository:
             row = session.execute(
                 text(f"""
                     SELECT a.id, a.library_id, a.rel_path, a.type, a.mtime, a.size,
-                           a.tags_model_id, a.retry_count, a.error_message,
+                           a.tags_model_id, a.analysis_model_id, a.retry_count, a.error_message,
                            l.slug AS lib_slug, l.absolute_path AS lib_absolute_path
                     FROM asset a
                     JOIN library l ON a.library_id = l.slug
@@ -269,9 +269,9 @@ class AssetRepository:
             )
             lease_expires = datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
             library = Library(
-                slug=row[9],
+                slug=row[10],
                 name="",
-                absolute_path=row[10] or "",
+                absolute_path=row[11] or "",
                 is_active=True,
                 scan_status=ScanStatus.idle,
                 target_tagger_id=None,
@@ -286,10 +286,11 @@ class AssetRepository:
                 size=row[5],
                 status=AssetStatus.processing,
                 tags_model_id=row[6],
+                analysis_model_id=row[7],
                 worker_id=worker_id,
                 lease_expires_at=lease_expires,
-                retry_count=row[7],
-                error_message=row[8],
+                retry_count=row[8],
+                error_message=row[9],
             )
             asset.library = library
             return asset
@@ -314,4 +315,17 @@ class AssetRepository:
                     "error_message": error_message,
                     "id": asset_id,
                 },
+            )
+
+    def mark_completed(self, asset_id: int, analysis_model_id: int) -> None:
+        """Set asset to completed, set analysis_model_id, clear worker_id and lease_expires_at."""
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("""
+                    UPDATE asset
+                    SET status = 'completed', analysis_model_id = :analysis_model_id,
+                        worker_id = NULL, lease_expires_at = NULL
+                    WHERE id = :id
+                """),
+                {"analysis_model_id": analysis_model_id, "id": asset_id},
             )

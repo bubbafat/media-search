@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import text
 from sqlmodel import SQLModel
 
-from src.models.entities import Asset, AssetStatus, AssetType, Library, SystemMetadata
+from src.models.entities import AIModel, Asset, AssetStatus, AssetType, Library, SystemMetadata
 from src.repository.asset_repo import AssetRepository
 
 
@@ -156,6 +156,56 @@ def test_update_asset_status_clears_worker_and_lease(engine, _session_factory):
         session.close()
 
 
+def test_mark_completed_sets_status_and_analysis_model_clears_worker(engine, _session_factory):
+    """mark_completed sets status=completed, analysis_model_id, clears worker_id and lease."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="mc-lib",
+                name="MC Lib",
+                absolute_path="/tmp/mc",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.add(AIModel(name="analyzer", version="1.0"))
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("mc-lib", "done.jpg", AssetType.image, 0.0, 0)
+    claimed = asset_repo.claim_asset_by_status(
+        "ai-worker-1", AssetStatus.pending, [".jpg"]
+    )
+    assert claimed is not None
+    assert claimed.worker_id == "ai-worker-1"
+
+    session = _session_factory()
+    try:
+        model_row = session.execute(
+            text("SELECT id FROM aimodel WHERE name = 'analyzer' AND version = '1.0'")
+        ).fetchone()
+        model_id = model_row[0]
+    finally:
+        session.close()
+
+    asset_repo.mark_completed(claimed.id, model_id)
+
+    session = _session_factory()
+    try:
+        row = session.get(Asset, claimed.id)
+        assert row is not None
+        assert row.status == AssetStatus.completed
+        assert row.analysis_model_id == model_id
+        assert row.worker_id is None
+        assert row.lease_expires_at is None
+    finally:
+        session.close()
+
+
 def test_update_asset_status_sets_error_message(engine, _session_factory):
     """update_asset_status can set error_message (e.g. for poisoned)."""
     asset_repo = _create_tables_and_seed(engine, _session_factory)
@@ -199,13 +249,14 @@ def test_claim_asset_by_status_with_library_slug_returns_asset_from_that_library
     engine, _session_factory
 ):
     """claim_asset_by_status(library_slug=X) only claims assets from library X."""
+    slug_a, slug_b = "lib-a-returns-asset", "lib-b-returns-asset"
     asset_repo = _create_tables_and_seed(engine, _session_factory)
     _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
     session = _session_factory()
     try:
         session.add(
             Library(
-                slug="lib-a",
+                slug=slug_a,
                 name="Lib A",
                 absolute_path="/tmp/lib-a",
                 is_active=True,
@@ -214,7 +265,7 @@ def test_claim_asset_by_status_with_library_slug_returns_asset_from_that_library
         )
         session.add(
             Library(
-                slug="lib-b",
+                slug=slug_b,
                 name="Lib B",
                 absolute_path="/tmp/lib-b",
                 is_active=True,
@@ -225,28 +276,28 @@ def test_claim_asset_by_status_with_library_slug_returns_asset_from_that_library
     finally:
         session.close()
 
-    asset_repo.upsert_asset("lib-a", "a.jpg", AssetType.image, 1000.0, 5000)
-    asset_repo.upsert_asset("lib-b", "b.jpg", AssetType.image, 1000.0, 5000)
+    asset_repo.upsert_asset(slug_a, "a.jpg", AssetType.image, 1000.0, 5000)
+    asset_repo.upsert_asset(slug_b, "b.jpg", AssetType.image, 1000.0, 5000)
 
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"], library_slug="lib-a"
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug=slug_a
     )
     assert claimed is not None
-    assert claimed.library_id == "lib-a"
+    assert claimed.library_id == slug_a
     assert claimed.rel_path == "a.jpg"
 
     # No more pending in lib-a
     again = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"], library_slug="lib-a"
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug=slug_a
     )
     assert again is None
 
     # Can still claim from lib-b
     from_b = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"], library_slug="lib-b"
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug=slug_b
     )
     assert from_b is not None
-    assert from_b.library_id == "lib-b"
+    assert from_b.library_id == slug_b
     assert from_b.rel_path == "b.jpg"
 
 
@@ -254,13 +305,14 @@ def test_claim_asset_by_status_with_library_slug_returns_none_when_no_pending_in
     engine, _session_factory
 ):
     """claim_asset_by_status(library_slug=X) returns None when library X has no pending assets."""
+    slug_a, slug_b = "lib-a-returns-none", "lib-b-returns-none"
     asset_repo = _create_tables_and_seed(engine, _session_factory)
     _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
     session = _session_factory()
     try:
         session.add(
             Library(
-                slug="lib-a",
+                slug=slug_a,
                 name="Lib A",
                 absolute_path="/tmp/lib-a",
                 is_active=True,
@@ -269,7 +321,7 @@ def test_claim_asset_by_status_with_library_slug_returns_none_when_no_pending_in
         )
         session.add(
             Library(
-                slug="lib-b",
+                slug=slug_b,
                 name="Lib B",
                 absolute_path="/tmp/lib-b",
                 is_active=True,
@@ -281,10 +333,10 @@ def test_claim_asset_by_status_with_library_slug_returns_none_when_no_pending_in
         session.close()
 
     # Only lib-a has a pending asset
-    asset_repo.upsert_asset("lib-a", "a.jpg", AssetType.image, 1000.0, 5000)
+    asset_repo.upsert_asset(slug_a, "a.jpg", AssetType.image, 1000.0, 5000)
 
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"], library_slug="lib-b"
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug=slug_b
     )
     assert claimed is None
 

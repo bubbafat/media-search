@@ -165,6 +165,40 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 text("SELECT status FROM asset WHERE rel_path = 'y.png'")
             ).fetchone()
             assert row is not None and row[0] == "processing"
+
+        # Assert aimodel has name (no slug) and unique constraint (name, version) (migration 009)
+        with migration_engine.connect() as conn:
+            cols = conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'aimodel' "
+                    "ORDER BY ordinal_position"
+                )
+            ).fetchall()
+            column_names = [c[0] for c in cols]
+            assert "name" in column_names, "aimodel.name must exist"
+            assert "slug" not in column_names, "aimodel.slug must be removed"
+            row = conn.execute(
+                text(
+                    "SELECT constraint_name FROM information_schema.table_constraints "
+                    "WHERE table_schema = 'public' AND table_name = 'aimodel' "
+                    "AND constraint_type = 'UNIQUE' AND constraint_name = 'uq_aimodel_name_version'"
+                )
+            ).fetchone()
+            assert row is not None, "uq_aimodel_name_version unique constraint must exist on aimodel"
+
+        # Assert asset has analysis_model_id and visual_analysis (migration 009)
+        with migration_engine.connect() as conn:
+            for col, udt in [("analysis_model_id", "int4"), ("visual_analysis", "jsonb")]:
+                row = conn.execute(
+                    text(
+                        "SELECT column_name, udt_name FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name = 'asset' AND column_name = :col"
+                    ),
+                    {"col": col},
+                ).fetchone()
+                assert row is not None, f"asset.{col} must exist"
+                assert row[1] == udt, f"asset.{col} must be {udt} (udt_name={row[1]!r})"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

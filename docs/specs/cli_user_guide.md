@@ -20,6 +20,7 @@ uv run media-search --help
 | `asset`         | List discovered assets for a library |
 | `scan`          | Run a one-shot scan for a library (no daemon) |
 | `proxy`         | Start the proxy worker (thumbnails and proxies for pending assets) |
+| `ai`            | Manage AI models and workers (start worker, list/add/remove models) |
 
 ---
 
@@ -231,6 +232,82 @@ uv run media-search proxy --worker-name my-proxy-1
 uv run media-search proxy --library disneyland
 uv run media-search proxy --library disneyland --verbose
 uv run media-search proxy --library disneyland --repair
+```
+
+---
+
+## ai
+
+The `ai` group manages AI/vision models and the AI worker. Models are registered by name and version; the AI worker claims proxied assets, runs vision analysis (e.g. description, tags, OCR), and marks assets completed (or poisoned on error).
+
+### ai start
+
+Start the AI worker. It runs until interrupted (Ctrl+C). The worker claims proxied image assets, runs the configured vision analyzer on their local proxy files, saves visual analysis to the asset, and sets status to completed (or poisoned on failure). Worker ID is auto-generated from hostname and a short UUID unless overridden.
+
+When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted.
+
+| Option | Description |
+|--------|-------------|
+| `--heartbeat` | Heartbeat interval in seconds (default: 15.0) |
+| `--worker-name` | Force a specific worker ID; defaults to auto-generated |
+| `--library` | Limit to this library slug only (optional) |
+| `--verbose`, `-v` | Print progress for each completed asset |
+
+**Example:**
+
+```bash
+uv run media-search ai start
+uv run media-search ai start --library nas-main --verbose
+```
+
+---
+
+### ai list
+
+List all registered AI models in a Rich table: ID, Name, Version. Models are created when the AI worker starts (from its analyzer’s model card) or via `ai add`.
+
+**Example:**
+
+```bash
+uv run media-search ai list
+```
+
+---
+
+### ai add \<name\> \<version\>
+
+Register an AI model by name and version. Useful for pre-registering models or when using a custom analyzer.
+
+| Argument | Description |
+|----------|-------------|
+| `name`   | Model name |
+| `version` | Model version |
+
+**Example:**
+
+```bash
+uv run media-search ai add moondream 1.0
+```
+
+---
+
+### ai remove \<name\>
+
+Remove an AI model by name (all versions with that name are removed). Prompts for confirmation unless `--force` is used. **Fails with an error** if any asset references the model (e.g. has been analyzed by it); you must re-process or clear those assets before removing the model.
+
+| Argument | Description |
+|----------|-------------|
+| `name`   | Model name to remove |
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Skip confirmation prompt |
+
+**Example:**
+
+```bash
+uv run media-search ai remove mock-analyzer
+uv run media-search ai remove mock-analyzer --force
 ```
 
 ---

@@ -178,7 +178,7 @@ def test_asset_list_cli_shows_table_and_summary(asset_list_cli_db):
     assert "Rel Path" in result.stdout
     assert "one.jpg" in result.stdout
     assert "two.png" in result.stdout
-    assert f"Showing 2 assets for library '{library_slug}'." in result.stdout
+    assert f"Showing 2 of 2 assets for library '{library_slug}'." in result.stdout
 
 
 def test_asset_list_cli_exits_when_library_not_found(asset_list_cli_db):

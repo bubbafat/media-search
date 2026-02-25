@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
-from sqlalchemy import Column, Index
+from sqlalchemy import Column, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -55,10 +55,11 @@ class WorkerCommand(str, Enum):
 
 class AIModel(SQLModel, table=True):
     __tablename__ = "aimodel"
+    __table_args__ = (UniqueConstraint("name", "version", name="uq_aimodel_name_version"),)
 
     id: int | None = Field(default=None, primary_key=True)
-    slug: str = Field(unique=True, index=True)
-    version: str = ""
+    name: str = Field(nullable=False)
+    version: str = Field(nullable=False)
 
 
 class Library(SQLModel, table=True):
@@ -88,10 +89,12 @@ class Asset(SQLModel, table=True):
     size: int = 0
     status: AssetStatus = Field(default=AssetStatus.pending)
     tags_model_id: int | None = Field(default=None, foreign_key="aimodel.id")
+    analysis_model_id: int | None = Field(default=None, foreign_key="aimodel.id")
     worker_id: str | None = Field(default=None)
     lease_expires_at: datetime | None = Field(default=None)
     retry_count: int = 0
     error_message: str | None = Field(default=None)
+    visual_analysis: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB))
 
     library: "Library" = Relationship()
 
