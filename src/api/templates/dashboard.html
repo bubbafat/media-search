@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mission Control – MediaSearch</title>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet" type="text/css" />
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body class="min-h-screen bg-base-200">
+  <div class="container mx-auto p-4 md:p-6">
+    <!-- Header: System Version + DB Status -->
+    <header class="mb-6">
+      <h1 class="text-2xl font-bold text-base-content mb-4">Mission Control</h1>
+      <div class="stats stats-vertical lg:stats-horizontal shadow bg-base-100 w-full">
+        <div class="stat">
+          <div class="stat-title">System Version</div>
+          <div class="stat-value text-primary">V{{ schema_version }}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-title">DB Status</div>
+          <div class="stat-value {{ 'text-success' if db_status == 'connected' else 'text-error' }}">{{ db_status | capitalize }}</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Fleet View: grid of worker cards -->
+    <section class="mb-6">
+      <h2 class="text-xl font-semibold text-base-content mb-3">Worker Fleet</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {% for w in fleet %}
+        <div class="card bg-base-100 shadow">
+          <div class="card-body">
+            <h3 class="card-title text-base font-mono">{{ w.worker_id }}</h3>
+            <div class="flex flex-wrap gap-2">
+              <span class="badge badge-neutral">state: {{ w.state }}</span>
+              <span class="badge badge-outline">version: {{ w.version }}</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        {% if not fleet %}
+        <p class="text-base-content/70 col-span-full">No workers registered.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- Stats: Total / Pending assets -->
+    <section>
+      <h2 class="text-xl font-semibold text-base-content mb-3">Library Stats</h2>
+      <div class="stats stats-vertical lg:stats-horizontal shadow bg-base-100 w-full">
+        <div class="stat">
+          <div class="stat-title">Total Assets</div>
+          <div class="stat-value text-primary">{{ total_assets }}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-title">Pending Assets</div>
+          <div class="stat-value">{{ pending_assets }}</div>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

@@ -5,11 +5,14 @@ import signal
 import threading
 import time
 from abc import ABC
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.core.logging import get_flight_logger
 from src.models.entities import WorkerState
 from src.repository.worker_repo import WorkerRepository
+
+if TYPE_CHECKING:
+    from src.repository.system_metadata_repo import SystemMetadataRepository
 
 
 class BaseWorker(ABC):
@@ -18,18 +21,43 @@ class BaseWorker(ABC):
     Subclasses must implement handle_signal(command).
     """
 
+    REQUIRED_SCHEMA_VERSION = "1"
+
     def __init__(
         self,
         worker_id: str,
         repository: WorkerRepository,
         heartbeat_interval_seconds: float = 15.0,
+        *,
+        system_metadata_repo: "SystemMetadataRepository | None" = None,
     ) -> None:
         self.worker_id = worker_id
         self._repo = repository
         self._heartbeat_interval = heartbeat_interval_seconds
+        self._system_metadata_repo = system_metadata_repo
         self._state = WorkerState.idle
         self.should_exit = False
         self._heartbeat_thread: threading.Thread | None = None
+
+    def _check_compatibility(self) -> None:
+        """
+        Fail-fast if schema_version in DB is missing or does not match REQUIRED_SCHEMA_VERSION.
+        Raises RuntimeError when incompatible.
+        """
+        if self._system_metadata_repo is None:
+            return
+        version = self._system_metadata_repo.get_schema_version()
+        if version is None:
+            raise RuntimeError(
+                "Pre-flight check failed: system_metadata.schema_version is missing. "
+                "Run migrations (alembic upgrade head)."
+            )
+        if version != self.REQUIRED_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Pre-flight check failed: schema_version is '{version}', "
+                f"worker requires '{self.REQUIRED_SCHEMA_VERSION}'. "
+                "Upgrade the database or run a compatible worker version."
+            )
 
     def _set_state(self, new_state: WorkerState, persist: bool = True) -> None:
         """
@@ -101,11 +129,12 @@ class BaseWorker(ABC):
 
     def run(self) -> None:
         """
-        Main entry: register worker, start heartbeat thread, run loop.
+        Main entry: pre-flight compatibility check, register worker, start heartbeat thread, run loop.
         Loop checks DB for command (pause/resume/shutdown), calls handle_signal, then process_task when not paused.
         On exit, sets state to offline.
         """
         self._install_signal_handlers()
+        self._check_compatibility()
         self._repo.register_worker(self.worker_id, WorkerState.idle)
         self._state = WorkerState.idle
 

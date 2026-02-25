@@ -3,13 +3,16 @@
 import logging
 import os
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from src.core.path_resolver import get_library_root
 from src.models.entities import AssetType, ScanStatus, WorkerState
 from src.repository.asset_repo import AssetRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
+
+if TYPE_CHECKING:
+    from src.repository.system_metadata_repo import SystemMetadataRepository
 
 # Supported extensions: video and image only
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov"}
@@ -98,8 +101,14 @@ class ScannerWorker(BaseWorker):
         heartbeat_interval_seconds: float = 15.0,
         *,
         asset_repo: AssetRepository,
+        system_metadata_repo: "SystemMetadataRepository | None" = None,
     ) -> None:
-        super().__init__(worker_id, repository, heartbeat_interval_seconds)
+        super().__init__(
+            worker_id,
+            repository,
+            heartbeat_interval_seconds,
+            system_metadata_repo=system_metadata_repo,
+        )
         self._asset_repo = asset_repo
         self._last_files_processed: int = 0
 

@@ -9,7 +9,7 @@ import yaml
 from pydantic import BaseModel, field_validator
 
 
-DEFAULT_DATABASE_URL = "postgresql+psycopg://localhost/media_search"
+DEFAULT_DATABASE_URL = "postgresql+psycopg2://localhost/media_search"
 DEFAULT_CONFIG_ENV_VAR = "WORKER_CONFIG"
 DEFAULT_CONFIG_FILENAME = "worker_config.yml"
 

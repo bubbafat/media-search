@@ -106,3 +106,12 @@ class WorkerStatus(SQLModel, table=True):
     state: WorkerState = Field(default=WorkerState.offline)
     command: WorkerCommand = Field(default=WorkerCommand.none)
     stats: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB))
+
+
+class SystemMetadata(SQLModel, table=True):
+    """Key/value store for system-wide settings (e.g. schema_version). Standalone, no FK."""
+
+    __tablename__ = "system_metadata"
+
+    key: str = Field(primary_key=True)
+    value: str = ""

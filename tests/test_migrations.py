@@ -8,7 +8,14 @@ from testcontainers.postgres import PostgresContainer
 
 from src.core import config as config_module
 
-EXPECTED_TABLES = ["aimodel", "asset", "library", "videoframe", "workerstatus"]
+EXPECTED_TABLES = [
+    "aimodel",
+    "asset",
+    "library",
+    "system_metadata",
+    "videoframe",
+    "workerstatus",
+]
 
 
 @pytest.fixture(scope="module")
@@ -47,12 +54,22 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'videoframe', 'workerstatus') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'workerstatus') "
                     "ORDER BY table_name"
                 )
             )
             tables = [row[0] for row in result]
         assert tables == EXPECTED_TABLES
+
+        # Assert system_metadata has seeded schema_version
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT key, value FROM system_metadata WHERE key = 'schema_version'"
+                )
+            ).fetchone()
+            assert row is not None, "schema_version must be seeded in system_metadata"
+            assert row[1] == "1", "schema_version value must be '1'"
 
         # Assert asset has unique index on (library_id, rel_path) for ON CONFLICT
         with migration_engine.connect() as conn:
@@ -94,7 +111,7 @@ def test_migration_02_downgrade_base(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'videoframe', 'workerstatus') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'workerstatus') "
                     "ORDER BY table_name"
                 )
             )

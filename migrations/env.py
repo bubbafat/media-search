@@ -12,6 +12,7 @@ from src.models.entities import (  # noqa: F401 - register tables with metadata
     AIModel,
     Asset,
     Library,
+    SystemMetadata,
     VideoFrame,
     WorkerStatus,
 )
