@@ -9,17 +9,30 @@ from sqlalchemy import text
 from sqlmodel import SQLModel
 
 from src.core.config import Settings
-from src.models.entities import AssetStatus, Library, ScanStatus, WorkerCommand, WorkerState
+from src.models.entities import AssetStatus, Library, ScanStatus, SystemMetadata, WorkerCommand, WorkerState
 from src.models.entities import WorkerStatus as WorkerStatusEntity
 from src.repository.asset_repo import AssetRepository
+from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.scanner import ScannerWorker
 
 
 def _create_tables_and_repos(engine, session_factory):
-    """Create all tables and return (worker_repo, asset_repo)."""
+    """Create all tables, seed schema_version if missing (idempotent), return (worker_repo, asset_repo, system_metadata_repo)."""
     SQLModel.metadata.create_all(engine)
-    return WorkerRepository(session_factory), AssetRepository(session_factory)
+    session = session_factory()
+    try:
+        existing = session.get(SystemMetadata, "schema_version")
+        if existing is None:
+            session.add(SystemMetadata(key="schema_version", value="1"))
+            session.commit()
+    finally:
+        session.close()
+    return (
+        WorkerRepository(session_factory),
+        AssetRepository(session_factory),
+        SystemMetadataRepository(session_factory),
+    )
 
 
 def _persist_library(session_factory, slug: str, scan_status: ScanStatus = ScanStatus.full_scan_requested):
@@ -93,7 +106,7 @@ def _get_worker_state(session_factory, worker_id: str) -> str | None:
 @pytest.fixture
 def scanner_worker(engine, _session_factory, run_worker, tmp_path, request):
     """Create tables, persist a library, patch config with tmp_path as library root. Yields (worker, library_slug, run_worker, session_factory). Uses unique library_slug per test for isolation."""
-    worker_repo, asset_repo = _create_tables_and_repos(engine, _session_factory)
+    worker_repo, asset_repo, system_metadata_repo = _create_tables_and_repos(engine, _session_factory)
     # Unique library per test so assets from other tests don't leak
     library_slug = f"test-lib-{request.node.name}"
     _persist_library(_session_factory, library_slug)
@@ -110,6 +123,7 @@ def scanner_worker(engine, _session_factory, run_worker, tmp_path, request):
             worker_repo,
             heartbeat_interval_seconds=60.0,
             asset_repo=asset_repo,
+            system_metadata_repo=system_metadata_repo,
         )
         yield worker, library_slug, run_worker, _session_factory
 
@@ -132,7 +146,7 @@ def test_new_discovery(scanner_worker, tmp_path):
 
 def test_fast_scan_requested_library_is_claimed(engine, _session_factory, run_worker, tmp_path):
     """A library with scan_status=fast_scan_requested is claimed and scanned like full_scan_requested."""
-    worker_repo, asset_repo = _create_tables_and_repos(engine, _session_factory)
+    worker_repo, asset_repo, system_metadata_repo = _create_tables_and_repos(engine, _session_factory)
     library_slug = "fast-scan-lib"
     _persist_library(_session_factory, library_slug, scan_status=ScanStatus.fast_scan_requested)
 
@@ -148,6 +162,7 @@ def test_fast_scan_requested_library_is_claimed(engine, _session_factory, run_wo
             worker_repo,
             heartbeat_interval_seconds=60.0,
             asset_repo=asset_repo,
+            system_metadata_repo=system_metadata_repo,
         )
         with run_worker(worker):
             time.sleep(1.0)
@@ -254,7 +269,7 @@ def test_dirty_detection(scanner_worker, tmp_path):
 
 def test_signal_respect_pause(engine, _session_factory, run_worker, tmp_path):
     """Issue a pause command mid-scan; verify the scanner stops and waits."""
-    worker_repo, asset_repo = _create_tables_and_repos(engine, _session_factory)
+    worker_repo, asset_repo, system_metadata_repo = _create_tables_and_repos(engine, _session_factory)
     library_slug = "pause-lib"
     _persist_library(_session_factory, library_slug)
     # Create enough files to keep the scanner busy
@@ -272,6 +287,7 @@ def test_signal_respect_pause(engine, _session_factory, run_worker, tmp_path):
             worker_repo,
             heartbeat_interval_seconds=60.0,
             asset_repo=asset_repo,
+            system_metadata_repo=system_metadata_repo,
         )
         worker_repo.register_worker("scanner-pause-test", WorkerState.idle)
 

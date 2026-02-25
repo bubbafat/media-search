@@ -5,14 +5,12 @@ import signal
 import threading
 import time
 from abc import ABC
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from src.core.logging import get_flight_logger
 from src.models.entities import WorkerState
+from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
-
-if TYPE_CHECKING:
-    from src.repository.system_metadata_repo import SystemMetadataRepository
 
 
 class BaseWorker(ABC):
@@ -29,7 +27,7 @@ class BaseWorker(ABC):
         repository: WorkerRepository,
         heartbeat_interval_seconds: float = 15.0,
         *,
-        system_metadata_repo: "SystemMetadataRepository | None" = None,
+        system_metadata_repo: SystemMetadataRepository,
     ) -> None:
         self.worker_id = worker_id
         self._repo = repository
@@ -44,8 +42,6 @@ class BaseWorker(ABC):
         Fail-fast if schema_version in DB is missing or does not match REQUIRED_SCHEMA_VERSION.
         Raises RuntimeError when incompatible.
         """
-        if self._system_metadata_repo is None:
-            return
         version = self._system_metadata_repo.get_schema_version()
         if version is None:
             raise RuntimeError(

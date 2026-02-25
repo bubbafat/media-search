@@ -9,7 +9,8 @@ from pathlib import Path
 from src.core.config import get_config
 
 FLIGHT_LOG_CAPACITY = 50_000
-DEFAULT_FORENSICS_DIR = "/logs/forensics"
+# Relative to cwd when no config is provided; avoids hardcoded absolute paths (e.g. on Windows/local dev).
+DEFAULT_FORENSICS_DIR = Path.cwd() / "logs" / "forensics"
 
 
 _flight_logger: "FlightLogger | None" = None
@@ -24,11 +25,11 @@ class FlightLogger(logging.Handler):
     def __init__(
         self,
         capacity: int = FLIGHT_LOG_CAPACITY,
-        forensics_dir: str | Path = DEFAULT_FORENSICS_DIR,
+        forensics_dir: str | Path | None = None,
     ) -> None:
         super().__init__(level=logging.DEBUG)
         self._buffer: deque[logging.LogRecord] = deque(maxlen=capacity)
-        self._forensics_dir = Path(forensics_dir)
+        self._forensics_dir = Path(forensics_dir if forensics_dir is not None else DEFAULT_FORENSICS_DIR)
 
     def emit(self, record: logging.LogRecord) -> None:
         self._buffer.append(record)
@@ -75,12 +76,12 @@ def setup_logging() -> None:
 
     Invariants:
     - The root logger is set to DEBUG so that all records reach handlers.
-    - A console handler logs at the configured level from Settings.log_level.
+    - Console handler logs at WARNING or higher only (no DEBUG/INFO to stdout) to preserve
+      SSD IOPS and prevent log bloat; DEBUG/INFO are captured only in the FlightLogger buffer.
     - A FlightLogger handler captures all levels at DEBUG into an in-memory circular buffer.
     """
     global _flight_logger
     cfg = get_config()
-    console_level = getattr(logging, cfg.log_level.upper(), logging.INFO)
 
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
@@ -93,7 +94,7 @@ def setup_logging() -> None:
         root.removeHandler(h)
 
     console = logging.StreamHandler(sys.stdout)
-    console.setLevel(console_level)
+    console.setLevel(logging.WARNING)
     console.setFormatter(formatter)
     root.addHandler(console)
 

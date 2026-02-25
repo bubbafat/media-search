@@ -10,10 +10,25 @@ import time
 import pytest
 from sqlmodel import SQLModel
 
-from src.models.entities import WorkerCommand, WorkerState
+from src.models.entities import SystemMetadata, WorkerCommand, WorkerState
 from src.models.entities import WorkerStatus as WorkerStatusEntity
+from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
+
+
+def _create_repo_and_tables(engine, session_factory) -> tuple[WorkerRepository, SystemMetadataRepository]:
+    """Create all tables, seed schema_version for pre-flight check (idempotent), return worker_repo and system_metadata_repo."""
+    SQLModel.metadata.create_all(engine)
+    session = session_factory()
+    try:
+        existing = session.get(SystemMetadata, "schema_version")
+        if existing is None:
+            session.add(SystemMetadata(key="schema_version", value="1"))
+            session.commit()
+    finally:
+        session.close()
+    return WorkerRepository(session_factory), SystemMetadataRepository(session_factory)
 
 
 class _ConcreteWorker(BaseWorker):
@@ -27,12 +42,6 @@ class _ConcreteWorker(BaseWorker):
         self.process_task_calls.append(time.monotonic())
 
 
-def _create_repo_and_tables(engine, session_factory) -> WorkerRepository:
-    """Helper to initialize WorkerRepository and create the worker_status table."""
-    SQLModel.metadata.create_all(engine)
-    return WorkerRepository(session_factory)
-
-
 def _start_worker_in_thread(worker: BaseWorker) -> threading.Thread:
     """Start a worker.run() loop in a daemon thread and return the thread."""
     thread = threading.Thread(target=worker.run)
@@ -42,8 +51,10 @@ def _start_worker_in_thread(worker: BaseWorker) -> threading.Thread:
 
 def test_worker_start_creates_worker_status_record(engine, _session_factory):
     """Starting a worker creates a WorkerStatus row."""
-    repo = _create_repo_and_tables(engine, _session_factory)
-    worker = _ConcreteWorker("test-worker-1", repo, heartbeat_interval_seconds=60)
+    repo, system_metadata_repo = _create_repo_and_tables(engine, _session_factory)
+    worker = _ConcreteWorker(
+        "test-worker-1", repo, heartbeat_interval_seconds=60, system_metadata_repo=system_metadata_repo
+    )
     worker.should_exit = True
 
     thread = _start_worker_in_thread(worker)
@@ -62,11 +73,12 @@ def test_worker_start_creates_worker_status_record(engine, _session_factory):
 
 def test_heartbeat_updates_last_seen_at(engine, _session_factory):
     """Heartbeat thread updates last_seen_at periodically."""
-    repo = _create_repo_and_tables(engine, _session_factory)
+    repo, system_metadata_repo = _create_repo_and_tables(engine, _session_factory)
     worker = _ConcreteWorker(
         "heartbeat-worker",
         repo,
         heartbeat_interval_seconds=0.5,
+        system_metadata_repo=system_metadata_repo,
     )
 
     thread = _start_worker_in_thread(worker)
@@ -96,11 +108,12 @@ def test_heartbeat_updates_last_seen_at(engine, _session_factory):
 
 def test_pause_command_transitions_state_and_stops_process_task(engine, _session_factory):
     """When DB command is 'pause', worker transitions to paused and stops calling process_task."""
-    repo = _create_repo_and_tables(engine, _session_factory)
+    repo, system_metadata_repo = _create_repo_and_tables(engine, _session_factory)
     worker = _ConcreteWorker(
         "pause-worker",
         repo,
         heartbeat_interval_seconds=10,
+        system_metadata_repo=system_metadata_repo,
     )
 
     session = _session_factory()
@@ -143,11 +156,12 @@ def test_pause_command_transitions_state_and_stops_process_task(engine, _session
 
 def test_shutdown_command_causes_graceful_exit(engine, _session_factory):
     """Setting command to 'shutdown' causes worker to set state offline and exit the loop."""
-    repo = _create_repo_and_tables(engine, _session_factory)
+    repo, system_metadata_repo = _create_repo_and_tables(engine, _session_factory)
     worker = _ConcreteWorker(
         "shutdown-worker",
         repo,
         heartbeat_interval_seconds=10,
+        system_metadata_repo=system_metadata_repo,
     )
 
     thread = threading.Thread(target=worker.run)
@@ -177,7 +191,8 @@ def test_shutdown_command_causes_graceful_exit(engine, _session_factory):
 
 def test_sigterm_causes_graceful_exit(postgres_container, engine, _session_factory):
     """SIGTERM to a process running the worker causes clean exit and state=offline."""
-    SQLModel.metadata.create_all(engine)
+    # Create tables and seed schema_version so subprocess pre-flight check passes
+    _create_repo_and_tables(engine, _session_factory)
     url = postgres_container.get_connection_url()
     env = os.environ.copy()
     env["DATABASE_URL"] = url
@@ -192,6 +207,7 @@ import sys
 sys.path.insert(0, os.getcwd())
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
 from src.models.entities import WorkerState
@@ -205,7 +221,8 @@ class MinimalWorker(BaseWorker):
 engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
 session_factory = sessionmaker(engine, autocommit=False, autoflush=False, expire_on_commit=False)
 repo = WorkerRepository(session_factory)
-worker = MinimalWorker("sigterm-worker", repo, heartbeat_interval_seconds=60)
+system_metadata_repo = SystemMetadataRepository(session_factory)
+worker = MinimalWorker("sigterm-worker", repo, heartbeat_interval_seconds=60, system_metadata_repo=system_metadata_repo)
 worker.run()
 """,
         ],
