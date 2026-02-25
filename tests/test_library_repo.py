@@ -1,9 +1,11 @@
 """Tests for library repository add() and soft-delete slug collision handling (testcontainers Postgres)."""
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import SQLModel
 
-from src.models.entities import SystemMetadata
+from src.models.entities import AssetType, SystemMetadata
+from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 
 
@@ -51,3 +53,24 @@ def test_add_with_deleted_collision_raises(engine, _session_factory):
         match="A deleted library with the slug 'bar' exists in the trash. Please restore it or use a different name",
     ):
         lib_repo.add("bar", "/path/two")
+
+
+def test_hard_delete_removes_library_and_assets(engine, _session_factory):
+    """hard_delete() removes a trashed library and all its assets from the DB."""
+    lib_repo = _create_tables_and_lib_repo(engine, _session_factory)
+    asset_repo = AssetRepository(_session_factory)
+    slug = lib_repo.add("Trash Me", "/tmp/trash-me")
+    for i in range(10):
+        asset_repo.upsert_asset(slug, f"file_{i}.jpg", AssetType.image, 12345.0 + i, 1024 * (i + 1))
+    lib_repo.soft_delete(slug)
+    lib_repo.hard_delete(slug)
+    assert lib_repo.get_by_slug(slug, include_deleted=True) is None
+    session = _session_factory()
+    try:
+        count = session.execute(
+            text("SELECT COUNT(*) FROM asset WHERE library_id = :slug"),
+            {"slug": slug},
+        ).scalar()
+        assert count == 0
+    finally:
+        session.close()

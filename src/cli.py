@@ -19,6 +19,8 @@ from src.workers.scanner import ScannerWorker
 app = typer.Typer(no_args_is_help=True)
 library_app = typer.Typer()
 app.add_typer(library_app, name="library")
+trash_app = typer.Typer(help="Manage soft-deleted libraries.")
+app.add_typer(trash_app, name="trash")
 asset_app = typer.Typer(help="Manage individual assets.")
 app.add_typer(asset_app, name="asset")
 
@@ -69,6 +71,60 @@ def library_restore(
     lib_repo = LibraryRepository(session_factory)
     lib_repo.restore(slug)
     typer.echo("Library restored.")
+
+
+@trash_app.command("list")
+def trash_list() -> None:
+    """List libraries in the trash (Slug | Name | Deleted At)."""
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    libraries = lib_repo.list_trashed()
+    if not libraries:
+        typer.echo("No trashed libraries.")
+        return
+    table = Table(title=None)
+    table.add_column("Slug")
+    table.add_column("Name")
+    table.add_column("Deleted At")
+    for lib in libraries:
+        deleted = str(lib.deleted_at) if lib.deleted_at else ""
+        table.add_row(lib.slug, lib.name, deleted)
+    console = Console()
+    console.print(table)
+
+
+@trash_app.command("empty")
+def trash_empty(
+    slug: str = typer.Argument(..., help="Library slug to permanently delete"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Permanently delete a trashed library and all its assets. Cannot be undone."""
+    if not force:
+        typer.confirm(
+            "Are you sure you want to permanently delete this library and ALL its assets? This cannot be undone.",
+            abort=True,
+        )
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    try:
+        lib_repo.hard_delete(slug)
+        typer.secho(f"Permanently deleted library '{slug}'.", fg=typer.colors.GREEN)
+    except ValueError as e:
+        typer.secho(str(e), fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+
+@trash_app.command("empty-all")
+def trash_empty_all(
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Permanently delete all trashed libraries and their assets. Cannot be undone."""
+    if not force:
+        typer.confirm("Permanently delete ALL trashed libraries?", abort=True)
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    count = lib_repo.hard_delete_all_trashed()
+    typer.secho(f"Permanently deleted {count} library(ies).", fg=typer.colors.GREEN)
 
 
 @library_app.command("list")

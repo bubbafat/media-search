@@ -144,3 +144,52 @@ class LibraryRepository:
                 text("UPDATE library SET deleted_at = NULL WHERE slug = :slug"),
                 {"slug": slug},
             )
+
+    def list_trashed(self) -> list[Library]:
+        """Return all libraries where deleted_at IS NOT NULL."""
+        with self._session_scope() as session:
+            rows = session.execute(
+                text(
+                    "SELECT slug, name, absolute_path, is_active, scan_status, "
+                    "target_tagger_id, sampling_limit, deleted_at FROM library "
+                    "WHERE deleted_at IS NOT NULL ORDER BY slug"
+                )
+            ).fetchall()
+        return [self._row_to_library(row) for row in rows]
+
+    def hard_delete(self, slug: str) -> None:
+        """
+        Permanently delete a soft-deleted library and all its assets.
+        Raises ValueError if the library does not exist or is not in trash.
+        Uses chunked asset deletion to avoid long-held locks.
+        """
+        with self._session_scope() as session:
+            row = session.execute(
+                text("SELECT slug, deleted_at FROM library WHERE slug = :slug"),
+                {"slug": slug},
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"Library not found: '{slug}'.")
+        if row[1] is None:
+            raise ValueError(f"Library '{slug}' is not in trash (soft-delete it first).")
+        chunk_size = 5000
+        while True:
+            with self._session_scope(write=True) as session:
+                result = session.execute(
+                    text(
+                        "DELETE FROM asset WHERE id IN ("
+                        "SELECT id FROM asset WHERE library_id = :slug LIMIT :limit)"
+                    ),
+                    {"slug": slug, "limit": chunk_size},
+                )
+                if result.rowcount == 0:
+                    break
+        with self._session_scope(write=True) as session:
+            session.execute(text("DELETE FROM library WHERE slug = :slug"), {"slug": slug})
+
+    def hard_delete_all_trashed(self) -> int:
+        """Permanently delete all soft-deleted libraries and their assets. Returns count deleted."""
+        trashed = self.list_trashed()
+        for lib in trashed:
+            self.hard_delete(lib.slug)
+        return len(trashed)
