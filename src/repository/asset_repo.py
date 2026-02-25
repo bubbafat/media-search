@@ -149,6 +149,39 @@ class AssetRepository:
             val = session.execute(text(q), params).scalar()
         return int(val) if val is not None else 0
 
+    # Image extensions matching proxy worker (for repair: assets that should have proxy files)
+    _REPAIR_IMAGE_PATTERN = r"\." + "|".join(re.escape(e) for e in ("jpg", "jpeg", "png", "webp", "bmp")) + r"$"
+
+    def get_asset_ids_expecting_proxy(
+        self,
+        library_slug: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> Sequence[tuple[int, str]]:
+        """
+        Return (asset_id, library_slug) for assets that should have proxy/thumbnail files:
+        status in (proxied, completed, extracting, analyzing), image extensions only.
+        Used by proxy --repair. Optionally filter by library_slug. Ordered by id for stable batching.
+        """
+        with self._session_scope(write=False) as session:
+            q = """
+                SELECT a.id, a.library_id
+                FROM asset a
+                JOIN library l ON a.library_id = l.slug
+                WHERE l.deleted_at IS NULL
+                  AND a.status IN ('proxied', 'completed', 'extracting', 'analyzing')
+                  AND a.rel_path ~* :pattern
+            """
+            params: dict = {"pattern": self._REPAIR_IMAGE_PATTERN}
+            if library_slug is not None:
+                q += " AND a.library_id = :library_slug"
+                params["library_slug"] = library_slug
+            q += " ORDER BY a.id LIMIT :limit OFFSET :offset"
+            params["limit"] = limit
+            params["offset"] = offset
+            rows = session.execute(text(q), params).fetchall()
+        return [(int(r[0]), str(r[1])) for r in rows]
+
     def count_assets_by_library(
         self,
         library_id: str,

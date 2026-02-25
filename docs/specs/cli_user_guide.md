@@ -212,12 +212,15 @@ When `--library` is provided, the command exits with code 1 if the library is no
 
 With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g. `Proxied asset 123 (disneyland/photo.jpg) 5/200`). Total is the pending count at start.
 
+With `--repair`, before the main loop the worker runs a one-time check: it finds assets that are supposed to have proxy and thumbnail files (status proxied, completed, etc.) but are missing them on disk (e.g. after deleting the data directory), sets their status to pending, then runs the normal loop so they are regenerated. Combine with `--library` to repair only one library.
+
 | Option | Description |
 |--------|-------------|
 | `--heartbeat` | Heartbeat interval in seconds (default: 15.0) |
 | `--worker-name` | Force a specific worker ID; defaults to auto-generated |
 | `--library` | Limit to this library slug only (optional) |
 | `--verbose`, `-v` | Print progress (each asset and N/total) |
+| `--repair` | Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated |
 
 **Example:**
 
@@ -227,6 +230,7 @@ uv run media-search proxy --heartbeat 10
 uv run media-search proxy --worker-name my-proxy-1
 uv run media-search proxy --library disneyland
 uv run media-search proxy --library disneyland --verbose
+uv run media-search proxy --library disneyland --repair
 ```
 
 ---

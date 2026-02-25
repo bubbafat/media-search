@@ -351,3 +351,142 @@ def test_count_pending_filtered_by_library(engine, _session_factory):
     assert asset_repo.count_pending("cnt-a") == 2
     assert asset_repo.count_pending("cnt-b") == 1
     assert asset_repo.count_pending("other") == 0
+
+
+def test_get_asset_ids_expecting_proxy_returns_only_relevant_statuses(
+    engine, _session_factory
+):
+    """get_asset_ids_expecting_proxy returns only proxied/completed/extracting/analyzing."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.pending)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="repair-lib",
+                name="Repair Lib",
+                absolute_path="/tmp/repair",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("repair-lib", "a.jpg", AssetType.image, 1000.0, 100)
+    asset_repo.upsert_asset("repair-lib", "b.jpg", AssetType.image, 1000.0, 200)
+    session = _session_factory()
+    try:
+        session.execute(
+            text("UPDATE asset SET status = 'proxied' WHERE rel_path = 'a.jpg'")
+        )
+        session.execute(
+            text("UPDATE asset SET status = 'pending' WHERE rel_path = 'b.jpg'")
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    ids = asset_repo.get_asset_ids_expecting_proxy(library_slug="repair-lib")
+    assert len(ids) == 1
+    assert ids[0][1] == "repair-lib"
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text(
+                "SELECT id, library_id FROM asset WHERE rel_path = 'a.jpg' AND library_id = 'repair-lib'"
+            )
+        ).fetchone()
+        assert row is not None
+        assert (row[0], row[1]) == ids[0]
+    finally:
+        session.close()
+
+
+def test_get_asset_ids_expecting_proxy_respects_library_slug(engine, _session_factory):
+    """get_asset_ids_expecting_proxy(library_slug) returns only that library's assets."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="repair-a",
+                name="Repair A",
+                absolute_path="/tmp/ra",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.add(
+            Library(
+                slug="repair-b",
+                name="Repair B",
+                absolute_path="/tmp/rb",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("repair-a", "a.jpg", AssetType.image, 1000.0, 100)
+    asset_repo.upsert_asset("repair-b", "b.jpg", AssetType.image, 1000.0, 100)
+    session = _session_factory()
+    try:
+        session.execute(text("UPDATE asset SET status = 'proxied'"))
+        session.commit()
+    finally:
+        session.close()
+
+    ids_a = asset_repo.get_asset_ids_expecting_proxy(library_slug="repair-a")
+    ids_b = asset_repo.get_asset_ids_expecting_proxy(library_slug="repair-b")
+    assert len(ids_a) == 1 and ids_a[0][1] == "repair-a"
+    assert len(ids_b) == 1 and ids_b[0][1] == "repair-b"
+
+
+def test_get_asset_ids_expecting_proxy_filters_by_image_extension(
+    engine, _session_factory
+):
+    """get_asset_ids_expecting_proxy excludes video/non-image extensions (e.g. .mp4)."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="ext-repair",
+                name="Ext Repair",
+                absolute_path="/tmp/ext-repair",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("ext-repair", "photo.jpg", AssetType.image, 1000.0, 100)
+    asset_repo.upsert_asset("ext-repair", "clip.mp4", AssetType.video, 1000.0, 200)
+    session = _session_factory()
+    try:
+        session.execute(text("UPDATE asset SET status = 'proxied'"))
+        session.commit()
+    finally:
+        session.close()
+
+    ids = asset_repo.get_asset_ids_expecting_proxy(library_slug="ext-repair")
+    assert len(ids) == 1
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text(
+                "SELECT id FROM asset WHERE rel_path = 'photo.jpg' AND library_id = 'ext-repair'"
+            )
+        ).fetchone()
+        assert row is not None
+        assert ids[0][0] == row[0]
+    finally:
+        session.close()

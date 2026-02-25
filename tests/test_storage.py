@@ -73,6 +73,31 @@ def test_get_proxy_path_raises_when_missing(temp_data_dir):
         store.get_proxy_path("lib1", 999)
 
 
+def test_proxy_and_thumbnail_exist_true_when_both_present(temp_data_dir):
+    """proxy_and_thumbnail_exist returns True when both files exist."""
+    store, _ = temp_data_dir
+    img = Image.new("RGB", (100, 100), color="red")
+    store.save_thumbnail("lib1", 1, img)
+    store.save_proxy("lib1", 1, img)
+    assert store.proxy_and_thumbnail_exist("lib1", 1) is True
+
+
+def test_proxy_and_thumbnail_exist_false_when_proxy_missing(temp_data_dir):
+    """proxy_and_thumbnail_exist returns False when proxy file is missing."""
+    store, _ = temp_data_dir
+    img = Image.new("RGB", (100, 100), color="red")
+    store.save_thumbnail("lib1", 1, img)
+    assert store.proxy_and_thumbnail_exist("lib1", 1) is False
+
+
+def test_proxy_and_thumbnail_exist_false_when_thumbnail_missing(temp_data_dir):
+    """proxy_and_thumbnail_exist returns False when thumbnail file is missing."""
+    store, _ = temp_data_dir
+    img = Image.new("RGB", (100, 100), color="red")
+    store.save_proxy("lib1", 1, img)
+    assert store.proxy_and_thumbnail_exist("lib1", 1) is False
+
+
 def test_load_source_image_exif_and_rgb(tmp_path):
     """load_source_image opens image, applies exif_transpose, returns RGB."""
     rgb_path = tmp_path / "test.jpg"

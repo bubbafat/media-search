@@ -65,3 +65,9 @@ class LocalMediaStore:
         if not path.exists():
             raise FileNotFoundError(path)
         return path
+
+    def proxy_and_thumbnail_exist(self, library_slug: str, asset_id: int) -> bool:
+        """Return True if both proxy and thumbnail files exist. Used by proxy --repair."""
+        proxy_path = self._get_shard_path(library_slug, asset_id, "proxies")
+        thumb_path = self._get_shard_path(library_slug, asset_id, "thumbnails")
+        return proxy_path.exists() and thumb_path.exists()

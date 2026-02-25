@@ -264,6 +264,7 @@ def proxy(
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
+    repair: bool = typer.Option(False, "--repair", help="Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated."),
 ) -> None:
     """Start the proxy worker: claims pending assets, generates thumbnails and proxies."""
     worker_id = (
@@ -306,6 +307,7 @@ def proxy(
         library_slug=library_slug,
         verbose=verbose,
         initial_pending_count=initial_pending,
+        repair=repair,
     )
     try:
         worker.run()

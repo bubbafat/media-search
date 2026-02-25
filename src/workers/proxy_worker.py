@@ -32,6 +32,7 @@ class ProxyWorker(BaseWorker):
         library_slug: str | None = None,
         verbose: bool = False,
         initial_pending_count: int | None = None,
+        repair: bool = False,
     ) -> None:
         super().__init__(
             worker_id,
@@ -45,6 +46,44 @@ class ProxyWorker(BaseWorker):
         self._verbose = verbose
         self._initial_pending = initial_pending_count
         self._processed_count = 0
+        self._repair = repair
+
+    def _run_repair_pass(self) -> None:
+        """Find assets that should have proxy/thumbnail but are missing; set status to pending."""
+        batch_size = 500
+        offset = 0
+        total_checked = 0
+        total_reset = 0
+        while True:
+            batch = self.asset_repo.get_asset_ids_expecting_proxy(
+                library_slug=self._library_slug,
+                limit=batch_size,
+                offset=offset,
+            )
+            if not batch:
+                break
+            for asset_id, library_slug in batch:
+                if not self.storage.proxy_and_thumbnail_exist(library_slug, asset_id):
+                    self.asset_repo.update_asset_status(asset_id, AssetStatus.pending)
+                    total_reset += 1
+                total_checked += 1
+            offset += len(batch)
+            if len(batch) < batch_size:
+                break
+        if self._verbose or total_reset:
+            _log.info(
+                "Repair: checked %s, reset %s to pending",
+                total_checked,
+                total_reset,
+            )
+
+    def run(self) -> None:
+        """Run repair pass once if --repair, then the normal worker loop."""
+        if self._repair:
+            self._run_repair_pass()
+            if self._verbose:
+                self._initial_pending = self.asset_repo.count_pending(self._library_slug)
+        super().run()
 
     def process_task(self) -> None:
         asset = self.asset_repo.claim_asset_by_status(
