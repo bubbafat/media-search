@@ -28,6 +28,7 @@ class Settings(BaseModel):
     library_roots: dict[str, str] = {}
     worker_id: str | None = None
     log_level: str = "INFO"
+    forensics_dir: str = "/logs/forensics"
 
     @field_validator("worker_id", mode="before")
     @classmethod

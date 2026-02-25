@@ -1,6 +1,6 @@
 """SQLModel table/entity definitions for MediaSearch v2. Postgres 16+ only (JSONB, TSVector)."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -14,7 +14,8 @@ from sqlmodel import Field, SQLModel
 
 class ScanStatus(str, Enum):
     idle = "idle"
-    scan_req = "scan_req"
+    full_scan_requested = "full_scan_requested"
+    fast_scan_requested = "fast_scan_requested"
     scanning = "scanning"
 
 
@@ -99,10 +100,10 @@ class VideoFrame(SQLModel, table=True):
 
 
 class WorkerStatus(SQLModel, table=True):
-    __tablename__ = "workerstatus"
+    __tablename__ = "worker_status"
 
     worker_id: str = Field(primary_key=True)
-    last_seen_at: datetime = Field(default_factory=datetime.utcnow)
+    last_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     state: WorkerState = Field(default=WorkerState.offline)
     command: WorkerCommand = Field(default=WorkerCommand.none)
     stats: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB))

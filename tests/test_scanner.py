@@ -22,7 +22,7 @@ def _create_tables_and_repos(engine, session_factory):
     return WorkerRepository(session_factory), AssetRepository(session_factory)
 
 
-def _persist_library(session_factory, slug: str, scan_status: ScanStatus = ScanStatus.scan_req):
+def _persist_library(session_factory, slug: str, scan_status: ScanStatus = ScanStatus.full_scan_requested):
     """Insert or update a library and commit so the worker can see it."""
     session = session_factory()
     try:
@@ -130,6 +130,33 @@ def test_new_discovery(scanner_worker, tmp_path):
     assert assets[0]["mtime"] > 0
 
 
+def test_fast_scan_requested_library_is_claimed(engine, _session_factory, run_worker, tmp_path):
+    """A library with scan_status=fast_scan_requested is claimed and scanned like full_scan_requested."""
+    worker_repo, asset_repo = _create_tables_and_repos(engine, _session_factory)
+    library_slug = "fast-scan-lib"
+    _persist_library(_session_factory, library_slug, scan_status=ScanStatus.fast_scan_requested)
+
+    settings = Settings(
+        database_url="",
+        library_roots={library_slug: str(tmp_path)},
+        worker_id="scanner-fast-test",
+    )
+    (tmp_path / "photo.jpg").write_bytes(b"jpeg")
+    with unittest.mock.patch("src.core.path_resolver.get_config", return_value=settings):
+        worker = ScannerWorker(
+            "scanner-fast-test",
+            worker_repo,
+            heartbeat_interval_seconds=60.0,
+            asset_repo=asset_repo,
+        )
+        with run_worker(worker):
+            time.sleep(1.0)
+
+    assets = _get_assets(_session_factory, library_slug)
+    assert len(assets) == 1, "Scanner should claim fast_scan_requested library and discover file"
+    assert assets[0]["rel_path"] == "photo.jpg"
+
+
 def test_scan_directory_tree_writes_rel_paths(scanner_worker, tmp_path):
     """Scanning a directory tree discovers files at all depths and writes correct rel_paths to the DB."""
     worker, library_slug, run_worker, session_factory = scanner_worker
@@ -163,11 +190,11 @@ def test_idempotency(scanner_worker, tmp_path):
     assert len(assets_after_first) == 1
     assert assets_after_first[0]["status"] == AssetStatus.pending.value
 
-    # Set library back to scan_req so the scanner will pick it again
+    # Set library back to full_scan_requested so the scanner will pick it again
     session = session_factory()
     try:
         lib = session.get(Library, library_slug)
-        lib.scan_status = ScanStatus.scan_req
+        lib.scan_status = ScanStatus.full_scan_requested
         session.commit()
     finally:
         session.close()
@@ -207,11 +234,11 @@ def test_dirty_detection(scanner_worker, tmp_path):
     # Touch file to change mtime
     os.utime(f, (time.time(), time.time() + 10))
 
-    # Set library to scan_req again
+    # Set library to full_scan_requested again
     session = session_factory()
     try:
         lib = session.get(Library, library_slug)
-        lib.scan_status = ScanStatus.scan_req
+        lib.scan_status = ScanStatus.full_scan_requested
         session.commit()
     finally:
         session.close()

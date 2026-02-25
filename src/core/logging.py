@@ -9,7 +9,7 @@ from pathlib import Path
 from src.core.config import get_config
 
 FLIGHT_LOG_CAPACITY = 50_000
-DEFAULT_FORENSICS_DIR = "logs/forensics"
+DEFAULT_FORENSICS_DIR = "/logs/forensics"
 
 
 _flight_logger: "FlightLogger | None" = None
@@ -97,7 +97,10 @@ def setup_logging() -> None:
     console.setFormatter(formatter)
     root.addHandler(console)
 
-    flight = FlightLogger(capacity=FLIGHT_LOG_CAPACITY)
+    flight = FlightLogger(
+        capacity=FLIGHT_LOG_CAPACITY,
+        forensics_dir=cfg.forensics_dir,
+    )
     flight.setLevel(logging.DEBUG)
     flight.setFormatter(formatter)
     root.addHandler(flight)

@@ -21,7 +21,7 @@ class _ConcreteWorker(BaseWorker):
 @pytest.fixture(scope="module")
 def guard_postgres():
     """Dedicated Postgres + run migrations so system_metadata exists and is seeded."""
-    with PostgresContainer("postgres:16") as postgres:
+    with PostgresContainer("postgres:16-alpine") as postgres:
         url = postgres.get_connection_url()
         prev = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = url

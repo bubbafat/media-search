@@ -90,7 +90,7 @@ def _scan_dir(
 
 class ScannerWorker(BaseWorker):
     """
-    Worker that claims libraries with scan_req, walks their roots with os.scandir,
+    Worker that claims libraries with full_scan_requested or fast_scan_requested, walks their roots with os.scandir,
     and upserts assets. Respects pause/shutdown and logs filesystem errors to FlightLogger.
     """
 

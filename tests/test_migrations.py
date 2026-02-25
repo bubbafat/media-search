@@ -14,14 +14,14 @@ EXPECTED_TABLES = [
     "library",
     "system_metadata",
     "videoframe",
-    "workerstatus",
+    "worker_status",
 ]
 
 
 @pytest.fixture(scope="module")
 def migration_postgres():
     """Dedicated Postgres 16 container for migration tests only (empty DB)."""
-    with PostgresContainer("postgres:16") as postgres:
+    with PostgresContainer("postgres:16-alpine") as postgres:
         yield postgres
 
 
@@ -54,7 +54,7 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'workerstatus') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'worker_status') "
                     "ORDER BY table_name"
                 )
             )
@@ -81,6 +81,19 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             ).fetchone()
             assert idx is not None, "ix_asset_library_rel_path index must exist on asset"
             assert "UNIQUE" in idx[1], "ix_asset_library_rel_path must be a unique index"
+
+        # Assert videoframe.search_vector column is tsvector (spec Section 6)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT data_type, udt_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'videoframe' AND column_name = 'search_vector'"
+                )
+            ).fetchone()
+            assert row is not None, "videoframe.search_vector column must exist"
+            assert row[1] == "tsvector", (
+                f"videoframe.search_vector must be tsvector (data_type={row[0]!r}, udt_name={row[1]!r})"
+            )
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev
@@ -111,7 +124,7 @@ def test_migration_02_downgrade_base(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'workerstatus') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'worker_status') "
                     "ORDER BY table_name"
                 )
             )

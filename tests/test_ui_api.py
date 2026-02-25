@@ -18,7 +18,7 @@ def ui_api_postgres():
     from sqlalchemy.orm import sessionmaker
     from testcontainers.postgres import PostgresContainer
 
-    with PostgresContainer("postgres:16") as postgres:
+    with PostgresContainer("postgres:16-alpine") as postgres:
         url = postgres.get_connection_url()
         prev = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = url

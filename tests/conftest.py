@@ -12,7 +12,7 @@ from testcontainers.postgres import PostgresContainer
 @pytest.fixture(scope="session")
 def postgres_container():
     """Session-scoped PostgreSQL 16 container (testcontainers)."""
-    with PostgresContainer("postgres:16") as postgres:
+    with PostgresContainer("postgres:16-alpine") as postgres:
         yield postgres
 
 

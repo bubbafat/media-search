@@ -77,15 +77,15 @@ class AssetRepository:
 
     def claim_library_for_scanning(self) -> Library | None:
         """
-        Find a library with is_active=True and scan_status='scan_req', lock it with
-        FOR UPDATE SKIP LOCKED, set scan_status='scanning', and return it.
+        Find a library with is_active=True and scan_status in ('full_scan_requested', 'fast_scan_requested'),
+        lock it with FOR UPDATE SKIP LOCKED, set scan_status='scanning', and return it.
         """
         with self._session_scope(write=True) as session:
             row = session.execute(
                 text("""
                     SELECT slug, name, is_active, scan_status, target_tagger_id, sampling_limit
                     FROM library
-                    WHERE is_active = true AND scan_status = 'scan_req'
+                    WHERE is_active = true AND scan_status IN ('full_scan_requested', 'fast_scan_requested')
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 """)
