@@ -1,5 +1,17 @@
 # MediaSearch v2: Deep-Dive Technical Specification
 
+## System Vision & Executive Summary
+MediaSearch v2 is a highly concurrent, distributed media discovery and AI-processing pipeline designed to index, analyze, and search massive media libraries (2,000,000+ assets and 10,000,000+ video frames). 
+
+**The Problem:** Traditional media indexers degrade catastrophically at scale. They suffer from database locking during large deletions, they saturate local networks by repeatedly reading massive 50GB video files for different processing steps (the "Double-Read Penalty"), and they pollute pristine user storage with hidden files and sidecar metadata. 
+
+**The Solution:** V2 is completely re-architected from the ground up to operate as a distributed system. It is built on three core philosophies:
+1. **Source Immutability:** The user's original network-attached storage (NAS) is treated strictly as a read-only source. The system never pollutes the source with hidden files; all derivative work (thumbnails, proxies) lives on a fast, sharded local SSD cache.
+2. **The Proxy Pipeline:** Network I/O is isolated from GPU-bound ML tasks. A heavy file is pulled across the network exactly once to generate a local proxy. Subsequent AI models (Moondream, CLIP, etc.) execute lightning-fast against the local proxy.
+3. **Decentralized Scale:** There is no master dispatcher. The system relies on a pull-based queue using PostgreSQL's `FOR UPDATE SKIP LOCKED`, allowing workers to scale horizontally across multiple machines with zero race conditions.
+
+By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-delete patterns, MediaSearch v2 ensures that the database remains highly responsive, and re-processing assets with future AI models is seamless and fast.
+
 ## 1. Core Architectural Mandates
 ### 1.1 Database Engine
 - **Strict Requirement:** PostgreSQL 16.0 or higher.
@@ -56,8 +68,32 @@
 
 ---
 
-## 3. BaseWorker Framework & Lifecycle
+## 3. Worker Node Architecture & Conceptual Roles
 
+### 3.1 The Decentralized Actor Model
+MediaSearch v2 abandons the traditional monolithic server model (where a central API handles file uploads, database writes, and AI processing). Instead, it uses a **Decentralized Worker Model**. 
+
+Workers are autonomous, infinitely scalable background processes. There is no central "Master" node dispatching tasks. Instead, workers are completely stateless and pull work dynamically from the PostgreSQL `assets` table using atomic `SKIP LOCKED` queries. This allows you to run specialized workers on hardware suited for their specific task (e.g., I/O workers on a cheap NAS bridge, AI workers on a massive GPU rig).
+
+### 3.2 Enumeration of Standard Worker Types
+The pipeline is divided into specialized, isolated worker types to prevent hardware bottlenecks:
+
+1. **The Scanner Worker (I/O & DB Bound):** - **Role:** The Discovery Engine. 
+   - **Action:** Rapidly traverses the user's read-only network storage (NAS). It does *not* open or read media files. It only reads filesystem metadata (`os.stat`) to detect new or modified files and inserts them into the database with a `pending` status.
+
+2. **The Proxy Worker (Network I/O & CPU Bound):**
+   - **Role:** The Pre-Processor & Cache Builder.
+   - **Action:** Claims `pending` assets. It pulls the massive original media files (e.g., a 50GB video or 50MB RAW photo) across the network *exactly once*. It generates a lightweight UI Thumbnail and a standardized, high-quality AI Proxy on the local SSD. It updates the asset status to `proxied`.
+
+3. **The ML / AI Worker (GPU Bound):**
+   - **Role:** The Intelligence Engine.
+   - **Action:** Claims `proxied` assets. It never touches the network or the user's NAS. It strictly reads the lightweight local proxies from the SSD, runs them through local LLMs/Vision Models (e.g., Moondream, CLIP), extracts tags/embeddings, and updates the asset to `completed`.
+
+4. **The Garbage Collector Worker (Disk & DB Bound):**
+   - **Role:** The Janitor.
+   - **Action:** Wakes up periodically to clean up the system. It executes chunked hard-deletions on databases for "emptied trash" libraries, and safely deletes orphaned physical proxy files from the local SSD to prevent disk bloat.
+
+### 3.3 BaseWorker Framework & Lifecycle (Implementation) ###
 Every worker must implement a non-blocking `run_loop` that manages its own lifecycle.
 - **The Heartbeat:** A background thread or async task must update `worker_status.last_seen_at` and `worker_status.stats` (JSONB) every 15 seconds.
 - **Signal Hook (`handle_signal`):**
@@ -83,11 +119,23 @@ When a Video Worker processes an asset, it must follow this exact sequence:
 
 ---
 
-## 5. Observability (The Flight Log)
-- **Type:** In-memory `collections.deque`.
-- **Capacity:** Exactly 50,000 entries.
-- **Policy:** - No standard disk logging for DEBUG/INFO levels to preserve SSD IOPS and prevent log bloat.
-    - **Forced Dump:** On unhandled exception or receiving the `forensic_dump` command, the worker must write the entire buffer to `/logs/forensics/{worker_id}_{timestamp}.log`.
+## 5. Observability & The "Black Box" Flight Log
+
+### 5.1 The Logging I/O Problem
+In a high-throughput distributed system processing millions of assets and frames, standard disk-based logging is a critical anti-pattern. Writing `DEBUG` or `INFO` statements to a log file for every database transaction, network claim, or AI inference will quickly burn out SSDs (I/O exhaustion), saturate system resources, and generate terabytes of useless noise. 
+
+### 5.2 The "Flight Log" Concept
+To solve this, MediaSearch v2 utilizes a **"Black Box" Flight Log** architecture. Instead of continuously writing to disk, every worker maintains a high-fidelity, circular in-memory buffer. 
+
+It records everything the worker does in real-time. If the worker remains healthy, the oldest logs naturally fall off the end of the buffer into oblivion. The system assumes that *successful* processing does not need to be permanently memorialized.
+
+The data is only materialized to physical storage when a critical failure occurs (a crash) or when an administrator explicitly requests a diagnostic snapshot. This guarantees that when an error happens, developers have the exact contextual history leading up to the crash, without paying the I/O tax during normal operations.
+
+### 5.3 Implementation Directives
+- **Type:** In-memory `collections.deque` (Thread-safe circular buffer).
+- **Capacity:** Exactly 50,000 entries per worker.
+- **Policy:** - No standard disk logging for `DEBUG`/`INFO` levels to preserve SSD IOPS and prevent log bloat.
+  - **The Triggered Dump:** On an unhandled exception (crash) or upon receiving the `forensic_dump` command via the `worker_status` table, the worker must instantly flush the entire in-memory buffer to a physical file at `/logs/forensics/{worker_id}_{timestamp}.log`.
 
 ---
 
