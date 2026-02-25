@@ -19,6 +19,7 @@ uv run media-search --help
 | `trash`         | Manage soft-deleted libraries (list, empty one, empty all) |
 | `asset`         | List discovered assets for a library |
 | `scan`          | Run a one-shot scan for a library (no daemon) |
+| `proxy`         | Start the proxy worker (thumbnails and proxies for pending assets) |
 
 ---
 
@@ -189,6 +190,27 @@ Run a one-shot scan for the given library. Does not start the scanner worker dae
 ```bash
 uv run media-search scan nas-main
 uv run media-search scan nas-main --verbose
+```
+
+---
+
+## proxy
+
+### proxy
+
+Start the proxy worker. It runs until interrupted (Ctrl+C). The worker claims pending assets, generates thumbnails and proxy images on local storage, and updates their status to proxied (or poisoned on error). Worker ID is auto-generated from hostname and a short UUID unless overridden.
+
+| Option | Description |
+|--------|-------------|
+| `--heartbeat` | Heartbeat interval in seconds (default: 15.0) |
+| `--worker-name` | Force a specific worker ID; defaults to auto-generated |
+
+**Example:**
+
+```bash
+uv run media-search proxy
+uv run media-search proxy --heartbeat 10
+uv run media-search proxy --worker-name my-proxy-1
 ```
 
 ---

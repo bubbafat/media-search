@@ -1,7 +1,9 @@
 """Typer Admin CLI: library management and one-shot scan."""
 
 import logging
+import socket
 import sys
+import uuid
 from pathlib import Path
 
 import typer
@@ -14,10 +16,11 @@ from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
+from src.workers.proxy_worker import ProxyWorker
 from src.workers.scanner import ScannerWorker
 
 app = typer.Typer(no_args_is_help=True)
-library_app = typer.Typer()
+library_app = typer.Typer(help="Add, remove, restore, and list libraries.")
 app.add_typer(library_app, name="library")
 trash_app = typer.Typer(help="Manage soft-deleted libraries.")
 app.add_typer(trash_app, name="trash")
@@ -236,6 +239,37 @@ def scan(
             typer.echo(f"  {k}: {v}")
     else:
         typer.echo("  (no stats)")
+
+
+@app.command("proxy")
+def proxy(
+    heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
+    worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
+) -> None:
+    """Start the proxy worker: claims pending assets, generates thumbnails and proxies."""
+    worker_id = (
+        worker_name
+        if worker_name is not None
+        else f"proxy-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+    )
+    typer.secho(f"Starting Proxy Worker: {worker_id}")
+
+    session_factory = _get_session_factory()
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+
+    worker = ProxyWorker(
+        worker_id=worker_id,
+        repository=worker_repo,
+        heartbeat_interval_seconds=heartbeat,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_metadata_repo,
+    )
+    try:
+        worker.run()
+    except KeyboardInterrupt:
+        typer.secho(f"Worker {worker_id} shutting down...")
 
 
 def main() -> None:
