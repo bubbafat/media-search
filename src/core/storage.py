@@ -46,10 +46,10 @@ class LocalMediaStore:
         thumb.save(path, "JPEG", quality=85)
 
     def save_proxy(self, library_slug: str, asset_id: int, image: Image.Image) -> None:
-        """Create 1024x1024 proxy and save as JPEG quality 85."""
+        """Create 768x768 proxy and save as JPEG quality 85."""
         path = self._get_shard_path(library_slug, asset_id, "proxies", create_dirs=True)
         proxy = image.copy()
-        proxy.thumbnail((1024, 1024))
+        proxy.thumbnail((768, 768))
         proxy.save(path, "JPEG", quality=85)
 
     def get_thumbnail_path(self, library_slug: str, asset_id: int) -> Path:

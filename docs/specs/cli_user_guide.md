@@ -311,7 +311,7 @@ When `--library` is provided, the command exits with code 1 if the library is no
 | `--verbose`, `-v` | Print progress for each completed asset |
 | `--analyzer` | Which AI model to use: `mock` (default) or `moondream2` |
 
-**Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory.
+**Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile).
 
 **Example:**
 

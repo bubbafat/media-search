@@ -22,12 +22,18 @@ class MoondreamAnalyzer(BaseVisionAnalyzer):
             if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
             else "cpu"
         )
+        dtype = torch.float16 if self.device == "mps" else torch.bfloat16
         self.model = AutoModelForCausalLM.from_pretrained(
             "vikhyatk/moondream2",
             revision="2025-01-09",
             trust_remote_code=True,
             device_map={"": self.device},
+            dtype=dtype,
         )
+        try:
+            self.model = torch.compile(self.model)
+        except Exception:
+            pass  # fallback to eager mode (e.g. MPS compile often fails)
 
     def get_model_card(self) -> ModelCard:
         return ModelCard(name="moondream2", version="2025-01-09")
@@ -38,12 +44,13 @@ class MoondreamAnalyzer(BaseVisionAnalyzer):
         if image.mode != "RGB":
             image = image.convert("RGB")
 
-        desc = self.model.caption(image, length="normal")["caption"]
+        encoded = self.model.encode_image(image)
+        desc = self.model.caption(encoded, length="normal")["caption"]
         tags_str = self.model.query(
-            image, "Provide a comma-separated list of single-word tags for this image."
+            encoded, "Provide a comma-separated list of single-word tags for this image."
         )["answer"]
         ocr_raw = self.model.query(
-            image, "Extract all readable text. If there is no text, reply 'None'."
+            encoded, "Extract all readable text. If there is no text, reply 'None'."
         )["answer"]
 
         tags_list = [t.strip() for t in tags_str.split(",") if t.strip()]

@@ -155,7 +155,7 @@ To ensure high performance, UI responsiveness, and absolute security of the user
 ### 7.1 The Three-Stage Processing State Machine
 Processing heavy media over a network requires separating I/O-bound tasks from GPU-bound tasks to prevent "Double-Read Penalties."
 1. **Stage 1 (Discovery):** Scanner finds a file on the NAS. Inserts DB row as `pending`.
-2. **Stage 2 (Proxy Generation):** A Proxy/Thumbnail worker claims the `pending` asset. It reads the heavy source file across the network *exactly once*. It generates a small UI Thumbnail (`320px`) and an AI-optimized Proxy (`1024px`) on the local SSD. It updates the DB to `proxied`.
+2. **Stage 2 (Proxy Generation):** A Proxy/Thumbnail worker claims the `pending` asset. It reads the heavy source file across the network *exactly once*. It generates a small UI Thumbnail (`320px`) and an AI-optimized Proxy (`768px`) on the local SSD. It updates the DB to `proxied`.
 3. **Stage 3 (AI Extraction):** The ML Worker claims the `proxied` asset. It reads *only* the local SSD proxy, bypassing the network entirely. It updates the DB to `completed`.
 
 ---

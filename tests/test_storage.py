@@ -50,13 +50,15 @@ def test_save_and_get_thumbnail_path(temp_data_dir):
 
 
 def test_save_and_get_proxy_path(temp_data_dir):
-    """save_proxy creates file; get_proxy_path returns it."""
+    """save_proxy creates file; get_proxy_path returns it; proxy max dimension is 768."""
     store, _ = temp_data_dir
     img = Image.new("RGB", (2000, 2000), color="blue")
     store.save_proxy("lib1", 2, img)
     path = store.get_proxy_path("lib1", 2)
     assert path.exists()
     assert path.suffix == ".jpg"
+    with Image.open(path) as proxy_im:
+        assert max(proxy_im.size) == 768
 
 
 def test_get_thumbnail_path_raises_when_missing(temp_data_dir):
