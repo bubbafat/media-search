@@ -1,6 +1,7 @@
 """AI worker: claims proxied assets, runs vision analysis, updates to completed or poisoned."""
 
 import logging
+import time
 
 from src.core.storage import LocalMediaStore
 from src.models.entities import AssetStatus
@@ -59,16 +60,19 @@ class AIWorker(BaseWorker):
             return False
         assert asset.id is not None
         try:
+            started = time.perf_counter()
             proxy_path = self.storage.get_proxy_path(asset.library.slug, asset.id)
             results = self.analyzer.analyze_image(proxy_path)
             self._system_metadata_repo.save_visual_analysis(asset.id, results)
             self.asset_repo.mark_completed(asset.id, self.db_model_id)
+            elapsed = time.perf_counter() - started
             if self._verbose:
                 _log.info(
-                    "Completed asset %s (%s/%s)",
+                    "Completed asset %s (%s/%s) in %.1fs",
                     asset.id,
                     asset.library.slug,
                     asset.rel_path,
+                    elapsed,
                 )
         except Exception as e:
             _log.error(
