@@ -207,7 +207,11 @@ uv run media-search asset show nas-main photos/2024/IMG_001.jpg --metadata
 
 Full-text search over asset `visual_analysis` (AI description, tags, and extracted text). By default the query is applied to the whole JSON (vibe search). With `--ocr`, the query is applied only to the extracted OCR text. Only one search path is used per run: either global or OCR, not both.
 
-Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **Status**. Ordered by asset modification time (newest first), limited by `--limit`. If no assets match, a yellow message is printed.
+When a query is provided, results are ordered by **relevance** (best match first) and limited by `--limit`. Without a query, results are ordered by asset modification time (newest first).
+
+Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **Status**, **Confidence**. The **Confidence** column shows match strength as a percentage of the top result’s relevance score (100% for the best match). It is color-coded: green for high (>80%), yellow for medium (>50%), red for lower (≤50%). When there is no search query or when scores are not comparable, confidence is shown as "—".
+
+If no assets match, a yellow message is printed.
 
 | Argument | Description |
 |----------|-------------|

@@ -34,13 +34,30 @@ class SearchRepository:
         ocr_query: str | None = None,
         library_slug: str | None = None,
         limit: int = 50,
-    ) -> list[Asset]:
+    ) -> list[tuple[Asset, float]]:
         """
         Search assets by full-text query on visual_analysis (global and/or OCR).
         When library_slug is set, only assets from that non-deleted library are returned.
-        Results are ordered by mtime descending and limited to `limit`.
+        When a query is present, results are ordered by relevance (ts_rank_cd); otherwise by mtime descending.
+        Returns list of (Asset, rank) tuples; rank is 0.0 when no FTS query is used.
         """
-        stmt = select(Asset)
+        has_fts = query_string is not None or ocr_query is not None
+        rank_expr = None
+        if query_string is not None:
+            vector = func.to_tsvector("english", Asset.visual_analysis)
+            ts_query = func.websearch_to_tsquery("english", query_string)
+            rank_expr = func.ts_rank_cd(vector, ts_query, 1)
+        if ocr_query is not None:
+            ocr_text_col = Asset.visual_analysis["ocr_text"].astext
+            ocr_vector = func.to_tsvector("english", func.coalesce(ocr_text_col, ""))
+            ocr_ts_query = func.websearch_to_tsquery("english", ocr_query)
+            rank_ocr = func.ts_rank_cd(ocr_vector, ocr_ts_query, 1)
+            rank_expr = rank_ocr if rank_expr is None else rank_expr + rank_ocr
+
+        if has_fts:
+            stmt = select(Asset, rank_expr.label("rank"))
+        else:
+            stmt = select(Asset)
 
         if library_slug is not None:
             stmt = stmt.join(Library, Asset.library_id == Library.slug).where(
@@ -48,21 +65,23 @@ class SearchRepository:
                 Library.deleted_at.is_(None),
             )
 
-        if query_string is not None or ocr_query is not None:
+        if has_fts:
             stmt = stmt.where(Asset.visual_analysis.isnot(None))
 
         if query_string is not None:
-            vector = func.to_tsvector("english", Asset.visual_analysis)
-            ts_query = func.websearch_to_tsquery("english", query_string)
             stmt = stmt.where(vector.op("@@")(ts_query))
 
         if ocr_query is not None:
-            ocr_text_col = Asset.visual_analysis["ocr_text"].astext
-            ocr_vector = func.to_tsvector("english", func.coalesce(ocr_text_col, ""))
-            ocr_ts_query = func.websearch_to_tsquery("english", ocr_query)
             stmt = stmt.where(ocr_vector.op("@@")(ocr_ts_query))
 
-        stmt = stmt.order_by(Asset.mtime.desc()).limit(limit)
+        if has_fts:
+            stmt = stmt.order_by(rank_expr.desc())
+        else:
+            stmt = stmt.order_by(Asset.mtime.desc())
+        stmt = stmt.limit(limit)
 
         with self._session_scope(write=False) as session:
-            return list(session.execute(stmt).scalars().unique().all())
+            rows = session.execute(stmt).all()
+            if has_fts:
+                return [(row[0], float(row[1])) for row in rows]
+            return [(row[0], 0.0) for row in rows]

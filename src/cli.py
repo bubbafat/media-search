@@ -10,6 +10,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from src.core.config import get_config
 from src.models.entities import AssetStatus, ScanStatus, WorkerState
@@ -275,22 +276,43 @@ def search(
     search_repo = SearchRepository(session_factory)
     query_string = query if not ocr else None
     ocr_query = query if ocr else None
-    assets = search_repo.search_assets(
+    results = search_repo.search_assets(
         query_string=query_string,
         ocr_query=ocr_query,
         library_slug=library,
         limit=limit,
     )
-    if not assets:
+    if not results:
         typer.secho("No matching assets found.", fg=typer.colors.YELLOW)
         return
+    ranks = [r for _, r in results]
+    max_rank = max(ranks) if results else 0
+
+    def _confidence_cell(rank: float) -> Text:
+        if max_rank <= 0:
+            return Text("—", style="dim")
+        pct = round(100 * rank / max_rank)
+        s = f"{pct}%"
+        if pct > 80:
+            return Text(s, style="green")
+        if pct > 50:
+            return Text(s, style="yellow")
+        return Text(s, style="red")
+
     table = Table(title=None)
     table.add_column("Library")
     table.add_column("Relative Path")
     table.add_column("Type")
     table.add_column("Status")
-    for a in assets:
-        table.add_row(a.library_id, a.rel_path, a.type.value, a.status.value)
+    table.add_column("Confidence")
+    for a, rank in results:
+        table.add_row(
+            a.library_id,
+            a.rel_path,
+            a.type.value,
+            a.status.value,
+            _confidence_cell(rank),
+        )
     console = Console()
     console.print(table)
 
