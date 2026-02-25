@@ -176,6 +176,30 @@ uv run media-search asset list nas-main --limit 100 --status pending
 
 ---
 
+### asset show \<library_slug\> \<rel_path\>
+
+Show one asset by library slug and relative path (as shown in `asset list`). By default prints a minimal summary: id, library_id, rel_path, type, status, and size (KB). With `--metadata`, prints the full asset record as JSON, including `visual_analysis` (description, tags, and extracted text in `ocr_text`).
+
+Exits with code 1 if the library is not found or soft-deleted, or if the asset is not found.
+
+| Argument | Description |
+|----------|-------------|
+| `library_slug` | Library slug |
+| `rel_path` | Relative path of the asset within the library |
+
+| Option | Description |
+|--------|-------------|
+| `--metadata` | Dump full asset record as JSON (including visual_analysis / extracted text) |
+
+**Example:**
+
+```bash
+uv run media-search asset show nas-main photos/2024/IMG_001.jpg
+uv run media-search asset show nas-main photos/2024/IMG_001.jpg --metadata
+```
+
+---
+
 ## scan
 
 ### scan \<slug\>

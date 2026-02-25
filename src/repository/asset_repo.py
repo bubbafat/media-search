@@ -209,6 +209,21 @@ class AssetRepository:
             query = query.order_by(Asset.id.desc()).limit(limit)
             return session.execute(query).scalars().all()
 
+    def get_asset(self, library_id: str, rel_path: str) -> Asset | None:
+        """
+        Return a single asset by library_id and rel_path, or None if not found.
+        Only returns assets in non-deleted libraries (join library where deleted_at IS NULL).
+        """
+        with self._session_scope(write=False) as session:
+            query = (
+                select(Asset)
+                .join(Library, Asset.library_id == Library.slug)
+                .where(Asset.library_id == library_id)
+                .where(Asset.rel_path == rel_path)
+                .where(Library.deleted_at.is_(None))
+            )
+            return session.execute(query).scalars().unique().one_or_none()
+
     def claim_asset_by_status(
         self,
         worker_id: str,

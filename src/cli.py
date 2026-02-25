@@ -1,5 +1,6 @@
 """Typer Admin CLI: library management and one-shot scan."""
 
+import json
 import logging
 import socket
 import sys
@@ -210,6 +211,55 @@ def asset_list(
     console = Console()
     console.print(table)
     typer.echo(f"Showing {len(assets)} of {total} assets for library '{library_slug}'.")
+
+
+@asset_app.command("show")
+def asset_show(
+    library_slug: str = typer.Argument(..., help="Library slug"),
+    rel_path: str = typer.Argument(..., help="Relative path of the asset within the library"),
+    metadata: bool = typer.Option(False, "--metadata", help="Dump full asset record as JSON (including visual_analysis)"),
+) -> None:
+    """Show one asset: minimal summary by default, or full metadata with --metadata."""
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    asset_repo = AssetRepository(session_factory)
+
+    lib = lib_repo.get_by_slug(library_slug)
+    if lib is None:
+        typer.echo(f"Library not found or deleted: '{library_slug}'.", err=True)
+        raise typer.Exit(1)
+
+    asset = asset_repo.get_asset(library_slug, rel_path)
+    if asset is None:
+        typer.echo("Asset not found.", err=True)
+        raise typer.Exit(1)
+
+    if metadata:
+        payload = {
+            "id": asset.id,
+            "library_id": asset.library_id,
+            "rel_path": asset.rel_path,
+            "type": asset.type.value,
+            "mtime": asset.mtime,
+            "size": asset.size,
+            "status": asset.status.value,
+            "tags_model_id": asset.tags_model_id,
+            "analysis_model_id": asset.analysis_model_id,
+            "worker_id": asset.worker_id,
+            "lease_expires_at": asset.lease_expires_at.isoformat() if asset.lease_expires_at else None,
+            "retry_count": asset.retry_count,
+            "error_message": asset.error_message,
+            "visual_analysis": asset.visual_analysis,
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        size_kb = round(asset.size / 1024) if asset.size else 0
+        typer.echo(f"id: {asset.id}")
+        typer.echo(f"library_id: {asset.library_id}")
+        typer.echo(f"rel_path: {asset.rel_path}")
+        typer.echo(f"type: {asset.type.value}")
+        typer.echo(f"status: {asset.status.value}")
+        typer.echo(f"size: {size_kb} KB")
 
 
 @app.command()

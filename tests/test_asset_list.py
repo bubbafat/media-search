@@ -129,6 +129,93 @@ def test_get_assets_by_library_respects_limit(engine, _session_factory):
     assert len(assets) == 2
 
 
+def test_get_asset_returns_asset_when_found(engine, _session_factory):
+    """get_asset returns the asset with correct rel_path and visual_analysis when present."""
+    lib_repo, asset_repo = _create_tables_and_seed(engine, _session_factory)
+    slug = "show-lib"
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=slug,
+                name="Show Lib",
+                absolute_path="/tmp/show",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(slug, "photo.jpg", AssetType.image, 1000.0, 2048)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET visual_analysis = CAST(:va AS jsonb) WHERE library_id = :lib AND rel_path = 'photo.jpg'"
+            ),
+            {"va": '{"description": "A test", "tags": ["x"], "ocr_text": "Hello"}', "lib": slug},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset = asset_repo.get_asset(slug, "photo.jpg")
+    assert asset is not None
+    assert asset.rel_path == "photo.jpg"
+    assert asset.visual_analysis is not None
+    assert asset.visual_analysis.get("ocr_text") == "Hello"
+
+
+def test_get_asset_returns_none_when_path_missing(engine, _session_factory):
+    """get_asset returns None when rel_path does not exist."""
+    lib_repo, asset_repo = _create_tables_and_seed(engine, _session_factory)
+    slug = "show-missing-lib"
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=slug,
+                name="Show Missing Lib",
+                absolute_path="/tmp/show-missing",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+    asset_repo.upsert_asset(slug, "only.jpg", AssetType.image, 1000.0, 100)
+
+    assert asset_repo.get_asset(slug, "nonexistent.jpg") is None
+
+
+def test_get_asset_returns_none_when_library_deleted(engine, _session_factory):
+    """get_asset returns None for assets in a trashed (soft-deleted) library."""
+    lib_repo, asset_repo = _create_tables_and_seed(engine, _session_factory)
+    slug = "trashed-lib"
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=slug,
+                name="Trashed Lib",
+                absolute_path="/tmp/trashed",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+    asset_repo.upsert_asset(slug, "in-trash.jpg", AssetType.image, 1000.0, 100)
+
+    lib_repo.soft_delete(slug)
+
+    assert asset_repo.get_asset(slug, "in-trash.jpg") is None
+
+
 @pytest.fixture
 def asset_list_cli_db(postgres_container, engine, _session_factory, request):
     """Postgres with tables; set DATABASE_URL so CLI uses it. Yields (session_factory, library_slug)."""
