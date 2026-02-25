@@ -7,7 +7,7 @@ from src.models.entities import AssetStatus
 from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
-from src.ai.vision_base import MockVisionAnalyzer
+from src.ai.factory import get_vision_analyzer
 from src.workers.base import BaseWorker
 
 SUPPORTED_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".bmp"]
@@ -31,6 +31,7 @@ class AIWorker(BaseWorker):
         system_metadata_repo: SystemMetadataRepository,
         library_slug: str | None = None,
         verbose: bool = False,
+        analyzer_name: str = "mock",
     ) -> None:
         super().__init__(
             worker_id,
@@ -40,7 +41,7 @@ class AIWorker(BaseWorker):
         )
         self.asset_repo = asset_repo
         self.storage = LocalMediaStore()
-        self.analyzer = MockVisionAnalyzer()
+        self.analyzer = get_vision_analyzer(analyzer_name)
         self.db_model_id = self._system_metadata_repo.get_or_create_ai_model(
             self.analyzer.get_model_card()
         )

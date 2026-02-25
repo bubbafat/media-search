@@ -324,6 +324,7 @@ def ai_start(
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
+    analyzer: str = typer.Option("mock", "--analyzer", help="Which AI model to use (mock or moondream2)."),
 ) -> None:
     """Start the AI worker: claims proxied assets, runs vision analysis, marks completed."""
     worker_id = (
@@ -331,7 +332,7 @@ def ai_start(
         if worker_name is not None
         else f"ai-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
     )
-    typer.secho(f"Starting AI Worker: {worker_id}")
+    typer.secho(f"Starting AI Worker: {worker_id} (analyzer: {analyzer})")
 
     session_factory = _get_session_factory()
     if library_slug is not None:
@@ -363,6 +364,7 @@ def ai_start(
         system_metadata_repo=system_metadata_repo,
         library_slug=library_slug,
         verbose=verbose,
+        analyzer_name=analyzer,
     )
     try:
         worker.run()

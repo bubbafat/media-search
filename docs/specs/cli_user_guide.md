@@ -252,12 +252,16 @@ When `--library` is provided, the command exits with code 1 if the library is no
 | `--worker-name` | Force a specific worker ID; defaults to auto-generated |
 | `--library` | Limit to this library slug only (optional) |
 | `--verbose`, `-v` | Print progress for each completed asset |
+| `--analyzer` | Which AI model to use: `mock` (default) or `moondream2` |
+
+**Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory.
 
 **Example:**
 
 ```bash
 uv run media-search ai start
 uv run media-search ai start --library nas-main --verbose
+uv run media-search ai start --analyzer moondream2
 ```
 
 ---
