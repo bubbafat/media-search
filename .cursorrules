@@ -30,4 +30,6 @@ All workers must inherit from BaseWorker and implement handle_signal(command).
 - All timestamps in the database should be with timezone - we never store data in local time (though we may display it in local time)
 
 ## Documentation
-When new entities, CLI commands, or UI changes are made, update the user guide files in docs/specs: api_user_guide.md, cli_user_guide.md, and ui_user_guide.md
+- When new entities, CLI commands, or UI changes are made, update the user guide files in docs/specs: api_user_guide.md, cli_user_guide.md, ui_user_guide.md, video_extraction_user_guide.md (check for other guides if none of these are relevant)
+
+- While planning, if a change would be counter to a described state, design, behavior, etc in any of the docs under the docs/specs folder, notify me to confirm that the spec should be updated or if the plan is out of spec.
