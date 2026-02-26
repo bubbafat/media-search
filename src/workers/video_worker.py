@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from src.ai.factory import get_vision_analyzer
+from src.core.config import get_config
 from src.core.file_extensions import VIDEO_EXTENSIONS_LIST
 from src.models.entities import AssetStatus
 from src.repository.asset_repo import AssetRepository
@@ -11,6 +12,7 @@ from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
 from src.video.indexing import run_video_scene_indexing
+from src.video.preview import build_preview_webp
 from src.workers.base import BaseWorker
 
 _log = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ class VideoWorker(BaseWorker):
         verbose: bool = False,
         analyzer_name: str = "mock",
         system_default_model_id: int | None = None,
+        repair: bool = False,
     ) -> None:
         super().__init__(
             worker_id,
@@ -54,6 +57,55 @@ class VideoWorker(BaseWorker):
         self._library_slug = library_slug
         self._verbose = verbose
         self._system_default_model_id = system_default_model_id
+        self._repair = repair
+
+    def _run_preview_repair_pass(self) -> None:
+        """Build missing preview.webp from existing scene images (no reindex)."""
+        data_dir = Path(get_config().data_dir)
+        batch_size = 500
+        offset = 0
+        total_checked = 0
+        total_built = 0
+        while True:
+            batch = self._scene_repo.get_asset_ids_with_scenes(
+                library_slug=self._library_slug,
+                limit=batch_size,
+                offset=offset,
+            )
+            if not batch:
+                break
+            for asset_id, library_slug in batch:
+                preview_path = data_dir / "video_scenes" / library_slug / str(asset_id) / "preview.webp"
+                if preview_path.exists():
+                    total_checked += 1
+                    continue
+                try:
+                    built = build_preview_webp(asset_id, library_slug, self._scene_repo, data_dir)
+                    if built is not None:
+                        total_built += 1
+                        relative = f"video_scenes/{library_slug}/{asset_id}/preview.webp"
+                        self.asset_repo.set_preview_path(asset_id, relative)
+                        _log.info("Preview: %s", built.resolve())
+                except Exception as e:
+                    _log.warning(
+                        "Preview repair failed for asset %s (%s): %s",
+                        asset_id,
+                        library_slug,
+                        e,
+                        exc_info=True,
+                    )
+                total_checked += 1
+            offset += len(batch)
+            if len(batch) < batch_size:
+                break
+        if self._verbose or total_built:
+            _log.info("Repair: checked %s, built %s", total_checked, total_built)
+
+    def run(self) -> None:
+        """Run repair pass once if --repair, then the normal worker loop."""
+        if self._repair:
+            self._run_preview_repair_pass()
+        super().run()
 
     def process_task(self) -> bool:
         claim_kwargs: dict = {"library_slug": self._library_slug}
@@ -89,7 +141,7 @@ class VideoWorker(BaseWorker):
 
         _log.info("Processing video: %s", source_path)
         try:
-            run_video_scene_indexing(
+            preview_path = run_video_scene_indexing(
                 asset.id,
                 source_path,
                 asset.library.slug,
@@ -106,6 +158,10 @@ class VideoWorker(BaseWorker):
                 asset.library.slug,
                 asset.rel_path,
             )
+            if preview_path is not None:
+                relative = f"video_scenes/{asset.library.slug}/{asset.id}/preview.webp"
+                self.asset_repo.set_preview_path(asset.id, relative)
+                _log.info("Preview: %s", preview_path.resolve())
             return True
         except InterruptedError:
             self.asset_repo.update_asset_status(asset.id, AssetStatus.pending)

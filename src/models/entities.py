@@ -108,6 +108,7 @@ class Asset(SQLModel, table=True):
     retry_count: int = 0
     error_message: str | None = Field(default=None)
     visual_analysis: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONB))
+    preview_path: str | None = Field(default=None)
 
     library: "Library" = Relationship()
 

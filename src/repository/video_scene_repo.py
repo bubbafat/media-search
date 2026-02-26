@@ -99,6 +99,32 @@ class VideoSceneRepository:
                 )
             return result
 
+    def get_asset_ids_with_scenes(
+        self,
+        library_slug: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[tuple[int, str]]:
+        """
+        Return (asset_id, library_slug) for assets that have at least one row in video_scenes.
+        Used by video worker --repair. Optionally filter by library_slug. Ordered by asset_id.
+        """
+        with self._session_scope(write=False) as session:
+            q = """
+                SELECT DISTINCT s.asset_id, a.library_id
+                FROM video_scenes s
+                JOIN asset a ON a.id = s.asset_id
+                JOIN library l ON l.slug = a.library_id AND l.deleted_at IS NULL
+                WHERE 1=1
+            """
+            params: dict = {"limit": limit, "offset": offset}
+            if library_slug is not None:
+                q += " AND a.library_id = :library_slug"
+                params["library_slug"] = library_slug
+            q += " ORDER BY s.asset_id LIMIT :limit OFFSET :offset"
+            rows = session.execute(text(q), params).fetchall()
+        return [(int(r[0]), str(r[1])) for r in rows]
+
     def get_max_end_ts(self, asset_id: int) -> float | None:
         """Return max(end_ts) for the asset from video_scenes, or None if no rows."""
         with self._session_scope(write=False) as session:

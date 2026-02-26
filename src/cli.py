@@ -199,6 +199,7 @@ def library_reindex_videos(
     asset_ids = asset_repo.get_video_asset_ids_by_library(library_slug)
     for aid in asset_ids:
         scene_repo.clear_index_for_asset(aid)
+        asset_repo.set_preview_path(aid, None)
         asset_repo.update_asset_status(aid, AssetStatus.pending)
     typer.echo(f"{len(asset_ids)} video asset(s) set to pending. Run 'ai video --library {library_slug}' to re-process.")
 
@@ -384,6 +385,7 @@ def asset_reindex(
 
     assert asset.id is not None
     scene_repo.clear_index_for_asset(asset.id)
+    asset_repo.set_preview_path(asset.id, None)
     asset_repo.update_asset_status(asset.id, AssetStatus.pending)
     typer.echo("Video index cleared and asset set to pending. Run 'ai video' to re-process.")
 
@@ -712,6 +714,7 @@ def ai_video(
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
+    repair: bool = typer.Option(False, "--repair", help="Rebuild missing video preview.webp from existing scene images without reindexing."),
 ) -> None:
     """Start the Video worker: claims pending video assets, runs scene indexing, marks completed."""
     session_factory = _get_session_factory()
@@ -784,6 +787,7 @@ def ai_video(
         verbose=verbose,
         analyzer_name=resolved_analyzer,
         system_default_model_id=system_default_model_id,
+        repair=repair,
     )
     try:
         worker.run()

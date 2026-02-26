@@ -1,7 +1,7 @@
 """Integration tests for video scene indexing: persistence and resume (testcontainers Postgres)."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import text
@@ -112,12 +112,15 @@ def test_indexing_persists_scenes_and_clears_state_on_eof(engine, _session_facto
 
     video_path = tmp_path / "video.mp4"
     video_path.write_bytes(b"fake")
-    with patch("src.video.indexing.VideoScanner") as MockScanner:
-        MockScanner.return_value.out_width = w
-        MockScanner.return_value.out_height = h
-        with patch("src.video.indexing.SceneSegmenter") as MockSegmenter:
-            MockSegmenter.return_value.iter_scenes.return_value = mock_yields
-            run_video_scene_indexing(asset_id, video_path, "vid-int-full", video_repo)
+    mock_config = MagicMock()
+    mock_config.data_dir = str(tmp_path)
+    with patch("src.video.indexing.get_config", return_value=mock_config):
+        with patch("src.video.indexing.VideoScanner") as MockScanner:
+            MockScanner.return_value.out_width = w
+            MockScanner.return_value.out_height = h
+            with patch("src.video.indexing.SceneSegmenter") as MockSegmenter:
+                MockSegmenter.return_value.iter_scenes.return_value = mock_yields
+                run_video_scene_indexing(asset_id, video_path, "vid-int-full", video_repo)
 
     assert video_repo.get_max_end_ts(asset_id) == 12.0
     assert video_repo.get_active_state(asset_id) is None
@@ -128,6 +131,21 @@ def test_indexing_persists_scenes_and_clears_state_on_eof(engine, _session_facto
             {"aid": asset_id},
         ).scalar()
         assert count == 2
+    finally:
+        session.close()
+
+    # Preview is built after indexing; asset row gets preview_path (as worker would set it)
+    preview_path = tmp_path / "video_scenes" / "vid-int-full" / str(asset_id) / "preview.webp"
+    assert preview_path.exists()
+    expected_relative = f"video_scenes/vid-int-full/{asset_id}/preview.webp"
+    asset_repo.set_preview_path(asset_id, expected_relative)
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT preview_path FROM asset WHERE id = :aid"),
+            {"aid": asset_id},
+        ).fetchone()
+        assert row is not None and row[0] == expected_relative
     finally:
         session.close()
 

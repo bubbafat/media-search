@@ -255,6 +255,18 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             ).fetchone()
             assert idx is not None, "ix_video_scenes_fts index must exist on video_scenes"
             assert "gin" in idx[1].lower(), "ix_video_scenes_fts must be a GIN index"
+
+        # Assert asset has preview_path column (migration 014)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT column_name, is_nullable, data_type FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'asset' AND column_name = 'preview_path'"
+                )
+            ).fetchone()
+            assert row is not None, "asset.preview_path column must exist"
+            assert row[1] == "YES", "asset.preview_path must be nullable"
+            assert row[2] == "character varying", "asset.preview_path must be string type"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

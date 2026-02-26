@@ -107,6 +107,46 @@ def test_list_scenes_returns_ordered_scenes(engine, _session_factory):
     assert scenes[1].keep_reason == "temporal"
 
 
+def test_get_asset_ids_with_scenes_returns_assets_with_scenes(engine, _session_factory):
+    """get_asset_ids_with_scenes returns (asset_id, library_slug) for assets that have scenes."""
+    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id_a = _ensure_library_and_asset(_session_factory, "lib-repair-a")
+    asset_id_b = _ensure_library_and_asset(_session_factory, "lib-repair-b")
+    video_repo.save_scene_and_update_state(
+        asset_id_a,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=3.0,
+            description=None,
+            metadata=None,
+            sharpness_score=1.0,
+            rep_frame_path="/data/a.jpg",
+            keep_reason="phash",
+        ),
+        None,
+    )
+    video_repo.save_scene_and_update_state(
+        asset_id_b,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description=None,
+            metadata=None,
+            sharpness_score=1.0,
+            rep_frame_path="/data/b.jpg",
+            keep_reason="forced",
+        ),
+        None,
+    )
+
+    all_pairs = video_repo.get_asset_ids_with_scenes(library_slug=None, limit=100, offset=0)
+    assert (asset_id_a, "lib-repair-a") in all_pairs
+    assert (asset_id_b, "lib-repair-b") in all_pairs
+
+    filtered = video_repo.get_asset_ids_with_scenes(library_slug="lib-repair-a", limit=10, offset=0)
+    assert filtered == [(asset_id_a, "lib-repair-a")]
+
+
 def test_list_scenes_empty_returns_empty_list(engine, _session_factory):
     """list_scenes when no scenes exist returns empty list."""
     _, video_repo = _create_tables_and_seed(engine, _session_factory)
@@ -115,9 +155,11 @@ def test_list_scenes_empty_returns_empty_list(engine, _session_factory):
 
 
 def test_clear_index_for_asset_removes_scenes_and_active_state(engine, _session_factory):
-    """clear_index_for_asset deletes all video_scenes and video_active_state for the asset."""
-    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    """clear_index_for_asset deletes all video_scenes and video_active_state for the asset.
+    When CLI clears index it also clears asset.preview_path; assert that flow leaves preview_path NULL."""
+    asset_repo, video_repo = _create_tables_and_seed(engine, _session_factory)
     asset_id = _ensure_library_and_asset(_session_factory, "vid-lib-clear")
+    asset_repo.set_preview_path(asset_id, f"video_scenes/vid-lib-clear/{asset_id}/preview.webp")
     video_repo.save_scene_and_update_state(
         asset_id,
         VideoSceneRow(
@@ -146,9 +188,19 @@ def test_clear_index_for_asset_removes_scenes_and_active_state(engine, _session_
     )
     assert len(video_repo.list_scenes(asset_id)) == 2
     video_repo.clear_index_for_asset(asset_id)
+    asset_repo.set_preview_path(asset_id, None)  # CLI does this when clearing index
     assert video_repo.list_scenes(asset_id) == []
     assert video_repo.get_active_state(asset_id) is None
     assert video_repo.get_max_end_ts(asset_id) is None
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT preview_path FROM asset WHERE id = :id"),
+            {"id": asset_id},
+        ).fetchone()
+        assert row is not None and row[0] is None
+    finally:
+        session.close()
 
 
 def test_get_max_end_ts_empty_returns_none(engine, _session_factory):

@@ -413,6 +413,14 @@ class AssetRepository:
                 },
             )
 
+    def set_preview_path(self, asset_id: int, path: str | None) -> None:
+        """Set or clear asset.preview_path (relative to data_dir). Single source of truth for video preview."""
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("UPDATE asset SET preview_path = :path WHERE id = :asset_id"),
+                {"path": path, "asset_id": asset_id},
+            )
+
     def renew_asset_lease(self, asset_id: int, lease_seconds: int = 300) -> None:
         """Bump the lease_expires_at for an asset currently being processed."""
         with self._session_scope(write=True) as session:
