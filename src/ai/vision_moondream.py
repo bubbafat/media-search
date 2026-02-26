@@ -6,6 +6,11 @@ from src.ai.schema import ModelCard, VisualAnalysis
 from src.ai.vision_base import BaseVisionAnalyzer
 
 
+def _parse_tags(tags_str: str) -> list[str]:
+    """Parse comma-separated tags with order-preserving deduplication."""
+    return list(dict.fromkeys(t.strip() for t in tags_str.split(",") if t.strip()))
+
+
 class MoondreamAnalyzer(BaseVisionAnalyzer):
     """Vision analyzer using vikhyatk/moondream2 (revision 2025-01-09)."""
 
@@ -53,7 +58,7 @@ class MoondreamAnalyzer(BaseVisionAnalyzer):
             encoded, "Extract all readable text. If there is no text, reply 'None'."
         )["answer"]
 
-        tags_list = [t.strip() for t in tags_str.split(",") if t.strip()]
+        tags_list = _parse_tags(tags_str)
         ocr = ocr_raw.strip() if ocr_raw else None
         if ocr is not None and ocr.lower() == "none":
             ocr = None
