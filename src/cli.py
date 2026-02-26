@@ -14,7 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from src.core.config import get_config
-from src.models.entities import AssetStatus, ScanStatus, WorkerState
+from src.models.entities import AssetStatus, AssetType, ScanStatus, WorkerState
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 from src.repository.search_repo import SearchRepository
@@ -22,9 +22,11 @@ from src.repository.system_metadata_repo import (
     ALLOW_MOCK_DEFAULT_ENV,
     SystemMetadataRepository,
 )
+from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.ai_worker import AIWorker
 from src.workers.proxy_worker import ProxyWorker
+from src.workers.video_worker import VideoWorker
 from src.workers.scanner import ScannerWorker
 
 app = typer.Typer(no_args_is_help=True)
@@ -268,6 +270,69 @@ def asset_show(
         typer.echo(f"type: {asset.type.value}")
         typer.echo(f"status: {asset.status.value}")
         typer.echo(f"size: {size_kb} KB")
+
+
+@asset_app.command("scenes")
+def asset_scenes(
+    library_slug: str = typer.Argument(..., help="Library slug"),
+    rel_path: str = typer.Argument(..., help="Relative path of the video asset within the library"),
+    metadata: bool = typer.Option(False, "--metadata", help="Output full scene records as JSON including metadata (e.g. moondream description/tags)."),
+) -> None:
+    """List video scenes for a video asset: summary table by default, or full JSON with --metadata."""
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    asset_repo = AssetRepository(session_factory)
+    scene_repo = VideoSceneRepository(session_factory)
+
+    lib = lib_repo.get_by_slug(library_slug)
+    if lib is None:
+        typer.echo(f"Library not found or deleted: '{library_slug}'.", err=True)
+        raise typer.Exit(1)
+
+    asset = asset_repo.get_asset(library_slug, rel_path)
+    if asset is None:
+        typer.echo("Asset not found.", err=True)
+        raise typer.Exit(1)
+
+    if asset.type != AssetType.video:
+        typer.echo("Scenes are only available for video assets.", err=True)
+        raise typer.Exit(1)
+
+    assert asset.id is not None
+    scenes = scene_repo.list_scenes(asset.id)
+
+    if metadata:
+        payload = [
+            {
+                "id": s.id,
+                "start_ts": s.start_ts,
+                "end_ts": s.end_ts,
+                "description": s.description,
+                "metadata": s.metadata,
+                "sharpness_score": s.sharpness_score,
+                "rep_frame_path": s.rep_frame_path,
+                "keep_reason": s.keep_reason,
+            }
+            for s in scenes
+        ]
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        if not scenes:
+            typer.echo("No scenes indexed for this asset.")
+            return
+        table = Table(title="Video scenes")
+        table.add_column("#", style="dim")
+        table.add_column("Start (s)")
+        table.add_column("End (s)")
+        table.add_column("Keep reason")
+        table.add_column("Description")
+        for i, s in enumerate(scenes, start=1):
+            desc = (s.description or "").replace("\n", " ").strip()
+            if len(desc) > 60:
+                desc = desc[:57] + "..."
+            table.add_row(str(i), f"{s.start_ts:.2f}", f"{s.end_ts:.2f}", s.keep_reason, desc or "—")
+        console = Console()
+        console.print(table)
 
 
 @app.command("search")
@@ -570,6 +635,92 @@ def ai_start(
         system_default_model_id=system_default_model_id,
         repair=repair,
         library_repo=lib_repo if repair else None,
+    )
+    try:
+        worker.run()
+    except KeyboardInterrupt:
+        typer.secho(f"Worker {worker_id} shutting down...")
+
+
+@ai_app.command("video")
+def ai_video(
+    heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
+    worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
+    library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
+    analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
+) -> None:
+    """Start the Video worker: claims pending video assets, runs scene indexing, marks completed."""
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+    scene_repo = VideoSceneRepository(session_factory)
+
+    if library_slug is not None:
+        lib = lib_repo.get_by_slug(library_slug)
+        if lib is None:
+            typer.echo(
+                f"Library not found or deleted: '{library_slug}'. Use 'library list' to see valid slugs.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+    resolved_analyzer: str
+    system_default_model_id: int | None = system_metadata_repo.get_default_ai_model_id()
+
+    if analyzer is not None:
+        resolved_analyzer = analyzer
+    else:
+        effective_id = _resolve_effective_default_model_id(system_metadata_repo, lib_repo, library_slug)
+        if effective_id is None:
+            typer.secho(
+                "No default AI model. Set one with 'ai default set <name> [version]' or use --analyzer.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        model = system_metadata_repo.get_ai_model_by_id(effective_id)
+        if model is None:
+            typer.secho(f"Default AI model id {effective_id} not found.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
+        if _aimodel_name_is_mock(model.name) and os.environ.get(ALLOW_MOCK_DEFAULT_ENV, "").strip() != "1":
+            typer.secho(
+                f"Cannot use 'mock' as default. Set {ALLOW_MOCK_DEFAULT_ENV}=1 only in tests if needed.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        resolved_analyzer = model.name
+        if resolved_analyzer == "mock-analyzer":
+            resolved_analyzer = "mock"
+
+    worker_id = (
+        worker_name
+        if worker_name is not None
+        else f"video-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+    )
+    typer.secho(f"Starting Video Worker: {worker_id} (analyzer: {resolved_analyzer})")
+
+    if verbose:
+        root = logging.getLogger("src.workers")
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.INFO)
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+
+    worker = VideoWorker(
+        worker_id=worker_id,
+        repository=worker_repo,
+        heartbeat_interval_seconds=heartbeat,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_metadata_repo,
+        scene_repo=scene_repo,
+        library_slug=library_slug,
+        verbose=verbose,
+        analyzer_name=resolved_analyzer,
+        system_default_model_id=system_default_model_id,
     )
     try:
         worker.run()

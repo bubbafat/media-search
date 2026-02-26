@@ -1,7 +1,7 @@
 """Video scene indexing: resume-aware pipeline that persists scenes and active state to PostgreSQL."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from PIL import Image
 from rapidfuzz import fuzz
@@ -48,6 +48,8 @@ def run_video_scene_indexing(
     repo: VideoSceneRepository,
     *,
     vision_analyzer: "BaseVisionAnalyzer | None" = None,
+    on_scene_closed: Callable[[], None] | None = None,
+    check_interrupt: Callable[[], bool] | None = None,
 ) -> None:
     """
     Run the scene detection pipeline for one video asset: resume from last max(end_ts) if any,
@@ -85,7 +87,7 @@ def run_video_scene_indexing(
     width = scanner.out_width
     height = scanner.out_height
 
-    for scene, next_state in segmenter.iter_scenes():
+    for scene, next_state in segmenter.iter_scenes(check_interrupt=check_interrupt):
         active_state_for_db: VideoActiveState | None = None
         if next_state is not None:
             active_state_for_db = VideoActiveState(
@@ -143,6 +145,8 @@ def run_video_scene_indexing(
             # If a crash occurs mid-scene, the resume logic safely rewinds to max_end_ts
             # and recalculates the unclosed scene's best frame during the catch-up phase.
             repo.save_scene_and_update_state(asset_id, row, active_state_for_db)
+            if on_scene_closed:
+                on_scene_closed()
         else:
             if active_state_for_db is not None:
                 repo.upsert_active_state(asset_id, active_state_for_db)

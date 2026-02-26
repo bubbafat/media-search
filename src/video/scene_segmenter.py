@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import cv2
 import imagehash
@@ -105,10 +105,13 @@ class SceneSegmenter:
         self._initial_anchor_phash = initial_anchor_phash
         self._discard_until_pts = discard_until_pts
 
-    def iter_scenes(self) -> Iterator[SceneResult]:
+    def iter_scenes(
+        self, check_interrupt: Callable[[], bool] | None = None
+    ) -> Iterator[tuple[SceneResult | None, tuple[str, float, float, float] | None]]:
         """
-        Iterate over closed scenes, yielding one SceneResult per scene (best frame + bounds + keep_reason).
+        Iterate over closed scenes, yielding one (SceneResult, next_state) per scene (best frame + bounds + keep_reason).
         On EOF the final open scene is closed and yielded with keep_reason=forced.
+        If check_interrupt is set and returns True at the start of a frame, raises InterruptedError.
         """
         scene_start_pts: float = 0.0
         anchor_phash: imagehash.ImageHash | None = None
@@ -159,6 +162,8 @@ class SceneSegmenter:
             has_eligible_best = False
 
         for frame_bytes, pts in self._scanner.iter_frames():
+            if check_interrupt and check_interrupt():
+                raise InterruptedError("Pipeline interrupted by worker shutdown.")
             seen_any_frame = True
             last_pts = pts
             if discard_until is not None:

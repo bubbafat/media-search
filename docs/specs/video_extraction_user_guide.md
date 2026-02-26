@@ -53,7 +53,8 @@ When a job restarts, the system:
 3.  Restores the `ActiveSceneState` to "prime" the segmenter with the exact anchor and best-frame data it had before the crash.
 4.  Discards frames until `PTS >= max_end_ts`, then resumes processing seamlessly.
 
-
+### Running the pipeline (Video worker)
+The scene-indexing pipeline is driven by the **Video worker**, started via the CLI with `ai video`. The worker claims pending video assets from the database, runs the pipeline (scene detection, best-frame selection, optional AI analysis), and marks assets completed or poisoned. To support long-running videos safely, the worker **renews the asset lease** after each closed scene and supports **graceful shutdown**: on SIGINT/SIGTERM the pipeline is interrupted (per-frame check) and the asset is set back to pending so another worker can resume later.
 
 ---
 

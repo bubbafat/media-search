@@ -397,6 +397,18 @@ class AssetRepository:
                 },
             )
 
+    def renew_asset_lease(self, asset_id: int, lease_seconds: int = 300) -> None:
+        """Bump the lease_expires_at for an asset currently being processed."""
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("""
+                    UPDATE asset
+                    SET lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval
+                    WHERE id = :id
+                """),
+                {"lease_seconds": lease_seconds, "id": asset_id},
+            )
+
     def mark_completed(self, asset_id: int, analysis_model_id: int) -> None:
         """Set asset to completed, set analysis_model_id, clear worker_id and lease_expires_at."""
         with self._session_scope(write=True) as session:

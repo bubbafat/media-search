@@ -69,6 +69,64 @@ def test_claim_asset_by_status_returns_asset_with_library(engine, _session_facto
     assert claimed.rel_path == "photo.jpg"
 
 
+def test_renew_asset_lease_updates_lease_expires_at(engine, _session_factory):
+    """renew_asset_lease bumps lease_expires_at for a claimed asset."""
+    from datetime import datetime, timezone
+
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="lease-lib",
+                name="Lease Lib",
+                absolute_path="/tmp/lease",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("lease-lib", "video.mp4", AssetType.video, 2000.0, 10_000)
+    claimed = asset_repo.claim_asset_by_status(
+        "worker-1", AssetStatus.pending, [".mp4", ".mov"]
+    )
+    assert claimed is not None
+    asset_id = claimed.id
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT lease_expires_at FROM asset WHERE id = :id"), {"id": asset_id}
+        ).fetchone()
+        lease_before = row[0]
+    finally:
+        session.close()
+
+    asset_repo.renew_asset_lease(asset_id, lease_seconds=60)
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT lease_expires_at FROM asset WHERE id = :id"), {"id": asset_id}
+        ).fetchone()
+        lease_after = row[0]
+    finally:
+        session.close()
+
+    assert lease_after is not None
+    assert lease_before is not None
+    # New lease should be ~60s from now (allow 0–120s window for clock/timing)
+    now_utc = datetime.now(timezone.utc)
+    if lease_after.tzinfo is None:
+        lease_after = lease_after.replace(tzinfo=timezone.utc)
+    assert (lease_after - now_utc).total_seconds() > 0
+    assert (lease_after - now_utc).total_seconds() < 120
+
+
 def test_claim_asset_by_status_returns_none_when_no_eligible(engine, _session_factory):
     """claim_asset_by_status returns None when no asset has the given status."""
     asset_repo = _create_tables_and_seed(engine, _session_factory)

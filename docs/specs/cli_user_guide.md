@@ -14,15 +14,15 @@ uv run media-search --help
 ## Command tree
 
 
-| Group / Command | Description                                                         |
-| --------------- | ------------------------------------------------------------------- |
-| `library`       | Add, remove, restore, and list libraries                            |
-| `trash`         | Manage soft-deleted libraries (list, empty one, empty all)          |
-| `asset`         | List discovered assets for a library                                |
-| `search`        | Full-text search over asset visual analysis (vibe or OCR)           |
-| `scan`          | Run a one-shot scan for a library (no daemon)                       |
-| `proxy`         | Start the proxy worker (thumbnails and proxies for pending assets)  |
-| `ai`            | Manage AI models and workers (default model, start worker, list/add/remove models) |
+| Group / Command | Description                                                                                               |
+| --------------- | --------------------------------------------------------------------------------------------------------- |
+| `library`       | Add, remove, restore, and list libraries                                                                  |
+| `trash`         | Manage soft-deleted libraries (list, empty one, empty all)                                                |
+| `asset`         | List assets, show one asset, list video scenes (list, show, scenes)                                        |
+| `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                 |
+| `scan`          | Run a one-shot scan for a library (no daemon)                                                             |
+| `proxy`         | Start the proxy worker (thumbnails and proxies for pending assets)                                        |
+| `ai`            | Manage AI models and workers (default model, start AI worker, start video worker, list/add/remove models) |
 
 
 ---
@@ -239,6 +239,33 @@ uv run media-search asset show nas-main photos/2024/IMG_001.jpg --metadata
 
 ---
 
+### asset scenes library_slug rel_path
+
+List video scenes for a video asset. Data comes from the `video_scenes` table (written by the Video worker). By default prints a summary table: scene index, start/end time (seconds), keep reason, and description (truncated). With `--metadata`, prints a JSON array of full scene records including the `metadata` JSONB (e.g. moondream description, tags, showinfo).
+
+Exits with code 1 if the library is not found or soft-deleted, the asset is not found, or the asset is not a video. If there are no scenes indexed, prints "No scenes indexed for this asset." and exits 0.
+
+
+| Argument       | Description                                        |
+| -------------- | -------------------------------------------------- |
+| `library_slug` | Library slug                                       |
+| `rel_path`     | Relative path of the video asset within the library |
+
+
+| Option       | Description                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------- |
+| `--metadata` | Output full scene records as JSON (including per-scene metadata: moondream description/tags). |
+
+
+**Example:**
+
+```bash
+uv run media-search asset scenes nas-main video/clip.mp4
+uv run media-search asset scenes nas-main video/clip.mp4 --metadata
+```
+
+---
+
 ## search
 
 ### search [query]
@@ -355,7 +382,7 @@ Set the system default AI model. The model is resolved by name and optional vers
 | Argument  | Description                                      |
 | --------- | ------------------------------------------------ |
 | `name`    | Model name (e.g. moondream2)                     |
-| `version` | Optional; if omitted, latest by id for that name  |
+| `version` | Optional; if omitted, latest by id for that name |
 
 
 **Example:**
@@ -390,14 +417,14 @@ When `--analyzer` is omitted, the worker uses the effective default: if `--libra
 With `--repair`, before the main loop the worker runs a one-time repair pass: it finds assets that are in status completed or analyzing but whose library’s effective target model differs from the model that produced their current analysis, sets their status to proxied so they are re-claimed and re-analyzed. Use with `--library` to repair only that library.
 
 
-| Option            | Description                                                                                       |
-| ----------------- | ------------------------------------------------------------------------------------------------- |
-| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                     |
-| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                             |
-| `--library`       | Limit to this library slug only (optional)                                                        |
-| `--verbose`, `-v` | Print progress for each completed asset                                                           |
-| `--analyzer`      | AI model to use (e.g. mock, moondream2). If omitted, uses library or system default               |
-| `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop        |
+| Option            | Description                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------ |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                              |
+| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                     |
+| `--library`       | Limit to this library slug only (optional)                                                 |
+| `--verbose`, `-v` | Print progress for each completed asset                                                    |
+| `--analyzer`      | AI model to use (e.g. mock, moondream2). If omitted, uses library or system default        |
+| `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop |
 
 
 **Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile).
@@ -409,6 +436,32 @@ uv run media-search ai start
 uv run media-search ai start --library nas-main --verbose
 uv run media-search ai start --analyzer moondream2
 uv run media-search ai start --library nas-main --repair
+```
+
+---
+
+### ai video
+
+Start the Video worker. It runs until interrupted (Ctrl+C). The worker claims **pending** video assets (`.mp4`, `.mkv`, `.mov`), runs the scene-indexing pipeline (scene detection, best-frame selection, optional vision analysis on representative frames), renews the asset lease after each closed scene, and supports graceful shutdown (on SIGINT/SIGTERM the pipeline is interrupted and the asset is set back to pending so another worker can resume). Worker ID is auto-generated as `video-<hostname>-<short-uuid>` unless overridden.
+
+When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for optional per-scene description/tags (e.g. mock, moondream2).
+
+
+| Option            | Description                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0).                                                              |
+| `--worker-name`   | Force a specific worker ID.                                                                                 |
+| `--library`       | Limit to this library slug only.                                                                            |
+| `--verbose`, `-v` | Print progress for each completed asset.                                                                    |
+| `--analyzer`      | AI model to use for scene descriptions (e.g. mock, moondream2). If omitted, uses library or system default. |
+
+
+**Examples:**
+
+```bash
+uv run media-search ai video
+uv run media-search ai video --library nas-main --verbose
+uv run media-search ai video --analyzer moondream2
 ```
 
 ---
@@ -543,15 +596,21 @@ Results show Library, Relative Path, Type (`image`), Status, and Confidence.
 
 **9. Process videos under the library**
 
-The CLI does not yet expose video scene indexing. When a video indexing command is available, you would run it for the library here (e.g. a one-shot or worker limited to the library). Video scene data is stored in the database (`video_scenes`) by the indexing pipeline; the steps below show how search and asset show behave with respect to videos today.
+Run the Video worker to index video assets (scene detection, best-frame selection, optional AI descriptions). Use `ai video`; with `--library example-library` the worker only claims pending videos from that library. The worker runs until interrupted (Ctrl+C). Video scene data is stored in the database (`video_scenes`) by the pipeline; the steps below show how search and asset show behave with respect to videos.
+
+```bash
+uv run media-search ai video --library example-library --verbose
+```
 
 **10. Show video details (including text if possible)**
 
-Show a video asset. Video assets do not receive `visual_analysis` from the AI worker (only image assets do). Scene-level descriptions and text are stored in the database but are not yet displayed by the CLI.
+Show a video asset. Video assets do not receive `visual_analysis` from the AI worker (only image assets do). Scene-level descriptions and text are stored in the database and can be viewed with **`asset scenes <library> <rel_path>`** (summary table) or **`asset scenes ... --metadata`** (full JSON including per-scene metadata).
 
 ```bash
 uv run media-search asset show example-library videos/clip.mp4
 uv run media-search asset show example-library videos/clip.mp4 --metadata
+uv run media-search asset scenes example-library videos/clip.mp4
+uv run media-search asset scenes example-library videos/clip.mp4 --metadata
 ```
 
 **11. Repeat the previous query to show how video results are not incorporated**

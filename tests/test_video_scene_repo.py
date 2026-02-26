@@ -8,6 +8,7 @@ from src.models.entities import AssetType, Library, SystemMetadata
 from src.repository.asset_repo import AssetRepository
 from src.repository.video_scene_repo import (
     VideoActiveState,
+    VideoSceneListItem,
     VideoSceneRepository,
     VideoSceneRow,
 )
@@ -57,6 +58,60 @@ def _ensure_library_and_asset(session_factory, slug: str) -> int:
         return row[0]
     finally:
         session.close()
+
+
+def test_list_scenes_returns_ordered_scenes(engine, _session_factory):
+    """list_scenes returns all scenes for the asset ordered by start_ts with all fields."""
+    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-lib-list")
+    video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=5.0,
+            end_ts=12.0,
+            description="Second",
+            metadata={"key": "value"},
+            sharpness_score=20.0,
+            rep_frame_path="/data/2.jpg",
+            keep_reason="temporal",
+        ),
+        None,
+    )
+    video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description="First",
+            metadata=None,
+            sharpness_score=10.0,
+            rep_frame_path="/data/1.jpg",
+            keep_reason="phash",
+        ),
+        None,
+    )
+    # save_scene inserts in order; we inserted second then first, so id 1 = second scene, id 2 = first scene
+    # list_scenes orders by start_ts so first scene (0-5) then second (5-12)
+    scenes = video_repo.list_scenes(asset_id)
+    assert len(scenes) == 2
+    assert scenes[0].start_ts == 0.0
+    assert scenes[0].end_ts == 5.0
+    assert scenes[0].description == "First"
+    assert scenes[0].metadata is None
+    assert scenes[0].keep_reason == "phash"
+    assert scenes[0].rep_frame_path == "/data/1.jpg"
+    assert scenes[1].start_ts == 5.0
+    assert scenes[1].end_ts == 12.0
+    assert scenes[1].description == "Second"
+    assert scenes[1].metadata == {"key": "value"}
+    assert scenes[1].keep_reason == "temporal"
+
+
+def test_list_scenes_empty_returns_empty_list(engine, _session_factory):
+    """list_scenes when no scenes exist returns empty list."""
+    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-lib-list-empty")
+    assert video_repo.list_scenes(asset_id) == []
 
 
 def test_get_max_end_ts_empty_returns_none(engine, _session_factory):

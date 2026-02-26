@@ -30,6 +30,7 @@ SUPPORTED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
 
 # List form with leading dots for claim_asset_by_status and regex building
 IMAGE_EXTENSIONS_LIST = sorted(IMAGE_EXTENSIONS)
+VIDEO_EXTENSIONS_LIST = sorted(VIDEO_EXTENSIONS)
 
 # Suffixes without leading dot (for regex e.g. repair pattern)
 IMAGE_EXTENSION_SUFFIXES = [ext.lstrip(".") for ext in IMAGE_EXTENSIONS_LIST]

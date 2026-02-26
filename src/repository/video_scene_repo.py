@@ -32,6 +32,20 @@ class VideoActiveState:
     current_best_sharpness: float
 
 
+@dataclass(frozen=True)
+class VideoSceneListItem:
+    """One row from video_scenes for listing (read-only)."""
+
+    id: int
+    start_ts: float
+    end_ts: float
+    description: str | None
+    metadata: dict[str, Any] | None
+    sharpness_score: float
+    rep_frame_path: str
+    keep_reason: str
+
+
 class VideoSceneRepository:
     """
     Database access for video_scenes and video_active_state.
@@ -52,6 +66,38 @@ class VideoSceneRepository:
                 session.commit()
         finally:
             session.close()
+
+    def list_scenes(self, asset_id: int) -> list[VideoSceneListItem]:
+        """Return all scenes for the asset ordered by start_ts (for CLI dump)."""
+        with self._session_scope(write=False) as session:
+            rows = session.execute(
+                text("""
+                    SELECT id, start_ts, end_ts, description, metadata,
+                           sharpness_score, rep_frame_path, keep_reason
+                    FROM video_scenes
+                    WHERE asset_id = :asset_id
+                    ORDER BY start_ts
+                """),
+                {"asset_id": asset_id},
+            ).fetchall()
+            result: list[VideoSceneListItem] = []
+            for r in rows:
+                meta = r[4]
+                if meta is not None and not isinstance(meta, dict):
+                    meta = dict(meta) if hasattr(meta, "items") else None
+                result.append(
+                    VideoSceneListItem(
+                        id=int(r[0]),
+                        start_ts=float(r[1]),
+                        end_ts=float(r[2]),
+                        description=str(r[3]) if r[3] is not None else None,
+                        metadata=meta,
+                        sharpness_score=float(r[5]),
+                        rep_frame_path=str(r[6] or ""),
+                        keep_reason=str(r[7] or ""),
+                    )
+                )
+            return result
 
     def get_max_end_ts(self, asset_id: int) -> float | None:
         """Return max(end_ts) for the asset from video_scenes, or None if no rows."""

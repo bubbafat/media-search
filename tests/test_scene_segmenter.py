@@ -141,3 +141,36 @@ def test_scene_segmenter_accepts_scanner_instance(tmp_path):
         segmenter_from_path = SceneSegmenter(tmp_path / "v.mp4")
     assert segmenter_from_scanner._scanner is scanner
     assert segmenter_from_path._scanner.out_width == 480
+
+
+def test_scene_segmenter_check_interrupt_raises_on_first_frame(tmp_path):
+    """When check_interrupt returns True at the start of the frame loop, InterruptedError is raised."""
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(tmp_path / "v.mp4")
+    w, h = scanner.out_width, scanner.out_height
+    frames = [(_make_frame_bytes(w, h), 0.0)]
+    with patch.object(scanner, "iter_frames", return_value=iter(frames)):
+        segmenter = SceneSegmenter(scanner)
+        with pytest.raises(InterruptedError, match="Pipeline interrupted by worker shutdown"):
+            list(segmenter.iter_scenes(check_interrupt=lambda: True))
+
+
+def test_scene_segmenter_check_interrupt_false_yields_normally(tmp_path):
+    """When check_interrupt returns False, iter_scenes yields as usual (no InterruptedError)."""
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(tmp_path / "v.mp4")
+    w, h = scanner.out_width, scanner.out_height
+    # Enough frames so we get one closed scene with an eligible best frame (skip 2 then at least one)
+    frames = [
+        (_make_frame_bytes(w, h), float(i))
+        for i in range(5)
+    ]
+    with patch.object(scanner, "iter_frames", return_value=iter(frames)):
+        segmenter = SceneSegmenter(scanner)
+        results = list(segmenter.iter_scenes(check_interrupt=lambda: False))
+    assert len(results) == 1
+    scene, next_state = results[0]
+    assert scene is not None
+    assert scene.keep_reason is SceneKeepReason.forced
