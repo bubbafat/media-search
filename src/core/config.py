@@ -48,7 +48,7 @@ class ConfigLoader:
 
     - load_from_yaml(path, apply_env_override): read a YAML file and optionally apply env overrides.
     - load_default(): resolve the default config path from WORKER_CONFIG / worker_config.yml and
-      apply DATABASE_URL override when present.
+      apply DATABASE_URL and MEDIA_SEARCH_DATA_DIR overrides when present.
     """
 
     def __init__(self, env: Mapping[str, str] | None = None) -> None:
@@ -65,8 +65,8 @@ class ConfigLoader:
         if apply_env_override:
             if self._env.get("DATABASE_URL"):
                 data["database_url"] = self._env["DATABASE_URL"]
-            if self._env.get("DATA_DIR"):
-                data["data_dir"] = self._env["DATA_DIR"]
+            if self._env.get("MEDIA_SEARCH_DATA_DIR"):
+                data["data_dir"] = self._env["MEDIA_SEARCH_DATA_DIR"]
         settings = Settings.model_validate(data)
         if settings.worker_id is None or settings.worker_id == "":
             settings = settings.model_copy(update={"worker_id": socket.gethostname()})
@@ -76,9 +76,8 @@ class ConfigLoader:
         """
         Load the default Settings, using WORKER_CONFIG or worker_config.yml.
 
-        When no explicit config_path is provided, DATABASE_URL (if set) overrides the YAML/database_url
-        or the default value. This keeps environment-based connection strings the single source
-        of truth for runtime deployments.
+        When no explicit config_path is provided, DATABASE_URL and MEDIA_SEARCH_DATA_DIR (if set)
+        override the YAML values or defaults.
         """
         path_str = self._env.get(DEFAULT_CONFIG_ENV_VAR) or DEFAULT_CONFIG_FILENAME
         path = Path(path_str)
@@ -89,8 +88,8 @@ class ConfigLoader:
         overrides: dict[str, str] = {}
         if self._env.get("DATABASE_URL"):
             overrides["database_url"] = self._env["DATABASE_URL"]
-        if self._env.get("DATA_DIR"):
-            overrides["data_dir"] = self._env["DATA_DIR"]
+        if self._env.get("MEDIA_SEARCH_DATA_DIR"):
+            overrides["data_dir"] = self._env["MEDIA_SEARCH_DATA_DIR"]
         if overrides:
             settings = settings.model_copy(update=overrides)
         return settings
