@@ -373,6 +373,105 @@ uv run media-search ai remove mock-analyzer --force
 
 ---
 
+## End-to-end example
+
+This section walks through a complete workflow using placeholder values. Use a real path and library name for your own run. The slug is derived from the name (e.g. `"Example Library"` → `example-library`).
+
+**1. Create a new library**
+
+```bash
+uv run media-search library add "Example Library" /path/to/media
+```
+
+Note the slug (e.g. `example-library`) for the next steps.
+
+**2. Scan the library**
+
+Run a one-shot scan to discover files (no scanner daemon).
+
+```bash
+uv run media-search scan example-library
+```
+
+**3. Show library and asset details**
+
+```bash
+uv run media-search library list
+uv run media-search asset list example-library --limit 100
+```
+
+**4. Create proxies**
+
+Start the proxy worker for this library. It runs until interrupted (Ctrl+C) and processes pending assets. For the example, run it until at least some assets show status `proxied`, then stop.
+
+```bash
+uv run media-search proxy --library example-library --verbose
+```
+
+**5. Show proxy details**
+
+List assets again to see `proxied` status; show one asset by path.
+
+```bash
+uv run media-search asset list example-library
+uv run media-search asset show example-library photos/2024/IMG_001.jpg
+```
+
+**6. Create image text**
+
+Start the AI worker to run vision analysis on proxied image assets. It runs until interrupted. Use `--analyzer moondream2` for real analysis, or leave default `mock` for testing.
+
+```bash
+uv run media-search ai start --library example-library --verbose
+```
+
+Stop after some image assets reach status `completed`.
+
+**7. Show image text details**
+
+View full asset record including `visual_analysis` (description, tags, `ocr_text`).
+
+```bash
+uv run media-search asset show example-library photos/2024/IMG_001.jpg --metadata
+```
+
+**8. Perform a query that finds 2+ images**
+
+Search uses full-text over asset `visual_analysis`. Use a query that matches at least two completed image assets (e.g. a word from their descriptions or OCR).
+
+```bash
+uv run media-search search "person" --library example-library --limit 10
+```
+
+Results show Library, Relative Path, Type (`image`), Status, and Confidence.
+
+**9. Process videos under the library**
+
+The CLI does not yet expose video scene indexing. When a video indexing command is available, you would run it for the library here (e.g. a one-shot or worker limited to the library). Video scene data is stored in the database (`video_scenes`) by the indexing pipeline; the steps below show how search and asset show behave with respect to videos today.
+
+**10. Show video details (including text if possible)**
+
+Show a video asset. Video assets do not receive `visual_analysis` from the AI worker (only image assets do). Scene-level descriptions and text are stored in the database but are not yet displayed by the CLI.
+
+```bash
+uv run media-search asset show example-library videos/clip.mp4
+uv run media-search asset show example-library videos/clip.mp4 --metadata
+```
+
+**11. Repeat the previous query to show how video results are not incorporated**
+
+Run the same search again. Results are unchanged: search only queries `Asset.visual_analysis`, so video scene or frame data is not included in search results.
+
+```bash
+uv run media-search search "person" --library example-library --limit 10
+```
+
+**12. Limit search to images only or videos only**
+
+The CLI does not currently support filtering search results by asset type. When supported, the intended usage would be along the lines of `--type image` or `--type video` to restrict results to images only or videos only.
+
+---
+
 ## Conventions
 
 - **uv:** Use `uv run media-search` (or the installed `media-search` entry point) so the correct environment is used.
