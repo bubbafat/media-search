@@ -35,7 +35,7 @@ def upgrade() -> None:
         sa.Column("rep_frame_path", sa.String(), nullable=False),
         sa.Column(
             "keep_reason",
-            sa.Enum("phash", "temporal", "forced", name=SCENE_KEEP_REASON_ENUM),
+            sa.Enum("phash", "temporal", "forced", name=SCENE_KEEP_REASON_ENUM, create_type=True),
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
