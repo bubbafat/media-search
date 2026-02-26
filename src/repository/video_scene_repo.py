@@ -160,6 +160,18 @@ class VideoSceneRepository:
                 {"asset_id": asset_id},
             )
 
+    def clear_index_for_asset(self, asset_id: int) -> None:
+        """Remove all video_scenes and video_active_state for the asset (force full reindex)."""
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("DELETE FROM video_scenes WHERE asset_id = :asset_id"),
+                {"asset_id": asset_id},
+            )
+            session.execute(
+                text("DELETE FROM video_active_state WHERE asset_id = :asset_id"),
+                {"asset_id": asset_id},
+            )
+
     def get_active_state(self, asset_id: int) -> VideoActiveState | None:
         """Load the video_active_state row for the asset, or None."""
         with self._session_scope(write=False) as session:

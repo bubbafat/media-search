@@ -181,6 +181,28 @@ def library_list(
         typer.echo(f"{lib.slug.ljust(slug_w)}  {lib.name.ljust(name_w)}  {path_short.ljust(path_w)}  {deleted}")
 
 
+@library_app.command("reindex-videos")
+def library_reindex_videos(
+    library_slug: str = typer.Argument(..., help="Library slug"),
+) -> None:
+    """Clear video index and set all video assets to pending so the Video worker will re-process them."""
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    asset_repo = AssetRepository(session_factory)
+    scene_repo = VideoSceneRepository(session_factory)
+
+    lib = lib_repo.get_by_slug(library_slug)
+    if lib is None:
+        typer.echo(f"Library not found or deleted: '{library_slug}'.", err=True)
+        raise typer.Exit(1)
+
+    asset_ids = asset_repo.get_video_asset_ids_by_library(library_slug)
+    for aid in asset_ids:
+        scene_repo.clear_index_for_asset(aid)
+        asset_repo.update_asset_status(aid, AssetStatus.pending)
+    typer.echo(f"{len(asset_ids)} video asset(s) set to pending. Run 'ai video --library {library_slug}' to re-process.")
+
+
 @asset_app.command("list")
 def asset_list(
     library_slug: str = typer.Argument(..., help="Library slug to list assets for"),
@@ -333,6 +355,37 @@ def asset_scenes(
             table.add_row(str(i), f"{s.start_ts:.2f}", f"{s.end_ts:.2f}", s.keep_reason, desc or "—")
         console = Console()
         console.print(table)
+
+
+@asset_app.command("reindex")
+def asset_reindex(
+    library_slug: str = typer.Argument(..., help="Library slug"),
+    rel_path: str = typer.Argument(..., help="Relative path of the video asset within the library"),
+) -> None:
+    """Clear video index and set asset to pending so the Video worker will re-process it."""
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    asset_repo = AssetRepository(session_factory)
+    scene_repo = VideoSceneRepository(session_factory)
+
+    lib = lib_repo.get_by_slug(library_slug)
+    if lib is None:
+        typer.echo(f"Library not found or deleted: '{library_slug}'.", err=True)
+        raise typer.Exit(1)
+
+    asset = asset_repo.get_asset(library_slug, rel_path)
+    if asset is None:
+        typer.echo("Asset not found.", err=True)
+        raise typer.Exit(1)
+
+    if asset.type != AssetType.video:
+        typer.echo("Reindex is only available for video assets.", err=True)
+        raise typer.Exit(1)
+
+    assert asset.id is not None
+    scene_repo.clear_index_for_asset(asset.id)
+    asset_repo.update_asset_status(asset.id, AssetStatus.pending)
+    typer.echo("Video index cleared and asset set to pending. Run 'ai video' to re-process.")
 
 
 @app.command("search")

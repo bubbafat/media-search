@@ -127,6 +127,58 @@ def test_renew_asset_lease_updates_lease_expires_at(engine, _session_factory):
     assert (lease_after - now_utc).total_seconds() < 120
 
 
+def test_get_video_asset_ids_by_library_returns_only_videos_excludes_deleted(engine, _session_factory):
+    """get_video_asset_ids_by_library returns video asset IDs for the library and excludes deleted libraries."""
+    from datetime import datetime, timezone
+
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="vid-reindex-lib",
+                name="Vid Reindex Lib",
+                absolute_path="/tmp/vid-reindex",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.add(
+            Library(
+                slug="deleted-vid-lib",
+                name="Deleted Vid Lib",
+                absolute_path="/tmp/deleted-vid",
+                is_active=True,
+                sampling_limit=100,
+                deleted_at=datetime.now(timezone.utc),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("vid-reindex-lib", "a.mp4", AssetType.video, 1000.0, 1000)
+    asset_repo.upsert_asset("vid-reindex-lib", "b.mov", AssetType.video, 1000.0, 2000)
+    asset_repo.upsert_asset("vid-reindex-lib", "c.jpg", AssetType.image, 1000.0, 500)
+    asset_repo.upsert_asset("deleted-vid-lib", "d.mp4", AssetType.video, 1000.0, 3000)
+
+    ids = asset_repo.get_video_asset_ids_by_library("vid-reindex-lib")
+    assert len(ids) == 2
+    session = _session_factory()
+    try:
+        rows = session.execute(
+            text("SELECT id, rel_path FROM asset WHERE library_id = 'vid-reindex-lib' AND type = 'video'"),
+        ).fetchall()
+    finally:
+        session.close()
+    expected = {int(r[0]) for r in rows}
+    assert set(ids) == expected
+    assert {r[1] for r in rows} == {"a.mp4", "b.mov"}
+
+    deleted_ids = asset_repo.get_video_asset_ids_by_library("deleted-vid-lib")
+    assert deleted_ids == []
+
+
 def test_claim_asset_by_status_returns_none_when_no_eligible(engine, _session_factory):
     """claim_asset_by_status returns None when no asset has the given status."""
     asset_repo = _create_tables_and_seed(engine, _session_factory)

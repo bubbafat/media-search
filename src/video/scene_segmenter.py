@@ -125,6 +125,8 @@ class SceneSegmenter:
         current_best_frame_bytes: bytes = b""
         skip_count = SKIP_FRAMES_BEST
         last_pts: float = 0.0
+        last_frame_bytes: bytes = b""
+        last_frame_sharpness: float = -1.0
         has_eligible_best = False
         seen_any_frame = False
 
@@ -148,6 +150,19 @@ class SceneSegmenter:
                     ),
                     next_state,
                 )
+            elif reason is SceneKeepReason.forced and last_frame_bytes:
+                # EOF with no eligible best (e.g. very short scene): persist one scene using last frame.
+                yield (
+                    SceneResult(
+                        best_frame_bytes=last_frame_bytes,
+                        best_pts=last_pts,
+                        scene_start_pts=scene_start_pts,
+                        scene_end_pts=end_pts,
+                        keep_reason=reason,
+                        sharpness_score=last_frame_sharpness,
+                    ),
+                    next_state,
+                )
             else:
                 yield (None, next_state)
             # Reset state for the next scene.
@@ -166,6 +181,8 @@ class SceneSegmenter:
                 raise InterruptedError("Pipeline interrupted by worker shutdown.")
             seen_any_frame = True
             last_pts = pts
+            last_frame_bytes = frame_bytes
+            last_frame_sharpness = _sharpness(frame_bytes, self._width, self._height)
             if discard_until is not None:
                 if pts < discard_until:
                     continue

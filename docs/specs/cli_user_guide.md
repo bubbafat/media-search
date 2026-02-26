@@ -16,9 +16,9 @@ uv run media-search --help
 
 | Group / Command | Description                                                                                               |
 | --------------- | --------------------------------------------------------------------------------------------------------- |
-| `library`       | Add, remove, restore, and list libraries                                                                  |
+| `library`       | Add, remove, restore, list libraries, force video reindex (reindex-videos)                               |
 | `trash`         | Manage soft-deleted libraries (list, empty one, empty all)                                                |
-| `asset`         | List assets, show one asset, list video scenes (list, show, scenes)                                        |
+| `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)          |
 | `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                 |
 | `scan`          | Run a one-shot scan for a library (no daemon)                                                             |
 | `proxy`         | Start the proxy worker (thumbnails and proxies for pending assets)                                        |
@@ -113,6 +113,25 @@ List libraries in a table: slug, name, path, deleted_at. Paths are truncated for
 ```bash
 uv run media-search library list
 uv run media-search library list --include-deleted
+```
+
+---
+
+### library reindex-videos library_slug
+
+Clear the video index and set all video assets in the library to **pending**. Use this after changing the scene-indexing algorithm so the Video worker will re-process all videos in the library. Exits with code 1 if the library is not found or soft-deleted. Then run `ai video --library <slug>` to re-process.
+
+
+| Argument       | Description     |
+| -------------- | --------------- |
+| `library_slug` | Library slug    |
+
+
+**Example:**
+
+```bash
+uv run media-search library reindex-videos nas-main
+uv run media-search ai video --library nas-main
 ```
 
 ---
@@ -262,6 +281,26 @@ Exits with code 1 if the library is not found or soft-deleted, the asset is not 
 ```bash
 uv run media-search asset scenes nas-main video/clip.mp4
 uv run media-search asset scenes nas-main video/clip.mp4 --metadata
+```
+
+---
+
+### asset reindex library_slug rel_path
+
+Clear the video index for one video asset and set it to **pending**. Use this after changing the scene-indexing algorithm so the Video worker will re-process this asset. Exits with code 1 if the library is not found or soft-deleted, the asset is not found, or the asset is not a video. Then run `ai video` (optionally with `--library <slug>`) to re-process.
+
+
+| Argument       | Description                                        |
+| -------------- | -------------------------------------------------- |
+| `library_slug` | Library slug                                       |
+| `rel_path`     | Relative path of the video asset within the library |
+
+
+**Example:**
+
+```bash
+uv run media-search asset reindex nas-main video/clip.mp4
+uv run media-search ai video --library nas-main
 ```
 
 ---

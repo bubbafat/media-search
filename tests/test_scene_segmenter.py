@@ -174,3 +174,25 @@ def test_scene_segmenter_check_interrupt_false_yields_normally(tmp_path):
     scene, next_state = results[0]
     assert scene is not None
     assert scene.keep_reason is SceneKeepReason.forced
+
+
+def test_scene_segmenter_short_video_forced_yields_one_scene_using_last_frame(tmp_path):
+    """With only 2 frames we never have has_eligible_best; at EOF we yield one scene using last frame."""
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(tmp_path / "v.mp4")
+    w, h = scanner.out_width, scanner.out_height
+    frame0 = _make_frame_bytes(w, h, (100, 100, 100))
+    frame1 = _make_frame_bytes(w, h, (200, 200, 200))
+    frames = [(frame0, 0.0), (frame1, 1.0)]
+    with patch.object(scanner, "iter_frames", return_value=iter(frames)):
+        segmenter = SceneSegmenter(scanner)
+        results = list(segmenter.iter_scenes(check_interrupt=lambda: False))
+    assert len(results) == 1
+    scene, next_state = results[0]
+    assert scene is not None
+    assert scene.keep_reason is SceneKeepReason.forced
+    assert scene.best_frame_bytes == frame1
+    assert scene.best_pts == 1.0
+    assert scene.scene_start_pts == 0.0
+    assert scene.scene_end_pts == 1.0

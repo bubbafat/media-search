@@ -114,6 +114,43 @@ def test_list_scenes_empty_returns_empty_list(engine, _session_factory):
     assert video_repo.list_scenes(asset_id) == []
 
 
+def test_clear_index_for_asset_removes_scenes_and_active_state(engine, _session_factory):
+    """clear_index_for_asset deletes all video_scenes and video_active_state for the asset."""
+    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-lib-clear")
+    video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description="First",
+            metadata=None,
+            sharpness_score=10.0,
+            rep_frame_path="/data/1.jpg",
+            keep_reason="phash",
+        ),
+        VideoActiveState("abc", 0.0, 2.0, 10.0),
+    )
+    video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=5.0,
+            end_ts=12.0,
+            description="Second",
+            metadata={},
+            sharpness_score=20.0,
+            rep_frame_path="/data/2.jpg",
+            keep_reason="temporal",
+        ),
+        None,
+    )
+    assert len(video_repo.list_scenes(asset_id)) == 2
+    video_repo.clear_index_for_asset(asset_id)
+    assert video_repo.list_scenes(asset_id) == []
+    assert video_repo.get_active_state(asset_id) is None
+    assert video_repo.get_max_end_ts(asset_id) is None
+
+
 def test_get_max_end_ts_empty_returns_none(engine, _session_factory):
     """get_max_end_ts when no scenes exist returns None."""
     _, video_repo = _create_tables_and_seed(engine, _session_factory)

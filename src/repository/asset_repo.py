@@ -241,6 +241,22 @@ class AssetRepository:
             )
             return session.execute(query).scalars().unique().one_or_none()
 
+    def get_video_asset_ids_by_library(self, library_slug: str) -> list[int]:
+        """
+        Return asset IDs for all video assets in the library (non-deleted libraries only).
+        Used for library-wide video reindex.
+        """
+        with self._session_scope(write=False) as session:
+            rows = session.execute(
+                text("""
+                    SELECT a.id FROM asset a
+                    JOIN library l ON a.library_id = l.slug
+                    WHERE l.deleted_at IS NULL AND a.library_id = :slug AND a.type = 'video'
+                """),
+                {"slug": library_slug},
+            ).fetchall()
+            return [int(r[0]) for r in rows]
+
     def get_asset_ids_expecting_reanalysis(
         self,
         effective_target_model_id: int,
