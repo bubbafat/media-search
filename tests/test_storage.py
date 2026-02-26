@@ -110,3 +110,19 @@ def test_load_source_image_exif_and_rgb(tmp_path):
         store = LocalMediaStore()
     loaded = store.load_source_image(rgb_path)
     assert loaded.mode == "RGB"
+
+
+def test_load_source_image_falls_back_to_pyvips_when_pillow_fails(tmp_path):
+    """When Pillow cannot open the file, load_source_image uses pyvips and returns RGB."""
+    path = tmp_path / "photo.raf"
+    path.write_bytes(b"not-a-real-raf")
+    fake_rgb = Image.new("RGB", (5, 5), color="red")
+    with patch("src.core.storage.get_config") as cfg:
+        cfg.return_value.data_dir = str(tmp_path)
+        store = LocalMediaStore()
+        with patch("src.core.storage.Image") as pil_image:
+            pil_image.open.side_effect = OSError("cannot identify image file")
+            with patch("src.core.storage._load_image_via_pyvips", return_value=fake_rgb):
+                loaded = store.load_source_image(path)
+    assert loaded is fake_rgb
+    assert loaded.mode == "RGB"

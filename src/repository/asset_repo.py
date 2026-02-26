@@ -9,9 +9,13 @@ from typing import Callable, Iterator
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from src.core.file_extensions import IMAGE_EXTENSION_SUFFIXES
 from src.models.entities import Asset, AssetStatus, AssetType, Library, ScanStatus
 
 DEFAULT_LEASE_SECONDS = 300
+
+# Image extensions matching proxy worker (for repair: assets that should have proxy files)
+_REPAIR_IMAGE_PATTERN = r"\." + "|".join(re.escape(s) for s in IMAGE_EXTENSION_SUFFIXES) + r"$"
 
 
 class AssetRepository:
@@ -149,8 +153,21 @@ class AssetRepository:
             val = session.execute(text(q), params).scalar()
         return int(val) if val is not None else 0
 
-    # Image extensions matching proxy worker (for repair: assets that should have proxy files)
-    _REPAIR_IMAGE_PATTERN = r"\." + "|".join(re.escape(e) for e in ("jpg", "jpeg", "png", "webp", "bmp")) + r"$"
+    def count_pending_proxyable(self, library_slug: str | None = None) -> int:
+        """Return count of pending assets that are proxyable (image extensions only)."""
+        with self._session_scope(write=False) as session:
+            q = """
+                SELECT COUNT(*) FROM asset a
+                JOIN library l ON a.library_id = l.slug
+                WHERE l.deleted_at IS NULL AND a.status = 'pending'
+                  AND a.rel_path ~* :pattern
+            """
+            params: dict = {"pattern": _REPAIR_IMAGE_PATTERN}
+            if library_slug is not None:
+                q += " AND a.library_id = :library_slug"
+                params["library_slug"] = library_slug
+            val = session.execute(text(q), params).scalar()
+        return int(val) if val is not None else 0
 
     def get_asset_ids_expecting_proxy(
         self,
@@ -172,7 +189,7 @@ class AssetRepository:
                   AND a.status IN ('proxied', 'completed', 'extracting', 'analyzing')
                   AND a.rel_path ~* :pattern
             """
-            params: dict = {"pattern": self._REPAIR_IMAGE_PATTERN}
+            params: dict = {"pattern": _REPAIR_IMAGE_PATTERN}
             if library_slug is not None:
                 q += " AND a.library_id = :library_slug"
                 params["library_slug"] = library_slug

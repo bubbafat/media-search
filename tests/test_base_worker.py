@@ -114,6 +114,7 @@ def test_pause_command_transitions_state_and_stops_process_task(engine, _session
         repo,
         heartbeat_interval_seconds=10,
         system_metadata_repo=system_metadata_repo,
+        idle_poll_interval_seconds=0.2,
     )
 
     session = _session_factory()
@@ -162,6 +163,7 @@ def test_shutdown_command_causes_graceful_exit(engine, _session_factory):
         repo,
         heartbeat_interval_seconds=10,
         system_metadata_repo=system_metadata_repo,
+        idle_poll_interval_seconds=0.2,
     )
 
     thread = threading.Thread(target=worker.run)
@@ -222,7 +224,7 @@ engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
 session_factory = sessionmaker(engine, autocommit=False, autoflush=False, expire_on_commit=False)
 repo = WorkerRepository(session_factory)
 system_metadata_repo = SystemMetadataRepository(session_factory)
-worker = MinimalWorker("sigterm-worker", repo, heartbeat_interval_seconds=60, system_metadata_repo=system_metadata_repo)
+worker = MinimalWorker("sigterm-worker", repo, heartbeat_interval_seconds=60, system_metadata_repo=system_metadata_repo, idle_poll_interval_seconds=0.5)
 worker.run()
 """,
         ],

@@ -206,6 +206,24 @@ def test_scan_directory_tree_writes_rel_paths(scanner_worker, tmp_path):
         assert a["mtime"] > 0
 
 
+def test_scanner_discovers_raw_and_dng_extensions(scanner_worker, tmp_path):
+    """Scanner discovers RAW (e.g. Fuji .raf) and DNG/TIFF as image assets."""
+    worker, library_slug, run_worker, session_factory = scanner_worker
+    (tmp_path / "fuji.raf").write_bytes(b"fake-raw")
+    (tmp_path / "export.dng").write_bytes(b"fake-dng")
+    (tmp_path / "scan.tiff").write_bytes(b"fake-tiff")
+
+    with run_worker(worker):
+        time.sleep(1.0)
+
+    assets = _get_assets(session_factory, library_slug)
+    assert len(assets) == 3
+    rel_paths = sorted(a["rel_path"] for a in assets)
+    assert rel_paths == ["export.dng", "fuji.raf", "scan.tiff"]
+    for a in assets:
+        assert a["status"] == AssetStatus.pending.value
+
+
 def test_idempotency(scanner_worker, tmp_path):
     """Running the scanner twice on an unchanged file does NOT reset its status."""
     worker, library_slug, run_worker, session_factory = scanner_worker
@@ -300,6 +318,7 @@ def test_signal_respect_pause(engine, _session_factory, run_worker, tmp_path):
             heartbeat_interval_seconds=60.0,
             asset_repo=asset_repo,
             system_metadata_repo=system_metadata_repo,
+            idle_poll_interval_seconds=0.2,
         )
         worker_repo.register_worker("scanner-pause-test", WorkerState.idle)
 

@@ -12,6 +12,8 @@ from src.models.entities import WorkerState
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 
+_log = logging.getLogger(__name__)
+
 
 class BaseWorker(ABC):
     """
@@ -28,11 +30,13 @@ class BaseWorker(ABC):
         heartbeat_interval_seconds: float = 15.0,
         *,
         system_metadata_repo: SystemMetadataRepository,
+        idle_poll_interval_seconds: float = 5.0,
     ) -> None:
         self.worker_id = worker_id
         self._repo = repository
         self._heartbeat_interval = heartbeat_interval_seconds
         self._system_metadata_repo = system_metadata_repo
+        self._idle_poll_interval = idle_poll_interval_seconds
         self._state = WorkerState.idle
         self.should_exit = False
         self._heartbeat_thread: threading.Thread | None = None
@@ -90,9 +94,9 @@ class BaseWorker(ABC):
         elif command == "shutdown":
             self._handle_shutdown()
 
-    def process_task(self) -> None:
-        """One unit of work. Override in subclasses; default no-op."""
-        pass
+    def process_task(self) -> bool | None:
+        """One unit of work. Override in subclasses; default no-op. Return True if work was done, False/None if not."""
+        return None
 
     def get_heartbeat_stats(self) -> dict[str, Any] | None:
         """Optional stats to include in heartbeat. Override to return a dict."""
@@ -137,6 +141,7 @@ class BaseWorker(ABC):
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._heartbeat_thread.start()
 
+        idle_period_started = False
         try:
             while not self.should_exit:
                 cmd = self._repo.get_command(self.worker_id)
@@ -156,8 +161,21 @@ class BaseWorker(ABC):
                     time.sleep(1)
                     continue
 
-                self.process_task()
-                time.sleep(0.1)
+                result = self.process_task()
+                if result:
+                    idle_period_started = False
+                    time.sleep(0.1)
+                else:
+                    if not idle_period_started:
+                        _log.info(
+                            "No work, entering polling mode (checking every %ss)",
+                            self._idle_poll_interval,
+                        )
+                        idle_period_started = True
+                    time.sleep(self._idle_poll_interval)
+                    if self.should_exit:
+                        break
+                    _log.info("Checking for work...")
         finally:
             self.should_exit = True
             # Ensure the worker is marked offline when the loop exits, regardless of how we left it.

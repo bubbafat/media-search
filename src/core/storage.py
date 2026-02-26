@@ -8,6 +8,24 @@ from PIL import ImageOps
 from src.core.config import get_config
 
 
+def _load_image_via_pyvips(path: Path) -> Image.Image:
+    """Open image with pyvips (e.g. RAW, DNG), return PIL Image in RGB."""
+    import pyvips
+
+    vips_img = pyvips.Image.new_from_file(str(path))
+    # Ensure sRGB 3-band for consistency (libvips may return 16-bit or different colourspace)
+    if getattr(vips_img, "interpretation", None) != "srgb":
+        vips_img = vips_img.colourspace("srgb")
+    if getattr(vips_img, "format", None) != "uchar":
+        vips_img = vips_img.cast("uchar")
+    arr = vips_img.numpy()
+    if arr.ndim == 2:
+        pil_img = Image.fromarray(arr).convert("RGB")
+    else:
+        pil_img = Image.fromarray(arr, "RGB")
+    return pil_img
+
+
 class LocalMediaStore:
     """
     Stores thumbnails and proxies under data_dir, sharded by library_slug and asset_id.
@@ -18,11 +36,20 @@ class LocalMediaStore:
         self.data_dir = Path(get_config().data_dir)
 
     def load_source_image(self, source_path: Path | str) -> Image.Image:
-        """Open image, fix EXIF orientation, return RGB."""
+        """Open image, fix EXIF orientation, return RGB. Uses Pillow first, pyvips for RAW/DNG/unsupported."""
         path = Path(source_path)
-        img = Image.open(path)
-        img = ImageOps.exif_transpose(img)
-        return img.convert("RGB")
+        try:
+            img = Image.open(path)
+            img.load()
+            img = ImageOps.exif_transpose(img)
+            return img.convert("RGB")
+        except (OSError, ValueError) as e:
+            # UnidentifiedImageError subclasses OSError; try pyvips for RAW/DNG/other
+            try:
+                img = _load_image_via_pyvips(path)
+                return img
+            except Exception:
+                raise e
 
     def _get_shard_path(
         self,

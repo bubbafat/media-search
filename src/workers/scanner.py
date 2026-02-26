@@ -5,17 +5,17 @@ import os
 from pathlib import Path
 from typing import Callable
 
+from src.core.file_extensions import (
+    IMAGE_EXTENSIONS,
+    SUPPORTED_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+)
 from src.core.path_resolver import get_library_root
 from src.models.entities import AssetType, ScanStatus, WorkerState
 from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
-
-# Supported extensions: video and image only
-VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov"}
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-SUPPORTED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
 
 STATS_INTERVAL = 1_000
 MTIME_DECIMALS = 3
@@ -103,12 +103,14 @@ class ScannerWorker(BaseWorker):
         asset_repo: AssetRepository,
         system_metadata_repo: SystemMetadataRepository,
         progress_interval: int | None = None,
+        idle_poll_interval_seconds: float = 5.0,
     ) -> None:
         super().__init__(
             worker_id,
             repository,
             heartbeat_interval_seconds,
             system_metadata_repo=system_metadata_repo,
+            idle_poll_interval_seconds=idle_poll_interval_seconds,
         )
         self._asset_repo = asset_repo
         self._last_files_processed: int = 0

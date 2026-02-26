@@ -404,7 +404,7 @@ def proxy(
         root.addHandler(handler)
         root.setLevel(logging.INFO)
 
-    initial_pending = asset_repo.count_pending(library_slug) if verbose else None
+    initial_pending = asset_repo.count_pending_proxyable(library_slug) if verbose else None
 
     worker = ProxyWorker(
         worker_id=worker_id,

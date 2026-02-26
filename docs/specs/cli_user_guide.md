@@ -25,6 +25,20 @@ uv run media-search --help
 
 ---
 
+## Supported file formats
+
+The scanner discovers the following file types under library roots. All discovered image types are eligible for the proxy and AI pipeline.
+
+**Video:** `.mp4`, `.mkv`, `.mov`
+
+**Images (raster):** `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tif`, `.tiff`
+
+**Images (camera RAW and DNG):** Canon (`.cr2`, `.cr3`, `.crw`), Nikon (`.nef`, `.nrw`), Sony (`.arw`, `.sr2`, `.srf`), Fujifilm (`.raf`), Olympus (`.orf`), Panasonic/Lumix (`.rw2`, `.raw`), Leica (`.rwl`), and Adobe Digital Negative (`.dng`).
+
+RAW and DNG files are opened for proxy generation using libvips when Pillow cannot read them. Full support for all RAW formats depends on the system libvips being built with libraw.
+
+---
+
 ## library
 
 ### library add \<name\> \<path\>
@@ -268,7 +282,7 @@ Start the proxy worker. It runs until interrupted (Ctrl+C). The worker claims pe
 
 When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted (same message as `scan`).
 
-With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g. `Proxied asset 123 (disneyland/photo.jpg) 5/200`). Total is the pending count at start.
+With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g. `Proxied asset 123 (disneyland/photo.jpg) 5/200`). The total is the number of pending **image** (proxyable) assets at start, so videos and other non-proxyable assets are not included in the denominator. When there is no work, the worker logs that it is entering polling mode and at what interval (e.g. every 5s), and logs "Checking for work..." each time it wakes to poll, so you can see it is waiting rather than stuck.
 
 With `--repair`, before the main loop the worker runs a one-time check: it finds assets that are supposed to have proxy and thumbnail files (status proxied, completed, etc.) but are missing them on disk (e.g. after deleting the data directory), sets their status to pending, then runs the normal loop so they are regenerated. Combine with `--library` to repair only one library.
 

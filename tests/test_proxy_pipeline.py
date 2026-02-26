@@ -405,6 +405,32 @@ def test_count_pending_filtered_by_library(engine, _session_factory):
     assert asset_repo.count_pending("other") == 0
 
 
+def test_count_pending_proxyable_excludes_video(engine, _session_factory):
+    """count_pending_proxyable returns only pending image assets; videos are excluded."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="proxyable-lib",
+                name="Proxyable Lib",
+                absolute_path="/tmp/proxyable",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("proxyable-lib", "a.jpg", AssetType.image, 1000.0, 100)
+    asset_repo.upsert_asset("proxyable-lib", "b.png", AssetType.image, 1000.0, 200)
+    asset_repo.upsert_asset("proxyable-lib", "c.mp4", AssetType.video, 1000.0, 300)
+    assert asset_repo.count_pending("proxyable-lib") == 3
+    assert asset_repo.count_pending_proxyable("proxyable-lib") == 2
+
+
 def test_get_asset_ids_expecting_proxy_returns_only_relevant_statuses(
     engine, _session_factory
 ):

@@ -3,15 +3,14 @@
 import logging
 import time
 
+from src.ai.factory import get_vision_analyzer
+from src.core.file_extensions import IMAGE_EXTENSIONS_LIST
 from src.core.storage import LocalMediaStore
 from src.models.entities import AssetStatus
 from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
-from src.ai.factory import get_vision_analyzer
 from src.workers.base import BaseWorker
-
-SUPPORTED_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".bmp"]
 
 _log = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ class AIWorker(BaseWorker):
         asset = self.asset_repo.claim_asset_by_status(
             self.worker_id,
             AssetStatus.proxied,
-            SUPPORTED_EXTS,
+            IMAGE_EXTENSIONS_LIST,
             library_slug=self._library_slug,
         )
         if asset is None:
