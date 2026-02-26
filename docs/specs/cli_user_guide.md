@@ -345,7 +345,7 @@ uv run media-search proxy --library disneyland --repair
 
 The `ai` group manages AI/vision models and the AI worker. Models are registered by name and version; the AI worker claims proxied assets, runs vision analysis (e.g. description, tags, OCR), and marks assets completed (or poisoned on error).
 
-**Default model:** A system-wide default AI model can be set with `ai default set`. Each library may override this via its target tagger (library default). The effective default for a library is the library’s target tagger if set, otherwise the system default. When you start the AI worker without `--analyzer`, it uses the effective default for the selected library (or the system default if no library is specified). The worker only claims assets whose effective target model matches the worker’s model.
+**Default model:** A system-wide default AI model can be set with `ai default set`. Each library may override this via its target tagger (library default). The effective default for a library is the library’s target tagger if set, otherwise the system default. When you start the AI worker without `--analyzer`, it uses the effective default for the selected library (or the system default if no library is specified). The worker only claims assets whose effective target model matches the worker’s model. After a fresh install and running migrations, the system default is **moondream2** (version 2025-01-09), seeded by migration. To use a different model as the system default, ensure it is registered (`ai add <name> <version>` if needed), then run `ai default set <name> [version]`; use `ai default show` to confirm.
 
 ### ai default set name [version]
 
@@ -515,7 +515,7 @@ uv run media-search asset show example-library photos/2024/IMG_001.jpg
 
 **6. Create image text**
 
-Start the AI worker to run vision analysis on proxied image assets. It runs until interrupted. Use `--analyzer moondream2` for real analysis, or leave default `mock` for testing.
+Start the AI worker to run vision analysis on proxied image assets. It runs until interrupted. When `--analyzer` is omitted, the worker uses the system default (moondream2 out of the box). Use `ai default show` to check the current default; for testing you can pass `--analyzer mock` if allowed by your environment.
 
 ```bash
 uv run media-search ai start --library example-library --verbose

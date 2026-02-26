@@ -46,7 +46,7 @@ A media library: a root path (e.g. NAS mount) and configuration for scanning and
 | `absolute_path` | str | Physical path to library root |
 | `is_active` | bool | Master “pause” switch |
 | `scan_status` | ScanStatus | Current scan state |
-| `target_tagger_id` | int? (FK → aimodel.id) | Target AI model for assets |
+| `target_tagger_id` | int? (FK → aimodel.id) | Target AI model for assets in this library; if null, the effective target is the system default (see SystemMetadata) |
 | `sampling_limit` | int | Max frames per video (default 100) |
 | `deleted_at` | datetime? | Soft-delete timestamp; non-null = in trash |
 
@@ -125,7 +125,7 @@ Per-worker registration and control. Standalone; no FK from other tables.
 
 ### SystemMetadata
 
-Key/value store for system-wide settings (e.g. schema version). Standalone.
+Key/value store for system-wide settings. Holds `schema_version` and `default_ai_model_id` (the AIModel id used as the system default when a library's `target_tagger_id` is null). Standalone.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -148,9 +148,9 @@ erDiagram
 
 - **Library → Asset:** One library has many assets; asset has `library_id` → `library.slug`.
 - **Asset → VideoFrame:** One (video) asset has many frames; frame has `asset_id` → `asset.id`.
-- **AIModel:** Referenced by `Library.target_tagger_id` and `Asset.tags_model_id`.
+- **AIModel:** Referenced by `Library.target_tagger_id` and `Asset.tags_model_id`. The effective target model for a library is the library's `target_tagger_id` if set, otherwise the system default from `system_metadata` (key `default_ai_model_id`).
 - **WorkerStatus:** Standalone; workers update their row for heartbeat and commands.
-- **SystemMetadata:** Standalone; used for schema version and similar globals.
+- **SystemMetadata:** Standalone; used for schema version, default AI model id, and similar globals.
 
 ---
 
