@@ -13,6 +13,8 @@ These endpoints are intended for the Mission Control / Search UI.
 Server-rendered HTML page (Jinja2) that hosts the search-first UI. Optional query parameter:
 
 - `tag` (optional): Initial tag filter; on load the UI runs a tag-only search and shows results for that tag.
+- `library` (optional, repeatable): Initial library filter; restricts results to the given library slugs.
+- `type` (optional): Initial media type filter; `image` or `video` to restrict results.
 
 ### GET /dashboard/tag/{tag}
 

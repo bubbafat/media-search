@@ -6,7 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from src.api.main import app, _get_search_repo, _get_ui_repo
+from src.api.main import app, _get_library_repo, _get_search_repo, _get_ui_repo
+from src.repository.library_repo import LibraryRepository
 from src.core import config as config_module
 from src.repository.search_repo import SearchRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
@@ -171,4 +172,77 @@ def test_api_search_tag_returns_matching_assets(search_api_postgres):
     finally:
         app.dependency_overrides.pop(_get_search_repo, None)
         app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_api_search_library_filter(search_api_postgres):
+    """GET /api/search?library=testlib restricts to that library."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    try:
+        client = TestClient(app)
+        res = client.get("/api/search", params={"q": "car", "library": "testlib"})
+        assert res.status_code == 200
+        data = res.json()
+        assert isinstance(data, list)
+        for item in data:
+            assert item["library_slug"] == "testlib"
+    finally:
+        app.dependency_overrides.pop(_get_search_repo, None)
+        app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_api_search_type_filter_image(search_api_postgres):
+    """GET /api/search?q=car&type=image returns only images."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    try:
+        client = TestClient(app)
+        res = client.get("/api/search", params={"q": "car", "type": "image"})
+        assert res.status_code == 200
+        data = res.json()
+        assert isinstance(data, list)
+        for item in data:
+            assert item["type"] == "image"
+    finally:
+        app.dependency_overrides.pop(_get_search_repo, None)
+        app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_api_search_type_filter_video(search_api_postgres):
+    """GET /api/search?q=car&type=video returns only videos."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    try:
+        client = TestClient(app)
+        res = client.get("/api/search", params={"q": "car", "type": "video"})
+        assert res.status_code == 200
+        data = res.json()
+        assert isinstance(data, list)
+        for item in data:
+            assert item["type"] == "video"
+    finally:
+        app.dependency_overrides.pop(_get_search_repo, None)
+        app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_api_libraries_returns_list(search_api_postgres):
+    """GET /api/libraries returns non-deleted libraries."""
+    search_repo, ui_repo = search_api_postgres
+    library_repo = LibraryRepository(search_repo._session_factory)
+    app.dependency_overrides[_get_library_repo] = lambda: library_repo
+    try:
+        client = TestClient(app)
+        res = client.get("/api/libraries")
+        assert res.status_code == 200
+        data = res.json()
+        assert isinstance(data, list)
+        assert len(data) >= 1
+        for item in data:
+            assert "slug" in item
+            assert "name" in item
+    finally:
+        app.dependency_overrides.pop(_get_library_repo, None)
 

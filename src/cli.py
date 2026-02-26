@@ -394,7 +394,8 @@ def asset_reindex(
 def search(
     query: str = typer.Argument(None, help="Search query (optional). If omitted, no results are returned. E.g. 'man in blue shirt'."),
     ocr: bool = typer.Option(False, "--ocr", help="Search only within extracted OCR text"),
-    library: str | None = typer.Option(None, "--library", help="Filter by library slug"),
+    library: list[str] = typer.Option([], "--library", help="Filter to these library slugs (repeatable)"),
+    type_filter: list[str] = typer.Option([], "--type", help="Filter to asset types: image, video (repeatable)"),
     limit: int = typer.Option(50, "--limit", help="Maximum number of results"),
 ) -> None:
     """Search assets by full-text query on visual analysis (vibe or OCR)."""
@@ -402,10 +403,19 @@ def search(
     search_repo = SearchRepository(session_factory)
     query_string = query if not ocr else None
     ocr_query = query if ocr else None
+    library_slugs = library if library else None
+    asset_types: list[str] | None = None
+    if type_filter:
+        valid = {"image", "video"}
+        asset_types = [t.lower() for t in type_filter if t.lower() in valid]
+        if not asset_types:
+            typer.secho("--type must be 'image' or 'video'.", err=True)
+            raise typer.Exit(1)
     results = search_repo.search_assets(
         query_string=query_string,
         ocr_query=ocr_query,
-        library_slug=library,
+        library_slugs=library_slugs,
+        asset_types=asset_types or None,
         limit=limit,
     )
     if not results:

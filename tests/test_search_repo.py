@@ -154,10 +154,242 @@ def test_search_assets_library_slug_filters(engine, _session_factory):
     finally:
         session.close()
 
-    results = search_repo.search_assets(query_string="xyz", library_slug="lib-a", limit=50)
+    results = search_repo.search_assets(query_string="xyz", library_slugs=["lib-a"], limit=50)
     assert len(results) == 1
     item = results[0]
     assert item.asset.library_id == "lib-a" and item.asset.rel_path == "only.jpg"
+
+
+def test_search_assets_library_slugs_multiple(engine, _session_factory):
+    """search_assets with library_slugs returns only assets from those libraries."""
+    lib_repo, asset_repo, search_repo = _create_tables_and_seed(engine, _session_factory)
+    session = _session_factory()
+    try:
+        for s, name in [("lib-m1", "Lib M1"), ("lib-m2", "Lib M2"), ("lib-m3", "Lib M3")]:
+            session.add(
+                Library(
+                    slug=s,
+                    name=name,
+                    absolute_path=f"/tmp/{s}",
+                    is_active=True,
+                    sampling_limit=100,
+                )
+            )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("lib-m1", "a.jpg", AssetType.image, 1000.0, 1024)
+    asset_repo.upsert_asset("lib-m2", "b.jpg", AssetType.image, 1001.0, 1024)
+    asset_repo.upsert_asset("lib-m3", "c.jpg", AssetType.image, 1002.0, 1024)
+    session = _session_factory()
+    try:
+        for lib, path, va in [
+            ("lib-m1", "a.jpg", '{"description": "unique xyz", "tags": [], "ocr_text": ""}'),
+            ("lib-m2", "b.jpg", '{"description": "unique xyz", "tags": [], "ocr_text": ""}'),
+            ("lib-m3", "c.jpg", '{"description": "unique xyz", "tags": [], "ocr_text": ""}'),
+        ]:
+            session.execute(
+                text(
+                    "UPDATE asset SET visual_analysis = CAST(:va AS jsonb) "
+                    "WHERE library_id = :lib AND rel_path = :path"
+                ),
+                {"va": va, "lib": lib, "path": path},
+            )
+        session.commit()
+    finally:
+        session.close()
+
+    results = search_repo.search_assets(
+        query_string="xyz", library_slugs=["lib-m1", "lib-m2"], limit=50
+    )
+    assert len(results) == 2
+    slugs = {r.asset.library_id for r in results}
+    assert slugs == {"lib-m1", "lib-m2"}
+    assert "lib-m3" not in slugs
+
+
+def test_search_assets_asset_types_image_only(engine, _session_factory):
+    """search_assets with asset_types=['image'] returns only images."""
+    lib_repo, asset_repo, search_repo = _create_tables_and_seed(engine, _session_factory)
+    slug = "type-lib"
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=slug,
+                name="Type Lib",
+                absolute_path=f"/tmp/{slug}",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(slug, "img.jpg", AssetType.image, 1000.0, 1024)
+    asset_repo.upsert_asset(slug, "vid.mp4", AssetType.video, 1001.0, 1024)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET visual_analysis = CAST(:va AS jsonb) "
+                "WHERE library_id = :lib AND rel_path = 'img.jpg'"
+            ),
+            {"va": '{"description": "shared term", "tags": [], "ocr_text": ""}', "lib": slug},
+        )
+        row = session.execute(
+            text("SELECT id FROM asset WHERE library_id = :lib AND rel_path = 'vid.mp4'"),
+            {"lib": slug},
+        ).fetchone()
+        assert row is not None
+        asset_id = row[0]
+        session.execute(
+            text(
+                "INSERT INTO video_scenes (asset_id, start_ts, end_ts, description, metadata, sharpness_score, rep_frame_path, keep_reason) "
+                "VALUES (:aid, 0.0, 5.0, 'shared term', CAST(:meta AS jsonb), 0.0, '', 'phash')"
+            ),
+            {"aid": asset_id, "meta": '{"moondream": {"description": "shared term", "tags": [], "ocr_text": null}}'},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    results = search_repo.search_assets(
+        query_string="shared term", asset_types=["image"], limit=50
+    )
+    assert len(results) == 1
+    assert results[0].asset.type == AssetType.image
+    assert results[0].asset.rel_path == "img.jpg"
+
+
+def test_search_assets_asset_types_video_only(engine, _session_factory):
+    """search_assets with asset_types=['video'] returns only videos."""
+    lib_repo, asset_repo, search_repo = _create_tables_and_seed(engine, _session_factory)
+    slug = "video-type-lib"
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=slug,
+                name="Video Type Lib",
+                absolute_path=f"/tmp/{slug}",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(slug, "img.jpg", AssetType.image, 1000.0, 1024)
+    asset_repo.upsert_asset(slug, "vid.mp4", AssetType.video, 1001.0, 1024)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET visual_analysis = CAST(:va AS jsonb) "
+                "WHERE library_id = :lib AND rel_path = 'img.jpg'"
+            ),
+            {"va": '{"description": "shared term", "tags": [], "ocr_text": ""}', "lib": slug},
+        )
+        row = session.execute(
+            text("SELECT id FROM asset WHERE library_id = :lib AND rel_path = 'vid.mp4'"),
+            {"lib": slug},
+        ).fetchone()
+        assert row is not None
+        asset_id = row[0]
+        session.execute(
+            text(
+                "INSERT INTO video_scenes (asset_id, start_ts, end_ts, description, metadata, sharpness_score, rep_frame_path, keep_reason) "
+                "VALUES (:aid, 0.0, 5.0, 'shared term', CAST(:meta AS jsonb), 0.0, '', 'phash')"
+            ),
+            {"aid": asset_id, "meta": '{"moondream": {"description": "shared term", "tags": [], "ocr_text": null}}'},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    results = search_repo.search_assets(
+        query_string="shared term",
+        library_slugs=[slug],
+        asset_types=["video"],
+        limit=50,
+    )
+    assert len(results) == 1
+    assert results[0].asset.type == AssetType.video
+    assert results[0].asset.rel_path == "vid.mp4"
+
+
+def test_search_assets_library_slugs_and_asset_types_combined(engine, _session_factory):
+    """search_assets with library_slugs + asset_types returns correct subset."""
+    lib_repo, asset_repo, search_repo = _create_tables_and_seed(engine, _session_factory)
+    session = _session_factory()
+    try:
+        for s in ["lib-x", "lib-y"]:
+            session.add(
+                Library(
+                    slug=s,
+                    name=f"Lib {s}",
+                    absolute_path=f"/tmp/{s}",
+                    is_active=True,
+                    sampling_limit=100,
+                )
+            )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("lib-x", "x-img.jpg", AssetType.image, 1000.0, 1024)
+    asset_repo.upsert_asset("lib-x", "x-vid.mp4", AssetType.video, 1001.0, 1024)
+    asset_repo.upsert_asset("lib-y", "y-img.jpg", AssetType.image, 1002.0, 1024)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET visual_analysis = CAST(:va AS jsonb) "
+                "WHERE library_id = 'lib-x' AND rel_path = 'x-img.jpg'"
+            ),
+            {"va": '{"description": "match term", "tags": [], "ocr_text": ""}'},
+        )
+        session.execute(
+            text(
+                "UPDATE asset SET visual_analysis = CAST(:va AS jsonb) "
+                "WHERE library_id = 'lib-x' AND rel_path = 'x-vid.mp4'"
+            ),
+            {"va": '{"description": "match term", "tags": [], "ocr_text": ""}'},
+        )
+        session.execute(
+            text(
+                "UPDATE asset SET visual_analysis = CAST(:va AS jsonb) "
+                "WHERE library_id = 'lib-y' AND rel_path = 'y-img.jpg'"
+            ),
+            {"va": '{"description": "match term", "tags": [], "ocr_text": ""}'},
+        )
+        row = session.execute(
+            text("SELECT id FROM asset WHERE library_id = 'lib-x' AND rel_path = 'x-vid.mp4'"),
+        ).fetchone()
+        assert row is not None
+        session.execute(
+            text(
+                "INSERT INTO video_scenes (asset_id, start_ts, end_ts, description, metadata, sharpness_score, rep_frame_path, keep_reason) "
+                "VALUES (:aid, 0.0, 5.0, 'match term', CAST(:meta AS jsonb), 0.0, '', 'phash')"
+            ),
+            {"aid": row[0], "meta": '{"moondream": {"description": "match term", "tags": [], "ocr_text": null}}'},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    results = search_repo.search_assets(
+        query_string="match term",
+        library_slugs=["lib-x"],
+        asset_types=["image"],
+        limit=50,
+    )
+    assert len(results) == 1
+    assert results[0].asset.library_id == "lib-x" and results[0].asset.rel_path == "x-img.jpg"
 
 
 def test_search_assets_null_visual_analysis_excluded(engine, _session_factory):
@@ -228,7 +460,7 @@ def test_search_assets_ordered_by_rank_descending(engine, _session_factory):
         session.close()
 
     results = search_repo.search_assets(
-        query_string="blue shirt", library_slug=slug, limit=50
+        query_string="blue shirt", library_slugs=[slug], limit=50
     )
     assert len(results) == 2
     first_item, second_item = results[0], results[1]
@@ -290,7 +522,7 @@ def test_search_assets_video_scenes_density_ranking(engine, _session_factory):
     finally:
         session.close()
 
-    results = search_repo.search_assets(query_string="sunset beach", library_slug=slug, limit=50)
+    results = search_repo.search_assets(query_string="sunset beach", library_slugs=[slug], limit=50)
     assert len(results) == 1
     item = results[0]
     assert item.asset.type == AssetType.video

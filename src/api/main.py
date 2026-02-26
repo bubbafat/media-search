@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.core.config import get_config
 from src.repository.asset_repo import AssetRepository
+from src.repository.library_repo import LibraryRepository
 from src.repository.search_repo import SearchRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.ui_repo import UIRepository
@@ -72,6 +73,11 @@ def _get_video_scene_repo() -> VideoSceneRepository:
     return VideoSceneRepository(_get_session_factory())
 
 
+@lru_cache(maxsize=1)
+def _get_library_repo() -> LibraryRepository:
+    return LibraryRepository(_get_session_factory())
+
+
 class SearchResultOut(BaseModel):
     asset_id: int
     type: Literal["image", "video"]
@@ -105,7 +111,8 @@ def _format_mmss(seconds: float) -> str:
 def api_search(
     q: str | None = Query(default=None, description="Semantic (vibe) full-text search query"),
     ocr: str | None = Query(default=None, description="OCR-only full-text search query"),
-    library_slug: str | None = Query(default=None, description="Optional library slug filter"),
+    library: list[str] | None = Query(default=None, description="Filter to these library slugs (repeatable)"),
+    type_: list[Literal["image", "video"]] | None = Query(default=None, alias="type", description="Filter to asset types"),
     tag: str | None = Query(default=None, description="Filter by tag (tag-only search when q/ocr omitted)"),
     limit: int = Query(default=50, ge=1, le=500),
     search_repo: SearchRepository = Depends(_get_search_repo),
@@ -114,7 +121,8 @@ def api_search(
     results = search_repo.search_assets(
         query_string=q,
         ocr_query=ocr,
-        library_slug=library_slug,
+        library_slugs=library,
+        asset_types=type_,
         tag=tag,
         limit=limit,
     )
@@ -155,6 +163,20 @@ def api_search(
             )
         )
     return out
+
+
+class LibraryOut(BaseModel):
+    slug: str
+    name: str
+
+
+@app.get("/api/libraries", response_model=list[LibraryOut])
+def api_libraries(
+    library_repo: LibraryRepository = Depends(_get_library_repo),
+) -> list[LibraryOut]:
+    """Return non-deleted libraries for filter dropdown."""
+    libs = library_repo.list_libraries(include_deleted=False)
+    return [LibraryOut(slug=lib.slug, name=lib.name) for lib in libs]
 
 
 @app.get("/api/asset/{asset_id}", response_model=AssetDetailOut)
@@ -199,11 +221,15 @@ def dashboard(
     request: Request,
     ui_repo: UIRepository = Depends(_get_ui_repo),
     tag: str | None = Query(default=None, description="Initial tag filter (runs tag search on load)"),
+    library: list[str] | None = Query(default=None, description="Initial library filter (repeatable)"),
+    type_: list[str] | None = Query(default=None, alias="type", description="Initial media type filter"),
 ) -> HTMLResponse:
     """Render Mission Control dashboard: system version, DB status, fleet, stats."""
     health = ui_repo.get_system_health()
     fleet = ui_repo.get_worker_fleet()
     stats = ui_repo.get_library_stats()
+    initial_libraries = library or []
+    initial_types = type_ or []
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -214,6 +240,8 @@ def dashboard(
             "total_assets": stats.total_assets,
             "pending_assets": stats.pending_assets,
             "initial_tag": tag or "",
+            "initial_libraries": initial_libraries,
+            "initial_types": initial_types,
         },
     )
 
@@ -223,11 +251,15 @@ def dashboard_tag(
     request: Request,
     tag: str,
     ui_repo: UIRepository = Depends(_get_ui_repo),
+    library: list[str] | None = Query(default=None, description="Initial library filter (repeatable)"),
+    type_: list[str] | None = Query(default=None, alias="type", description="Initial media type filter"),
 ) -> HTMLResponse:
     """Render dashboard with tag filter applied (same page as /dashboard?tag=...)."""
     health = ui_repo.get_system_health()
     fleet = ui_repo.get_worker_fleet()
     stats = ui_repo.get_library_stats()
+    initial_libraries = library or []
+    initial_types = type_ or []
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -238,5 +270,7 @@ def dashboard_tag(
             "total_assets": stats.total_assets,
             "pending_assets": stats.pending_assets,
             "initial_tag": tag,
+            "initial_libraries": initial_libraries,
+            "initial_types": initial_types,
         },
     )

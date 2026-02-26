@@ -44,18 +44,25 @@ class SearchRepository:
         self,
         query_string: str | None = None,
         ocr_query: str | None = None,
-        library_slug: str | None = None,
+        library_slugs: list[str] | None = None,
+        asset_types: list[str] | None = None,
         tag: str | None = None,
         limit: int = 50,
     ) -> list[SearchResultItem]:
         """
         Search assets by full-text query and/or tag.
         When only tag is set, returns assets that have that tag (no FTS). When q/ocr and tag
-        are set, restricts FTS results to that tag. library_slug filters to one library.
+        are set, restricts FTS results to that tag. library_slugs filters to 1-N libraries.
+        asset_types restricts to image and/or video (None = both).
         """
         tag_only = tag is not None and not query_string and not ocr_query
         if tag_only:
-            return self._search_assets_by_tag(library_slug=library_slug, tag=tag, limit=limit)
+            return self._search_assets_by_tag(
+                library_slugs=library_slugs,
+                asset_types=asset_types,
+                tag=tag,
+                limit=limit,
+            )
         if not query_string and not ocr_query:
             return []
 
@@ -67,12 +74,14 @@ class SearchRepository:
             image_search_target = "a.visual_analysis::text"
             video_search_target = "s.metadata::text"
 
-        if library_slug:
+        if library_slugs:
             library_join = "JOIN library l ON a.library_id = l.slug"
-            library_filter = "AND a.library_id = :lib_slug AND l.deleted_at IS NULL"
+            library_filter = "AND a.library_id = ANY(:lib_slugs) AND l.deleted_at IS NULL"
         else:
             library_join = ""
             library_filter = ""
+
+        type_filter = "AND a.type::text = ANY(:asset_types)" if asset_types else ""
 
         tag_filter_img = "AND a.visual_analysis->'tags' @> jsonb_build_array(:tag)" if tag else ""
         tag_filter_vid = (
@@ -95,6 +104,7 @@ class SearchRepository:
               AND to_tsvector('english', {image_search_target}) @@ f.q
               {tag_filter_img}
               {library_filter}
+              {type_filter}
         ),
         video_hits AS (
             SELECT
@@ -107,9 +117,11 @@ class SearchRepository:
             JOIN asset a ON s.asset_id = a.id
             {library_join}
             WHERE s.metadata IS NOT NULL
+              AND a.type = 'video'
               AND to_tsvector('english', {video_search_target}) @@ f.q
               {tag_filter_vid}
               {library_filter}
+              {type_filter}
         ),
         video_agg AS (
             SELECT
@@ -136,8 +148,10 @@ class SearchRepository:
         """
 
         params: dict = {"query": query, "limit": limit}
-        if library_slug:
-            params["lib_slug"] = library_slug
+        if library_slugs:
+            params["lib_slugs"] = library_slugs
+        if asset_types:
+            params["asset_types"] = asset_types
         if tag:
             params["tag"] = tag
 
@@ -145,7 +159,8 @@ class SearchRepository:
 
     def _search_assets_by_tag(
         self,
-        library_slug: str | None = None,
+        library_slugs: list[str] | None = None,
+        asset_types: list[str] | None = None,
         tag: str | None = None,
         limit: int = 50,
     ) -> list[SearchResultItem]:
@@ -153,12 +168,14 @@ class SearchRepository:
         if not tag:
             return []
 
-        if library_slug:
+        if library_slugs:
             library_join = "JOIN library l ON a.library_id = l.slug"
-            library_filter = "AND a.library_id = :lib_slug AND l.deleted_at IS NULL"
+            library_filter = "AND a.library_id = ANY(:lib_slugs) AND l.deleted_at IS NULL"
         else:
             library_join = ""
             library_filter = ""
+
+        type_filter = "AND a.type::text = ANY(:asset_types)" if asset_types else ""
 
         sql = f"""
         WITH image_hits AS (
@@ -172,6 +189,7 @@ class SearchRepository:
             WHERE a.type = 'image' AND a.visual_analysis IS NOT NULL
               AND a.visual_analysis->'tags' @> jsonb_build_array(:tag)
               {library_filter}
+              {type_filter}
         ),
         video_hits AS (
             SELECT
@@ -184,8 +202,10 @@ class SearchRepository:
             JOIN asset a ON s.asset_id = a.id
             {library_join}
             WHERE s.metadata IS NOT NULL
+              AND a.type = 'video'
               AND s.metadata->'moondream'->'tags' @> jsonb_build_array(:tag)
               {library_filter}
+              {type_filter}
         ),
         video_agg AS (
             SELECT
@@ -211,8 +231,10 @@ class SearchRepository:
         LIMIT :limit
         """
         params: dict = {"tag": tag, "limit": limit}
-        if library_slug:
-            params["lib_slug"] = library_slug
+        if library_slugs:
+            params["lib_slugs"] = library_slugs
+        if asset_types:
+            params["asset_types"] = asset_types
         return self._execute_search_sql(session_factory_ctx=self._session_scope, sql=sql, params=params)
 
     def _execute_search_sql(

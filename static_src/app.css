@@ -1,3 +1,8 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Smaller caret in search input - line-height drives caret height */
+.search-input {
+  line-height: 1.25;
+}
