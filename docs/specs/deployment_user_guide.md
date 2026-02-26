@@ -32,26 +32,7 @@ brew install --cask docker
 
 ---
 
-### Step 1.3 – Start Docker and Run Postgres
-
-1. Open the **Docker** app (from Applications). Wait until it says it's running.
-2. In Terminal, go to where you want to put the project (e.g. your home folder):
-
-   ```bash
-   cd ~
-   ```
-
-3. Start Postgres:
-
-   ```bash
-   docker compose -f /path/to/media-search/docker-compose.yml up -d
-   ```
-
-   Replace `/path/to/media-search` with the real path to the repo. If you haven't cloned yet, do Step 1.4 first, then come back and run this from inside the project folder.
-
----
-
-### Step 1.4 – Clone the Project
+### Step 1.3 – Clone the Project
 
 1. In Terminal, go to where you want the project:
 
@@ -68,12 +49,29 @@ brew install --cask docker
 
 ---
 
+### Step 1.4 – Start Docker and Run Postgres
+
+1. Open the **Docker** app (from Applications). Wait until it says it's running.
+2. In Terminal, ensure you're in the project folder:
+
+   ```bash
+   cd ~/media-search
+   ```
+
+3. Start Postgres:
+
+   ```bash
+   docker compose up -d
+   ```
+
+---
+
 ### Step 1.5 – Install Python Dependencies
 
 Still in the `media-search` folder:
 
 ```bash
-uv sync --all-extras
+uv sync
 ```
 
 This may take several minutes (PyTorch and friends are large). Wait for it to finish.
@@ -94,11 +92,12 @@ This may take several minutes (PyTorch and friends are large). Wait for it to fi
    open -e .env
    ```
 
-3. For Machine A, the file should look like this (localhost is correct—Postgres is on this machine):
+3. For Machine A, ensure it looks like this (localhost is correct—Postgres is on this machine). The template includes an optional `MEDIA_SEARCH_DATA_DIR` line; for Machine A the default `./data` is fine, so leave it commented:
 
    ```
    DATABASE_URL=postgresql+psycopg2://media_search:media_search@localhost:5432/media_search
    HF_TOKEN=
+   # MEDIA_SEARCH_DATA_DIR=  # optional; override where thumbnails, proxies, and video scenes are stored (default: ./data)
    ```
 
    (You can leave `HF_TOKEN` empty unless you need Hugging Face model access.)  
@@ -118,29 +117,17 @@ You should see migration messages; no errors means success.
 
 ---
 
-### Step 1.8 – (Optional) Build Dashboard CSS
-
-Only if you want to change the web UI design:
-
-```bash
-brew install node
-npm install
-npm run build:css
-```
-
-If you skip this, the app uses pre-built CSS.
-
----
-
-### Step 1.9 – Create the Data Directory
+### Step 1.8 – Create the Data Directory
 
 ```bash
 mkdir -p data
 ```
 
+The next step shares this folder with Machines B and C, so it must exist first. You can use a different location by setting `MEDIA_SEARCH_DATA_DIR` in your `.env` file.
+
 ---
 
-### Step 1.10 – Share the Data Folder for Machines B and C
+### Step 1.9 – Share the Data Folder for Machines B and C
 
 1. Open **System Settings** (or **System Preferences** on older macOS).
 2. Go to **General → Sharing**.
@@ -152,7 +139,7 @@ mkdir -p data
 
 ---
 
-### Step 1.11 – Start the Web App (keep this terminal open)
+### Step 1.10 – Start the Web App (keep this terminal open)
 
 ```bash
 uv run --env-file .env uvicorn src.api.main:app --host 0.0.0.0 --port 8000
@@ -162,7 +149,7 @@ Open a browser and go to **http://localhost:8000/dashboard**. If you see the das
 
 ---
 
-### Step 1.12 – Start the Proxy Worker (new terminal)
+### Step 1.11 – Start the Proxy Worker (new terminal)
 
 1. Open a **new** Terminal window/tab.
 2. Run:
@@ -176,7 +163,7 @@ Open a browser and go to **http://localhost:8000/dashboard**. If you see the das
 
 ---
 
-### Step 1.13 – Start the Video Worker (another terminal)
+### Step 1.12 – Start the Video Worker (another terminal)
 
 1. Open another **new** Terminal window/tab.
 2. Run:
@@ -190,7 +177,7 @@ Open a browser and go to **http://localhost:8000/dashboard**. If you see the das
 
 ---
 
-### Step 1.14 – Add a Library and Run a Scan
+### Step 1.13 – Add a Library and Run a Scan
 
 In a **new** terminal:
 
@@ -247,7 +234,7 @@ cd media-search
 On **each** of B and C:
 
 ```bash
-uv sync --all-extras
+uv sync
 ```
 
 ---
