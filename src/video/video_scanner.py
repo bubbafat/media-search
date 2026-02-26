@@ -56,12 +56,15 @@ def _get_video_dimensions(input_path: Path) -> tuple[int, int]:
 
 
 def _output_height_and_frame_size(src_width: int, src_height: int) -> tuple[int, int]:
-    """Compute even out_height (matching FFmpeg scale=480:-2) and frame_byte_size."""
+    """Compute even out_height and frame_byte_size for the low-res stream.
+
+    Height is forced to even (round down) so Python and FFmpeg agree; the scanner
+    passes explicit dimensions to FFmpeg (scale=w:h) rather than scale=-2.
+    """
     if src_width <= 0:
         raise ValueError("source width must be positive")
-    # out_height = round((480 * src_height / src_width) / 2) * 2
-    scaled = 480 * src_height / src_width
-    out_height = round(scaled / 2) * 2
+    scaled = OUT_WIDTH * src_height / src_width
+    out_height = (int(scaled) // 2) * 2
     frame_byte_size = OUT_WIDTH * out_height * 3
     return out_height, frame_byte_size
 
@@ -143,7 +146,7 @@ class VideoScanner:
                 "-i",
                 str(self._input_path),
                 "-vf",
-                "fps=1,scale=480:-2,showinfo",
+                f"fps=1,scale={self._out_width}:{self._out_height},showinfo",
                 "-f",
                 "rawvideo",
                 "-pix_fmt",

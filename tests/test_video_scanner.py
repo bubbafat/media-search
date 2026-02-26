@@ -28,10 +28,10 @@ def test_output_height_1920x1080():
 
 
 def test_output_height_even_rounding():
-    """Ratio that would give odd number gets rounded to even."""
-    # 480 * 271 / 480 = 271 -> round(271/2)*2 = 272
+    """Scaled height that is odd is forced down to even (floor to even)."""
+    # 480 * 271 / 480 = 271 -> (271 // 2) * 2 = 270
     out_height, _ = _output_height_and_frame_size(480, 271)
-    assert out_height == 272
+    assert out_height == 270
 
 
 def test_output_height_zero_width_raises():
