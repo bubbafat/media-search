@@ -170,6 +170,85 @@ class LibraryOut(BaseModel):
     name: str
 
 
+class LibraryAssetOut(BaseModel):
+    """Same shape as SearchResultOut for reuse in the results grid."""
+
+    asset_id: int
+    type: Literal["image", "video"]
+    thumbnail_url: str
+    preview_url: str | None = None
+    match_ratio: float = 100.0  # neutral value for library browse
+    best_scene_ts: str | None = None
+    best_scene_ts_seconds: float | None = None
+    library_slug: str
+    library_name: str
+    filename: str
+
+
+class LibraryAssetsOut(BaseModel):
+    items: list[LibraryAssetOut]
+    has_more: bool
+
+
+@app.get("/api/library-assets", response_model=LibraryAssetsOut)
+def api_library_assets(
+    library: str = Query(..., description="Library slug (required)"),
+    sort: Literal["name", "date", "size", "added", "type"] = Query(
+        default="date", description="Sort by field"
+    ),
+    order: Literal["asc", "desc"] = Query(default="desc", description="Sort direction"),
+    type_: list[Literal["image", "video"]] | None = Query(
+        default=None, alias="type", description="Filter to asset types"
+    ),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    asset_repo: AssetRepository = Depends(_get_asset_repo),
+    library_repo: LibraryRepository = Depends(_get_library_repo),
+) -> LibraryAssetsOut:
+    """Return paginated assets for a library. Used by Library Browser with infinite scroll."""
+    assets = asset_repo.list_assets_for_library(
+        library_slug=library,
+        limit=limit + 1,
+        offset=offset,
+        sort_by=sort,
+        order=order,
+        asset_types=type_,
+    )
+    has_more = len(assets) > limit
+    page = list(assets[:limit])
+    libs = library_repo.list_libraries(include_deleted=False)
+    lib_map = {l.slug: l.name for l in libs}
+    lib_name = lib_map.get(library, library)
+
+    out: list[LibraryAssetOut] = []
+    for asset in page:
+        if asset.id is None:
+            continue
+        shard = asset.id % 1000
+        thumb = f"/media/{asset.library_id}/thumbnails/{shard}/{asset.id}.jpg"
+        preview = (
+            f"/media/{asset.preview_path.lstrip('/')}"
+            if asset.preview_path is not None
+            else None
+        )
+        filename = os.path.basename(asset.rel_path)
+        out.append(
+            LibraryAssetOut(
+                asset_id=asset.id,
+                type=asset.type.value,
+                thumbnail_url=thumb,
+                preview_url=preview,
+                match_ratio=100.0,
+                best_scene_ts=None,
+                best_scene_ts_seconds=None,
+                library_slug=asset.library_id,
+                library_name=lib_name,
+                filename=filename,
+            )
+        )
+    return LibraryAssetsOut(items=out, has_more=has_more)
+
+
 @app.get("/api/libraries", response_model=list[LibraryOut])
 def api_libraries(
     library_repo: LibraryRepository = Depends(_get_library_repo),
@@ -242,6 +321,60 @@ def dashboard(
             "initial_tag": tag or "",
             "initial_libraries": initial_libraries,
             "initial_types": initial_types,
+        },
+    )
+
+
+@app.get("/library", response_class=HTMLResponse)
+def library_page(
+    request: Request,
+    ui_repo: UIRepository = Depends(_get_ui_repo),
+    library: str | None = Query(default=None, description="Initial library slug"),
+    sort: str = Query(default="date", description="Sort field"),
+    order: str = Query(default="desc", description="Sort order"),
+    type_: list[str] | None = Query(default=None, alias="type", description="Initial media type filter"),
+) -> HTMLResponse:
+    """Render Library browser: select library, browse assets with infinite scroll."""
+    health = ui_repo.get_system_health()
+    fleet = ui_repo.get_worker_fleet()
+    return templates.TemplateResponse(
+        request,
+        "library.html",
+        {
+            "schema_version": health.schema_version,
+            "db_status": health.db_status,
+            "fleet": fleet,
+            "initial_library": library or "",
+            "initial_sort": sort,
+            "initial_order": order,
+            "initial_types": type_ or [],
+        },
+    )
+
+
+@app.get("/library/{library_slug}", response_class=HTMLResponse)
+def library_page_slug(
+    request: Request,
+    library_slug: str,
+    ui_repo: UIRepository = Depends(_get_ui_repo),
+    sort: str = Query(default="date", description="Sort field"),
+    order: str = Query(default="desc", description="Sort order"),
+    type_: list[str] | None = Query(default=None, alias="type", description="Initial media type filter"),
+) -> HTMLResponse:
+    """Render Library browser with library pre-selected."""
+    health = ui_repo.get_system_health()
+    fleet = ui_repo.get_worker_fleet()
+    return templates.TemplateResponse(
+        request,
+        "library.html",
+        {
+            "schema_version": health.schema_version,
+            "db_status": health.db_status,
+            "fleet": fleet,
+            "initial_library": library_slug,
+            "initial_sort": sort,
+            "initial_order": order,
+            "initial_types": type_ or [],
         },
     )
 

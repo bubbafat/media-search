@@ -20,6 +20,32 @@ Server-rendered HTML page (Jinja2) that hosts the search-first UI. Optional quer
 
 Same dashboard page with the given tag as initial filter (e.g. `/dashboard/tag/Disneyland`). Renders the same template as `/dashboard` with `initial_tag` set so the client runs a tag search on load. Useful for sharing or bookmarking “all assets with this tag”.
 
+### GET /library
+
+Library Browser page. Query parameters:
+
+- `library` (optional): Initial library slug. When provided, assets for that library load on page load.
+- `sort` (optional, default `date`): Sort field (`name`, `date`, `size`, `added`, `type`).
+- `order` (optional, default `desc`): Sort direction (`asc` or `desc`).
+- `type` (optional): Initial media type filter (`image` or `video`).
+
+### GET /library/{library_slug}
+
+Library Browser page with the given library pre-selected. Same template as `/library` with `initial_library` set. Query parameters `sort`, `order`, and `type` work as for `/library`.
+
+### GET /api/library-assets
+
+Pagination endpoint for Library Browser. Query parameters:
+
+- `library` (required): Library slug.
+- `sort` (optional, default `date`): Sort by `name`, `date`, `size`, `added`, or `type`.
+- `order` (optional, default `desc`): `asc` or `desc`.
+- `type` (optional): Filter to `image` and/or `video` (repeatable).
+- `limit` (optional, default 50): Page size (1–200).
+- `offset` (optional, default 0): Pagination offset.
+
+Response: JSON object with `items` (array of asset objects shaped like search results) and `has_more` (boolean). Used for infinite scroll: when `has_more` is true, the client fetches the next page with `offset = items.length`.
+
 ### GET /api/search
 
 Search endpoint used by the UI result grid. Query parameters:

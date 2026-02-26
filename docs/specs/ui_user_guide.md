@@ -1,11 +1,12 @@
 # MediaSearch UI User Guide
 
-The MediaSearch web UI is a **Search-First dashboard** (Mission Control + Search). It provides:
+The MediaSearch web UI provides:
 
-- A fast search box with a Semantic vs OCR toggle.
+- **Search** — A fast search box with Semantic vs OCR toggle.
 - Optional **tag filter**: open `/dashboard?tag=Disneyland` or `/dashboard/tag/Disneyland` to see all assets with that tag (no text query).
 - A responsive results grid (thumbnails, animated WebP previews on hover for videos).
 - **Detail modal**: Click any result to open a pop-up with the thumbnail on the left and, on the right, **description**, **tags** (as clickable chiclets that navigate to that tag’s results), and **OCR text**.
+- **Library Browser** — Select a library and browse all media with infinite scroll, same layouts and detail modal as search.
 - A collapsible System Status section showing worker health and stats.
 
 ---
@@ -73,6 +74,38 @@ If no workers are registered, the table shows: “No workers registered.”
 
 ---
 
+## Library Browser (GET /library and GET /library/{slug})
+
+The Library Browser page lets you select a library and browse all media in that library. It uses the same result grid (masonry, bento, list, filmstrip), detail modal, and type filter as the search dashboard.
+
+### Navigation
+
+Use the header links **Search** and **Library** to switch between the search dashboard and library browser.
+
+### Library selector
+
+Select a library from the dropdown. When a library is chosen, assets load automatically. You can bookmark or share a URL like `/library/nas-main` to open a specific library directly.
+
+### Sort options
+
+- **Name** — Alphabetical by path/filename.
+- **Date** — Modification time (best proxy for media creation).
+- **Size** — File size in bytes.
+- **Added** — When indexed into the system.
+- **Type** — Group images/videos, then by name.
+
+You can toggle sort order (ascending/descending). Sort and order are persisted in browser storage.
+
+### Infinite scroll
+
+As you scroll near the bottom of the grid, more assets load automatically (about 50 per page). This lets you browse hundreds or thousands of items without manual pagination.
+
+### Layout and detail modal
+
+Same as the dashboard: Masonry, Bento, List, or Filmstrip layout; click any result to open the detail modal with description, tags, and OCR text.
+
+---
+
 ## Media URLs (derivatives only)
 
 The UI never writes to source libraries and only loads **derivatives from `data_dir`**:
@@ -99,6 +132,6 @@ Templates live under `src/api/templates/` (e.g. `dashboard.html`).
 
 ## Scope and limitations
 
-- **Single page:** Only the dashboard exists. Routes like `/dashboard` and `/dashboard/tag/{tag}` render the same single page with different initial state (e.g. tag filter).
+- **Search vs Library:** The search dashboard (`/dashboard`) and library browser (`/library`) are separate pages; both share the same result layouts and detail modal.
 - **Read-only:** The dashboard only displays data; it does not create, update, or delete libraries or assets. Use the [CLI](cli_user_guide.md) for those operations.
 - **Derivatives only:** The UI only loads thumbnails and previews from `data_dir` via `/media/...` (no source library access).

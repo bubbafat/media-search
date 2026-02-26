@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MediaSearch – Search</title>
+  <title>MediaSearch – Library</title>
   <link href="/static/css/app.css" rel="stylesheet" type="text/css" />
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </head>
-<body class="min-h-screen bg-base-200" x-data='mediaSearchDashboard({{ initial_tag | tojson }}, {{ initial_libraries | tojson }}, {{ initial_types | tojson }})'>
+<body class="min-h-screen bg-base-200" x-data='libraryBrowser({{ initial_library | tojson }}, {{ initial_sort | tojson }}, {{ initial_order | tojson }}, {{ initial_types | tojson }})'>
   <div class="container mx-auto p-4 md:p-6">
     <header class="mb-6">
       <div class="flex flex-col gap-4">
@@ -15,8 +15,8 @@
           <div class="flex items-center gap-4">
             <h1 class="text-2xl font-bold text-base-content">MediaSearch</h1>
             <nav class="flex gap-2">
-              <span class="btn btn-primary btn-sm">Search</span>
-              <a href="/library" class="btn btn-ghost btn-sm">Library</a>
+              <a href="/dashboard" class="btn btn-ghost btn-sm">Search</a>
+              <span class="btn btn-primary btn-sm">Library</span>
             </nav>
           </div>
           <div class="text-sm text-base-content/70">
@@ -29,48 +29,42 @@
         <div class="card bg-base-100 shadow">
           <div class="card-body gap-4">
             <div class="flex flex-col gap-3">
-              <div class="flex flex-col md:flex-row md:items-center gap-3">
-                <div class="join">
-                  <button class="btn join-item" :class="mode === 'semantic' ? 'btn-primary' : 'btn-ghost'" @click="setMode('semantic')">Semantic</button>
-                  <button class="btn join-item" :class="mode === 'ocr' ? 'btn-primary' : 'btn-ghost'" @click="setMode('ocr')">OCR</button>
-                </div>
-
-                <label class="input input-bordered flex items-center gap-2 w-full">
-                <input
-                  class="search-input grow"
-                  type="text"
-                  placeholder="Search your library…"
-                  x-model="query"
-                  @keydown.enter.prevent="runSearch()"
-                />
-                <span class="text-xs text-base-content/60" x-show="mode === 'semantic'">q</span>
-                <span class="text-xs text-base-content/60" x-show="mode === 'ocr'">ocr</span>
-              </label>
-
-                <button class="btn btn-primary" @click="runSearch()" :disabled="loading">
-                  <span x-show="!loading">Search</span>
-                  <span x-show="loading" class="loading loading-spinner loading-sm"></span>
-                </button>
-                <button class="btn btn-ghost" @click="clearResults()" :disabled="loading">Clear</button>
-              </div>
-
-              <div class="flex flex-wrap items-center gap-2">
+              <div class="flex flex-wrap items-center gap-3">
                 <div class="dropdown dropdown-end">
-                  <label tabindex="0" class="btn btn-sm btn-ghost gap-1">
-                    <span x-text="libraryFilters.length ? `Libraries: ${libraryFilters.length}` : 'All libraries'"></span>
+                  <label tabindex="0" class="btn btn-primary gap-2">
+                    <span x-text="selectedLibrary ? (libraryName(selectedLibrary) || selectedLibrary) : 'Select library…'"></span>
                     <svg class="w-2.5 h-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                   </label>
-                  <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-56 z-10 max-h-64 overflow-y-auto">
+                  <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-64 z-10 max-h-64 overflow-y-auto">
                     <template x-for="lib in libraries" :key="lib.slug">
                       <li>
-                        <label class="flex items-center gap-2 cursor-pointer">
-                          <input type="checkbox" class="checkbox checkbox-sm" :checked="libraryFilters.includes(lib.slug)" @change="toggleLibrary(lib.slug)" />
-                          <span x-text="lib.name || lib.slug"></span>
-                        </label>
+                        <button type="button" class="w-full text-left" @click="selectLibrary(lib.slug)" x-text="lib.name || lib.slug"></button>
                       </li>
                     </template>
+                    <li x-show="!libraries.length" class="text-base-content/60">No libraries</li>
                   </ul>
                 </div>
+
+                <div class="dropdown dropdown-end" x-show="selectedLibrary">
+                  <label tabindex="0" class="btn btn-sm btn-ghost gap-1">
+                    Sort: <span x-text="sortLabel"></span>
+                    <svg class="w-2.5 h-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                  </label>
+                  <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-48 z-10">
+                    <template x-for="opt in sortOptions" :key="opt.value">
+                      <li>
+                        <button type="button" class="flex items-center justify-between w-full" @click="setSort(opt.value)">
+                          <span x-text="opt.label"></span>
+                          <span x-show="sortBy === opt.value" x-text="sortOrder === 'asc' ? '↑' : '↓'"></span>
+                        </button>
+                      </li>
+                    </template>
+                    <li class="border-t mt-1 pt-1">
+                      <button type="button" @click="toggleSortOrder()">Order: <span x-text="sortOrder === 'asc' ? 'A–Z / Old first' : 'Z–A / New first'"></span></button>
+                    </li>
+                  </ul>
+                </div>
+
                 <div class="join join-sm">
                   <button class="btn join-item btn-sm" :class="mediaTypeFilter === 'all' ? 'btn-primary' : 'btn-ghost'" @click="setMediaType('all')">All</button>
                   <button class="btn join-item btn-sm" :class="mediaTypeFilter === 'image' ? 'btn-primary' : 'btn-ghost'" @click="setMediaType('image')">Images</button>
@@ -86,24 +80,14 @@
                 <button class="btn join-item btn-sm" :class="layout === 'list' ? 'btn-primary' : 'btn-ghost'" @click="setLayout('list')">List</button>
                 <button class="btn join-item btn-sm" :class="layout === 'filmstrip' ? 'btn-primary' : 'btn-ghost'" @click="setLayout('filmstrip')">Filmstrip</button>
               </div>
-              <template x-for="slug in libraryFilters" :key="slug">
-                <span class="badge badge-outline gap-1">
-                  <span x-text="libraryName(slug)"></span>
-                  <button type="button" class="btn btn-ghost btn-xs" @click="removeLibrary(slug)" aria-label="Remove library">×</button>
-                </span>
-              </template>
               <span class="badge badge-outline gap-1" x-show="mediaTypeFilter !== 'all'">
                 <span x-text="mediaTypeFilter === 'image' ? 'Images only' : 'Videos only'"></span>
                 <button type="button" class="btn btn-ghost btn-xs" @click="setMediaType('all')" aria-label="Clear type">×</button>
               </span>
-              <span class="badge badge-outline gap-1" x-show="tagFilter">
-                Tag: <span x-text="tagFilter"></span>
-                <button type="button" class="btn btn-ghost btn-xs" @click="clearTag()" aria-label="Clear tag">×</button>
-              </span>
               <span class="text-sm text-error" x-show="error" x-text="error"></span>
-              <span class="text-sm text-base-content/70" x-show="!error && results.length === 0 && query.trim().length === 0 && !tagFilter && !loading">Enter a search or use a tag link.</span>
-              <span class="text-sm text-base-content/70" x-show="!error && results.length === 0 && (query.trim().length > 0 || tagFilter) && !loading">No results.</span>
-              <span class="text-sm text-base-content/70" x-show="results.length > 0" x-text="`${results.length} results`"></span>
+              <span class="text-sm text-base-content/70" x-show="!error && !selectedLibrary && !loading">Select a library to browse.</span>
+              <span class="text-sm text-base-content/70" x-show="!error && selectedLibrary && results.length === 0 && !loading && !loadingMore">No assets in this library.</span>
+              <span class="text-sm text-base-content/70" x-show="results.length > 0" x-text="`${results.length} items` + (hasMore ? '+' : '')"></span>
             </div>
           </div>
         </div>
@@ -129,10 +113,7 @@
               </div>
             </figure>
             <div class="card-body p-3 gap-1">
-              <div class="text-xs text-base-content/60 flex items-center justify-between gap-2 min-w-0">
-                <span class="truncate" :title="item.library_name + ' · ' + item.filename" x-text="item.library_name + ' · ' + item.filename"></span>
-                <span class="shrink-0" x-text="`Match ${item.match_ratio}%`"></span>
-              </div>
+              <div class="text-xs text-base-content/60 truncate" :title="item.library_name + ' · ' + item.filename" x-text="item.library_name + ' · ' + item.filename"></div>
             </div>
           </div>
         </template>
@@ -160,10 +141,7 @@
               </div>
             </figure>
             <div class="card-body p-3 gap-1">
-              <div class="text-xs text-base-content/60 flex items-center justify-between gap-2 min-w-0">
-                <span class="truncate" :title="item.library_name + ' · ' + item.filename" x-text="item.library_name + ' · ' + item.filename"></span>
-                <span class="shrink-0" x-text="`Match ${item.match_ratio}%`"></span>
-              </div>
+              <div class="text-xs text-base-content/60 truncate" :title="item.library_name + ' · ' + item.filename" x-text="item.library_name + ' · ' + item.filename"></div>
             </div>
           </div>
         </template>
@@ -183,8 +161,6 @@
             <div class="min-w-0 flex-1 flex flex-wrap items-center gap-2">
               <span class="font-medium truncate" :title="item.library_name + ' · ' + item.filename" x-text="item.library_name + ' · ' + item.filename"></span>
               <span class="badge badge-outline badge-sm" x-text="item.type"></span>
-              <span class="text-xs text-base-content/60" x-text="`Match ${item.match_ratio}%`"></span>
-              <span class="badge badge-primary badge-sm" x-show="item.best_scene_ts" x-text="`Jump ${item.best_scene_ts}`"></span>
             </div>
           </div>
         </template>
@@ -207,13 +183,9 @@
                     />
                     <div class="badge badge-neutral badge-sm absolute top-1 left-1" x-show="item.type === 'video'">Video</div>
                     <div class="badge badge-primary badge-sm absolute top-1 right-1" x-show="item.best_scene_ts" x-text="item.best_scene_ts"></div>
-                    <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-base-300" x-show="item.type === 'video'">
-                      <div class="h-full bg-primary" :style="`width:${Math.max(0, Math.min(item.match_ratio, 100))}%`"></div>
-                    </div>
                   </figure>
                   <div class="card-body p-2 gap-0">
                     <div class="text-xs text-base-content/60 truncate" :title="item.filename" x-text="item.filename"></div>
-                    <div class="text-xs text-base-content/50" x-text="`Match ${item.match_ratio}%`"></div>
                   </div>
                 </div>
               </template>
@@ -221,6 +193,11 @@
           </div>
         </template>
       </section>
+
+      <div x-show="results.length > 0 && hasMore && !loadingMore" x-ref="sentinel" class="h-4"></div>
+      <div x-show="loadingMore" class="flex justify-center py-8">
+        <span class="loading loading-spinner loading-lg"></span>
+      </div>
 
       <section class="card bg-base-100 shadow">
         <div class="card-body">
@@ -270,7 +247,6 @@
             <h3 class="font-bold text-lg truncate" x-text="selected ? (selected.library_name + ' · ' + selected.filename) : 'Asset'"></h3>
             <p class="text-sm text-base-content/70" x-show="selected">
               <span class="badge badge-outline" x-text="selected?.type ?? ''"></span>
-              <span class="ml-2">Match <span class="font-semibold" x-text="selected?.match_ratio != null ? `${selected.match_ratio}%` : ''"></span></span>
               <span class="ml-2 text-base-content/50" x-text="'#' + (selected?.asset_id ?? '')"></span>
             </p>
           </div>
@@ -294,12 +270,6 @@
                   </template>
                   <div class="text-sm text-base-content/70" x-show="!selected?.preview_url">
                     No preview available for this video.
-                  </div>
-                  <div class="mt-3 text-sm" x-show="selected?.best_scene_ts">
-                    Best match at <span class="font-semibold" x-text="selected?.best_scene_ts ?? ''"></span>
-                  </div>
-                  <div class="mt-2 text-sm text-base-content/70">
-                    Video playback proxies are not yet exposed in Phase 1; when available, this modal will seek the player to the best timestamp.
                   </div>
                 </div>
               </div>
@@ -344,43 +314,46 @@
     </dialog>
 
     <script>
-      function mediaSearchDashboard(initialTag, initialLibraries, initialTypes) {
+      function libraryBrowser(initialLibrary, initialSort, initialOrder, initialTypes) {
         const allowedLayouts = ['masonry', 'bento', 'list', 'filmstrip'];
-        const saved = typeof localStorage !== 'undefined' && allowedLayouts.includes(localStorage.getItem('mediaSearchLayout'));
-        const params = typeof window !== 'undefined' && window.location.search ? new URLSearchParams(window.location.search) : null;
-        const tagFromUrl = params ? params.get('tag') : null;
-        const librariesFromUrl = params && params.getAll ? params.getAll('library') : [];
-        const typesFromUrl = params && params.getAll ? params.getAll('type') : [];
+        const savedLayout = typeof localStorage !== 'undefined' && allowedLayouts.includes(localStorage.getItem('mediaSearchLayout'));
+        const savedSort = typeof localStorage !== 'undefined' ? localStorage.getItem('mediaSearchLibrarySort') : null;
+        const savedOrder = typeof localStorage !== 'undefined' ? localStorage.getItem('mediaSearchLibraryOrder') : null;
+        const sortOptions = [
+          { value: 'name', label: 'Name' },
+          { value: 'date', label: 'Date' },
+          { value: 'size', label: 'Size' },
+          { value: 'added', label: 'Added' },
+          { value: 'type', label: 'Type' },
+        ];
+        const PAGE_SIZE = 50;
+
         return {
-          mode: 'semantic',
-          query: '',
-          tagFilter: tagFromUrl || (initialTag || '') || '',
           libraries: [],
-          libraryFilters: initialLibraries && initialLibraries.length ? initialLibraries : (librariesFromUrl.length ? librariesFromUrl : []),
-          mediaTypeFilter: (initialTypes && initialTypes.length ? initialTypes[0] : (typesFromUrl.length ? typesFromUrl[0] : 'all')) || 'all',
+          selectedLibrary: initialLibrary || '',
+          sortBy: savedSort || initialSort || 'date',
+          sortOrder: savedOrder || initialOrder || 'desc',
+          mediaTypeFilter: (initialTypes && initialTypes.length ? initialTypes[0] : 'all') || 'all',
           results: [],
+          hasMore: false,
           loading: false,
+          loadingMore: false,
           error: '',
           selected: null,
           selectedDetail: null,
           selectedDetailError: null,
-          layout: saved ? localStorage.getItem('mediaSearchLayout') : 'masonry',
+          layout: savedLayout ? localStorage.getItem('mediaSearchLayout') : 'masonry',
 
-          async init() {
-            try {
-              const res = await fetch('/api/libraries', { headers: { 'Accept': 'application/json' } });
-              if (res.ok) this.libraries = await res.json();
-            } catch (_) {}
-            if ((this.tagFilter || this.query.trim()) && !this.loading && this.results.length === 0) {
-              if (this.query.trim()) await this.runSearch();
-              else await this.runTagSearch();
-            }
+          get sortLabel() {
+            const opt = sortOptions.find(o => o.value === this.sortBy);
+            return opt ? opt.label : this.sortBy;
           },
 
-          setLayout(layout) {
-            if (!allowedLayouts.includes(layout)) return;
-            this.layout = layout;
-            try { localStorage.setItem('mediaSearchLayout', layout); } catch (_) {}
+          get sortOptions() { return sortOptions; },
+
+          libraryName(slug) {
+            const lib = this.libraries.find(l => l.slug === slug);
+            return lib ? (lib.name || slug) : slug;
           },
 
           groupedByLibrary() {
@@ -394,108 +367,114 @@
               }
               bySlug[slug].items.push(item);
             }
-            return order.map(slug => bySlug[slug]);
+            return order.map(s => bySlug[s]);
           },
 
-          setMode(mode) {
-            this.mode = mode;
-            this.results = [];
-            this.error = '';
+          async init() {
+            try {
+              const res = await fetch('/api/libraries', { headers: { 'Accept': 'application/json' } });
+              if (res.ok) this.libraries = await res.json();
+            } catch (_) {}
+            if (this.selectedLibrary) await this.loadFirstPage();
+            this.setupSentinel();
           },
 
-          clearResults() {
-            this.query = '';
-            this.results = [];
-            this.error = '';
+          setupSentinel() {
+            this.$nextTick(() => {
+              const sentinel = this.$refs.sentinel;
+              if (!sentinel) return;
+              const obs = new IntersectionObserver(
+                (entries) => {
+                  if (!entries[0]?.isIntersecting) return;
+                  if (this.hasMore && !this.loadingMore && this.selectedLibrary) this.loadMorePage();
+                },
+                { rootMargin: '200px', threshold: 0 }
+              );
+              obs.observe(sentinel);
+            });
           },
 
-          toggleLibrary(slug) {
-            const idx = this.libraryFilters.indexOf(slug);
-            if (idx >= 0) this.libraryFilters.splice(idx, 1);
-            else this.libraryFilters.push(slug);
-            this.results = [];
-            if (this.tagFilter) this.runTagSearch();
-            else if (this.query.trim()) this.runSearch();
+          setLayout(layout) {
+            if (!allowedLayouts.includes(layout)) return;
+            this.layout = layout;
+            try { localStorage.setItem('mediaSearchLayout', layout); } catch (_) {}
           },
-          removeLibrary(slug) {
-            this.libraryFilters = this.libraryFilters.filter(s => s !== slug);
-            this.results = [];
-            if (this.tagFilter) this.runTagSearch();
-            else if (this.query.trim()) this.runSearch();
-          },
-          libraryName(slug) {
-            const lib = this.libraries.find(l => l.slug === slug);
-            return lib ? (lib.name || slug) : slug;
-          },
-          setMediaType(type) {
-            this.mediaTypeFilter = type;
-            this.results = [];
-            if (this.tagFilter) this.runTagSearch();
-            else if (this.query.trim()) this.runSearch();
-          },
-          clearTag() {
-            this.tagFilter = '';
-            this.results = [];
+
+          selectLibrary(slug) {
+            this.selectedLibrary = slug;
             this.error = '';
-            if (typeof window !== 'undefined' && window.history && window.location.pathname === '/dashboard') {
-              const u = new URL(window.location.href);
-              u.searchParams.delete('tag');
-              window.history.replaceState({}, '', u.toString());
+            this.loadFirstPage();
+            const u = new URL(window.location.href);
+            u.pathname = slug ? '/library/' + slug : '/library';
+            u.searchParams.set('library', slug);
+            window.history.replaceState({}, '', u.toString());
+          },
+
+          setSort(value) {
+            if (this.sortBy === value) this.toggleSortOrder();
+            else {
+              this.sortBy = value;
+              try { localStorage.setItem('mediaSearchLibrarySort', value); } catch (_) {}
+              this.loadFirstPage();
             }
           },
 
-          buildSearchParams() {
+          toggleSortOrder() {
+            this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
+            try { localStorage.setItem('mediaSearchLibraryOrder', this.sortOrder); } catch (_) {}
+            this.loadFirstPage();
+          },
+
+          setMediaType(type) {
+            this.mediaTypeFilter = type;
+            this.loadFirstPage();
+          },
+
+          buildParams(offset) {
             const p = new URLSearchParams();
-            if (this.libraryFilters.length) this.libraryFilters.forEach(s => p.append('library', s));
+            p.set('library', this.selectedLibrary);
+            p.set('sort', this.sortBy);
+            p.set('order', this.sortOrder);
+            p.set('limit', String(PAGE_SIZE));
+            p.set('offset', String(offset));
             if (this.mediaTypeFilter !== 'all') p.set('type', this.mediaTypeFilter);
             return p;
           },
 
-          async runTagSearch() {
-            if (!this.tagFilter) return;
+          async loadFirstPage() {
+            if (!this.selectedLibrary) { this.results = []; this.hasMore = false; return; }
             this.loading = true;
             this.error = '';
             try {
-              const params = this.buildSearchParams();
-              params.set('tag', this.tagFilter);
-              const res = await fetch(`/api/search?${params.toString()}`, { headers: { 'Accept': 'application/json' } });
-              if (!res.ok) throw new Error(`Search failed (${res.status})`);
-              this.results = await res.json();
+              const res = await fetch(`/api/library-assets?${this.buildParams(0)}`, { headers: { 'Accept': 'application/json' } });
+              if (!res.ok) throw new Error(`Failed to load (${res.status})`);
+              const data = await res.json();
+              this.results = data.items || [];
+              this.hasMore = data.has_more || false;
             } catch (e) {
-              this.error = e && e.message ? e.message : 'Search failed';
+              this.error = e?.message || 'Failed to load';
               this.results = [];
+              this.hasMore = false;
             } finally {
               this.loading = false;
             }
           },
 
-          async runSearch() {
-            const q = (this.query || '').trim();
-            if (q) {
-              this.loading = true;
-              this.error = '';
-              try {
-                const params = this.buildSearchParams();
-                if (this.mode === 'semantic') params.set('q', q);
-                else params.set('ocr', q);
-                if (this.tagFilter) params.set('tag', this.tagFilter);
-                const res = await fetch(`/api/search?${params.toString()}`, { headers: { 'Accept': 'application/json' } });
-                if (!res.ok) throw new Error(`Search failed (${res.status})`);
-                this.results = await res.json();
-              } catch (e) {
-                this.error = e && e.message ? e.message : 'Search failed';
-                this.results = [];
-              } finally {
-                this.loading = false;
-              }
-              return;
+          async loadMorePage() {
+            if (!this.selectedLibrary || !this.hasMore || this.loadingMore) return;
+            this.loadingMore = true;
+            try {
+              const offset = this.results.length;
+              const res = await fetch(`/api/library-assets?${this.buildParams(offset)}`, { headers: { 'Accept': 'application/json' } });
+              if (!res.ok) throw new Error(`Failed to load (${res.status})`);
+              const data = await res.json();
+              this.results = this.results.concat(data.items || []);
+              this.hasMore = data.has_more || false;
+            } catch (_) {
+              this.hasMore = false;
+            } finally {
+              this.loadingMore = false;
             }
-            if (this.tagFilter) {
-              await this.runTagSearch();
-              return;
-            }
-            this.results = [];
-            this.error = '';
           },
 
           async openDetail(item) {
@@ -504,13 +483,12 @@
             this.selectedDetailError = null;
             this.$refs.detailDialog.showModal();
             try {
-              const ts = item.best_scene_ts_seconds != null ? item.best_scene_ts_seconds : '';
-              const url = ts !== '' ? `/api/asset/${item.asset_id}?best_scene_ts=${ts}` : `/api/asset/${item.asset_id}`;
+              const url = `/api/asset/${item.asset_id}`;
               const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
               if (!res.ok) throw new Error(res.status === 404 ? 'Asset not found' : `Failed to load (${res.status})`);
               this.selectedDetail = await res.json();
             } catch (e) {
-              this.selectedDetailError = e && e.message ? e.message : 'Failed to load details';
+              this.selectedDetailError = e?.message || 'Failed to load details';
             }
           },
 

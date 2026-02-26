@@ -4,7 +4,7 @@ import re
 from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Iterator
+from typing import Callable, Iterator, Literal
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -225,6 +225,71 @@ class AssetRepository:
                 query = query.where(Asset.status == status)
             query = query.order_by(Asset.id.desc()).limit(limit)
             return session.execute(query).scalars().all()
+
+    def list_assets_for_library(
+        self,
+        library_slug: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        sort_by: Literal["name", "date", "size", "added", "type"] = "date",
+        order: Literal["asc", "desc"] = "desc",
+        asset_types: list[str] | None = None,
+    ) -> Sequence[Asset]:
+        """
+        Return paginated assets for a library with sort and type filter.
+        Joins library and excludes deleted libraries.
+        """
+        order_dir = "ASC" if order == "asc" else "DESC"
+        order_col = {
+            "name": "a.rel_path",
+            "date": "a.mtime",
+            "size": "a.size",
+            "added": "a.id",
+            "type": "a.type, a.rel_path",
+        }[sort_by]
+        type_filter = ""
+        params: dict = {"slug": library_slug, "limit": limit, "offset": offset}
+        if asset_types:
+            type_filter = " AND a.type::text = ANY(:asset_types)"
+            params["asset_types"] = asset_types
+
+        with self._session_scope(write=False) as session:
+            sql = text(
+                f"""
+                SELECT a.id, a.library_id, a.rel_path, a.type, a.mtime, a.size,
+                       a.status, a.tags_model_id, a.analysis_model_id, a.worker_id,
+                       a.lease_expires_at, a.retry_count, a.error_message,
+                       a.visual_analysis, a.preview_path
+                FROM asset a
+                JOIN library l ON a.library_id = l.slug
+                WHERE l.deleted_at IS NULL AND a.library_id = :slug
+                {type_filter}
+                ORDER BY {order_col} {order_dir}
+                LIMIT :limit OFFSET :offset
+                """
+            )
+            rows = session.execute(sql, params).fetchall()
+            return [
+                Asset(
+                    id=r[0],
+                    library_id=r[1],
+                    rel_path=r[2],
+                    type=AssetType(r[3]),
+                    mtime=float(r[4]) if r[4] is not None else 0.0,
+                    size=int(r[5]) if r[5] is not None else 0,
+                    status=AssetStatus(r[6]),
+                    tags_model_id=r[7],
+                    analysis_model_id=r[8],
+                    worker_id=r[9],
+                    lease_expires_at=r[10],
+                    retry_count=r[11] or 0,
+                    error_message=r[12],
+                    visual_analysis=r[13],
+                    preview_path=r[14],
+                )
+                for r in rows
+            ]
 
     def get_asset(self, library_id: str, rel_path: str) -> Asset | None:
         """

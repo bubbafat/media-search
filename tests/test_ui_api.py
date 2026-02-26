@@ -61,3 +61,18 @@ def test_dashboard_returns_200_and_displays_schema_version(ui_api_postgres):
         assert "connected" in body.lower() or "Connected" in body
     finally:
         app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_library_returns_200_and_displays_library_browser(ui_api_postgres):
+    """GET /library returns 200 and HTML contains Library Browser elements."""
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_api_postgres
+    try:
+        client = TestClient(app)
+        response = client.get("/library")
+        assert response.status_code == 200
+        body = response.text
+        assert "MediaSearch" in body
+        assert "Library" in body
+        assert "library" in body.lower()
+    finally:
+        app.dependency_overrides.pop(_get_ui_repo, None)
