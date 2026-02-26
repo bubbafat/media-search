@@ -36,7 +36,7 @@ trash_app = typer.Typer(help="Manage soft-deleted libraries.")
 app.add_typer(trash_app, name="trash")
 asset_app = typer.Typer(help="Manage individual assets.")
 app.add_typer(asset_app, name="asset")
-ai_app = typer.Typer(help="Manage AI models and workers")
+ai_app = typer.Typer(help="Manage AI models and workers.")
 app.add_typer(ai_app, name="ai")
 ai_default_app = typer.Typer(help="Get or set the system default AI model.")
 ai_app.add_typer(ai_default_app, name="default")
@@ -70,23 +70,23 @@ def library_add(
 
 @library_app.command("remove")
 def library_remove(
-    slug: str = typer.Argument(..., help="Library slug to soft-delete"),
+    library_slug: str = typer.Argument(..., help="Library slug to soft-delete"),
 ) -> None:
     """Soft-delete a library (moves to trash)."""
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
-    lib_repo.soft_delete(slug)
+    lib_repo.soft_delete(library_slug)
     typer.echo("Library moved to trash.")
 
 
 @library_app.command("restore")
 def library_restore(
-    slug: str = typer.Argument(..., help="Library slug to restore from trash"),
+    library_slug: str = typer.Argument(..., help="Library slug to restore from trash"),
 ) -> None:
     """Restore a soft-deleted library."""
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
-    lib_repo.restore(slug)
+    lib_repo.restore(library_slug)
     typer.echo("Library restored.")
 
 
@@ -112,7 +112,7 @@ def trash_list() -> None:
 
 @trash_app.command("empty")
 def trash_empty(
-    slug: str = typer.Argument(..., help="Library slug to permanently delete"),
+    library_slug: str = typer.Argument(..., help="Library slug to permanently delete"),
     force: bool = typer.Option(False, "--force", help="Skip confirmation"),
 ) -> None:
     """Permanently delete a trashed library and all its assets. Cannot be undone."""
@@ -124,8 +124,8 @@ def trash_empty(
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
     try:
-        lib_repo.hard_delete(slug)
-        typer.secho(f"Permanently deleted library '{slug}'.", fg=typer.colors.GREEN)
+        lib_repo.hard_delete(library_slug)
+        typer.secho(f"Permanently deleted library '{library_slug}'.", fg=typer.colors.GREEN)
     except ValueError as e:
         typer.secho(str(e), fg=typer.colors.RED)
         raise typer.Exit(1)
@@ -208,7 +208,7 @@ def library_reindex_videos(
 def asset_list(
     library_slug: str = typer.Argument(..., help="Library slug to list assets for"),
     limit: int = typer.Option(50, "--limit", help="Maximum number of assets to show"),
-    status: str | None = typer.Option(None, "--status", help="Filter by status (e.g. pending, completed)"),
+    status: str | None = typer.Option(None, "--status", help="Filter by status: pending, processing, proxied, extracting, analyzing, completed, failed, poisoned"),
 ) -> None:
     """List discovered assets for a library."""
     session_factory = _get_session_factory()
@@ -387,12 +387,12 @@ def asset_reindex(
     scene_repo.clear_index_for_asset(asset.id)
     asset_repo.set_preview_path(asset.id, None)
     asset_repo.update_asset_status(asset.id, AssetStatus.pending)
-    typer.echo("Video index cleared and asset set to pending. Run 'ai video' to re-process.")
+    typer.echo("Video index cleared and asset set to pending. Run 'ai video' (or 'ai video --library <slug>') to re-process.")
 
 
 @app.command("search")
 def search(
-    query: str = typer.Argument(None, help="Global search (e.g., 'man in blue shirt')"),
+    query: str = typer.Argument(None, help="Search query (optional). If omitted, no results are returned. E.g. 'man in blue shirt'."),
     ocr: bool = typer.Option(False, "--ocr", help="Search only within extracted OCR text"),
     library: str | None = typer.Option(None, "--library", help="Filter by library slug"),
     limit: int = typer.Option(50, "--limit", help="Maximum number of results"),
@@ -455,7 +455,7 @@ def search(
 
 @app.command()
 def scan(
-    slug: str = typer.Argument(..., help="Library slug to scan once"),
+    library_slug: str = typer.Argument(..., help="Library slug to scan once"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable DEBUG logging to stdout"),
 ) -> None:
     """Run a one-shot scan for the given library. Does not start the worker loop."""
@@ -468,10 +468,10 @@ def scan(
 
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
-    lib = lib_repo.get_by_slug(slug)
+    lib = lib_repo.get_by_slug(library_slug)
     if lib is None:
         typer.echo(
-            f"Library not found or deleted: '{slug}'. Use 'library list' to see valid slugs.",
+            f"Library not found or deleted: '{library_slug}'. Use 'library list' to see valid slugs.",
             err=True,
         )
         raise typer.Exit(1)
@@ -480,9 +480,9 @@ def scan(
     worker_repo = WorkerRepository(session_factory)
     system_metadata_repo = SystemMetadataRepository(session_factory)
 
-    asset_repo.set_library_scan_status(slug, ScanStatus.full_scan_requested)
+    asset_repo.set_library_scan_status(library_slug, ScanStatus.full_scan_requested)
 
-    worker_id = f"cli-scan-{slug}"
+    worker_id = f"cli-scan-{library_slug}"
     worker_repo.register_worker(worker_id, WorkerState.idle)
     scanner = ScannerWorker(
         worker_id,
@@ -492,7 +492,7 @@ def scan(
         system_metadata_repo=system_metadata_repo,
         progress_interval=100 if verbose else None,
     )
-    scanner.process_task(library_slug=slug)
+    scanner.process_task(library_slug=library_slug)
     stats = scanner.get_heartbeat_stats()
     typer.echo("Scan complete. Heartbeat stats:")
     if stats:

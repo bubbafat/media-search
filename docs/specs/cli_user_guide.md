@@ -62,14 +62,14 @@ uv run media-search library add "My NAS" /mnt/nas/photos
 
 ---
 
-### library remove slug
+### library remove library_slug
 
 Soft-delete a library: set `deleted_at` so the library and its assets are hidden from normal queries. The library moves to the trash and can be restored or permanently deleted later.
 
 
-| Argument | Description                 |
-| -------- | --------------------------- |
-| `slug`   | Library slug to soft-delete |
+| Argument       | Description                 |
+| -------------- | --------------------------- |
+| `library_slug` | Library slug to soft-delete |
 
 
 **Example:**
@@ -80,14 +80,14 @@ uv run media-search library remove nas-main
 
 ---
 
-### library restore slug
+### library restore library_slug
 
 Restore a soft-deleted library by clearing `deleted_at`. The library and its assets become visible again.
 
 
-| Argument | Description                        |
-| -------- | ---------------------------------- |
-| `slug`   | Library slug to restore from trash |
+| Argument       | Description                        |
+| -------------- | ---------------------------------- |
+| `library_slug` | Library slug to restore from trash |
 
 
 **Example:**
@@ -150,14 +150,14 @@ uv run media-search trash list
 
 ---
 
-### trash empty slug
+### trash empty library_slug
 
 Permanently delete a single trashed library and all its assets. Uses chunked deletion to avoid long DB locks. Cannot be undone. Prompts for confirmation unless `--force` is used.
 
 
-| Argument | Description                        |
-| -------- | ---------------------------------- |
-| `slug`   | Library slug to permanently delete |
+| Argument       | Description                        |
+| -------------- | ---------------------------------- |
+| `library_slug` | Library slug to permanently delete |
 
 
 
@@ -318,9 +318,9 @@ Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **S
 If no assets match, a yellow message is printed.
 
 
-| Argument | Description                                                                               |
-| -------- | ----------------------------------------------------------------------------------------- |
-| `query`  | Search string (optional; if omitted, returns assets subject to `--library` and `--limit`) |
+| Argument | Description                                          |
+| -------- | ---------------------------------------------------- |
+| `query`  | Search query (optional). If omitted, no results are returned. |
 
 
 
@@ -343,7 +343,7 @@ uv run media-search search "beach" --library nas-main --limit 20
 
 ## scan
 
-### scan slug
+### scan library_slug
 
 Run a one-shot scan for the given library. Does not start the scanner worker daemon; it runs the scanner logic once and exits. Useful for immediate discovery or testing. The library’s scan status is set so a running scanner worker would also pick up work.
 
@@ -352,9 +352,9 @@ Exits with code 1 if the library is not found or is soft-deleted; the message su
 With `--verbose` / `-v`, progress is printed every 100 files (e.g. `Scanner: files_processed=100`). Total is shown only at the end.
 
 
-| Argument | Description               |
-| -------- | ------------------------- |
-| `slug`   | Library slug to scan once |
+| Argument       | Description               |
+| -------------- | ------------------------- |
+| `library_slug` | Library slug to scan once |
 
 
 
