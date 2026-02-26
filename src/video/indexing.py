@@ -49,6 +49,7 @@ def run_video_scene_indexing(
     *,
     vision_analyzer: "BaseVisionAnalyzer | None" = None,
     on_scene_closed: Callable[[], None] | None = None,
+    on_scene_saved: Callable[[Path, float, float], None] | None = None,
     check_interrupt: Callable[[], bool] | None = None,
 ) -> None:
     """
@@ -87,6 +88,7 @@ def run_video_scene_indexing(
     width = scanner.out_width
     height = scanner.out_height
 
+    scenes_saved = 0
     for scene, next_state in segmenter.iter_scenes(check_interrupt=check_interrupt):
         active_state_for_db: VideoActiveState | None = None
         if next_state is not None:
@@ -145,6 +147,9 @@ def run_video_scene_indexing(
             # If a crash occurs mid-scene, the resume logic safely rewinds to max_end_ts
             # and recalculates the unclosed scene's best frame during the catch-up phase.
             repo.save_scene_and_update_state(asset_id, row, active_state_for_db)
+            scenes_saved += 1
+            if on_scene_saved is not None:
+                on_scene_saved(rep_path, scene.scene_start_pts, scene.scene_end_pts)
             if on_scene_closed:
                 on_scene_closed()
         else:
@@ -152,3 +157,8 @@ def run_video_scene_indexing(
                 repo.upsert_active_state(asset_id, active_state_for_db)
             else:
                 repo.delete_active_state(asset_id)
+
+    if scenes_saved == 0:
+        raise ValueError(
+            "No frames produced by decoder; video may be unsupported or corrupt"
+        )

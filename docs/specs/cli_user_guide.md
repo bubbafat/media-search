@@ -483,6 +483,8 @@ uv run media-search ai start --library nas-main --repair
 
 Start the Video worker. It runs until interrupted (Ctrl+C). The worker claims **pending** video assets (`.mp4`, `.mkv`, `.mov`), runs the scene-indexing pipeline (scene detection, best-frame selection, optional vision analysis on representative frames), renews the asset lease after each closed scene, and supports graceful shutdown (on SIGINT/SIGTERM the pipeline is interrupted and the asset is set back to pending so another worker can resume). Worker ID is auto-generated as `video-<hostname>-<short-uuid>` unless overridden.
 
+Progress is printed to the terminal: when a video is claimed the worker logs **Processing video:** with the full path; for each scene it logs the time range and the path to the representative frame JPEG on disk (so you can open and inspect frames); and when the asset is done it logs **Completed:** with asset id, library, and path.
+
 When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for optional per-scene description/tags (e.g. mock, moondream2).
 
 

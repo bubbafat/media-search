@@ -79,6 +79,15 @@ class VideoWorker(BaseWorker):
         def _check_interrupt() -> bool:
             return self.should_exit
 
+        def _on_scene_saved(rep_path: Path, start_ts: float, end_ts: float) -> None:
+            _log.info(
+                "Scene %.1f-%.1fs -> %s",
+                start_ts,
+                end_ts,
+                rep_path,
+            )
+
+        _log.info("Processing video: %s", source_path)
         try:
             run_video_scene_indexing(
                 asset.id,
@@ -87,16 +96,16 @@ class VideoWorker(BaseWorker):
                 self._scene_repo,
                 vision_analyzer=self.analyzer,
                 on_scene_closed=_renew,
+                on_scene_saved=_on_scene_saved,
                 check_interrupt=_check_interrupt,
             )
             self.asset_repo.mark_completed(asset.id, self.db_model_id)
-            if self._verbose:
-                _log.info(
-                    "Completed video asset %s (%s/%s)",
-                    asset.id,
-                    asset.library.slug,
-                    asset.rel_path,
-                )
+            _log.info(
+                "Completed: %s (%s/%s)",
+                asset.id,
+                asset.library.slug,
+                asset.rel_path,
+            )
             return True
         except InterruptedError:
             self.asset_repo.update_asset_status(asset.id, AssetStatus.pending)

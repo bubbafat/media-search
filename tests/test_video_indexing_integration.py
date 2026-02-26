@@ -252,3 +252,21 @@ def test_indexing_vision_dedup_flags_semantic_duplicate(engine, _session_factory
         assert meta2.get("semantic_duplicate") is True
     finally:
         session.close()
+
+
+def test_indexing_raises_when_no_scenes_produced(engine, _session_factory, tmp_path):
+    """When segmenter yields no scenes (e.g. no frames from decoder), run_video_scene_indexing raises ValueError."""
+    asset_repo, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-int-zero")
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"x")
+
+    mock_scanner = patch("src.video.indexing.VideoScanner")
+    mock_segmenter = patch("src.video.indexing.SceneSegmenter")
+    mock_yields = [(None, None)]  # one open-state update, no closed scene
+    with mock_scanner as MockScanner, mock_segmenter as MockSegmenter:
+        MockScanner.return_value.out_width = 480
+        MockScanner.return_value.out_height = 270
+        MockSegmenter.return_value.iter_scenes.return_value = mock_yields
+        with pytest.raises(ValueError, match="No frames produced by decoder"):
+            run_video_scene_indexing(asset_id, video_path, "vid-int-zero", video_repo)

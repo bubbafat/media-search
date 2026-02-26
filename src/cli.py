@@ -756,12 +756,12 @@ def ai_video(
     )
     typer.secho(f"Starting Video Worker: {worker_id} (analyzer: {resolved_analyzer})")
 
-    if verbose:
-        root = logging.getLogger("src.workers")
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.INFO)
-        root.addHandler(handler)
-        root.setLevel(logging.INFO)
+    # Always show progress (which video, each scene, completion)
+    root = logging.getLogger("src.workers")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
     worker = VideoWorker(
         worker_id=worker_id,

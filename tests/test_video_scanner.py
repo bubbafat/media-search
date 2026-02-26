@@ -165,6 +165,48 @@ def test_iter_frames_eof_after_partial_stdout(tmp_path):
     assert frames[0][1] == 0.0
 
 
+def test_iter_frames_accumulates_partial_reads(tmp_path):
+    """When stdout returns a frame in two partial chunks, one full frame is yielded."""
+    fake_video = tmp_path / "v.mp4"
+    fake_video.write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(fake_video)
+    frame_size = scanner.frame_byte_size
+    half = frame_size // 2
+    # Two chunks that together form one full frame
+    first_chunk = b"a" * half
+    second_chunk = b"b" * (frame_size - half)
+    chunks = [first_chunk, second_chunk, b""]
+    idx = [0]
+
+    class FakeStdout:
+        def readinto(self, buf):
+            chunk = chunks[min(idx[0], len(chunks) - 1)]
+            idx[0] += 1
+            n = min(len(chunk), len(buf))
+            if n > 0:
+                buf[:n] = chunk[:n]
+            return n
+
+    class FakeStderr:
+        def readline(self):
+            return b""
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = FakeStdout()
+    mock_proc.stderr = FakeStderr()
+    mock_proc.terminate = MagicMock()
+    mock_proc.wait = MagicMock(return_value=0)
+    mock_proc.kill = MagicMock()
+
+    with patch("subprocess.Popen", return_value=mock_proc):
+        frames = list(scanner.iter_frames())
+    assert len(frames) == 1
+    assert len(frames[0][0]) == frame_size
+    assert frames[0][0] == first_chunk + second_chunk
+    assert frames[0][1] == 0.0
+
+
 def test_iter_frames_sync_error_when_no_pts(tmp_path):
     """When stderr never sends PTS for the current frame within the timeout, SyncError is raised."""
     fake_video = tmp_path / "v.mp4"

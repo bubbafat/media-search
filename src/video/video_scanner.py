@@ -167,8 +167,15 @@ class VideoScanner:
             last_pts: float = -1.0
 
             while True:
-                n = proc.stdout.readinto(buffer)  # type: ignore[union-attr]
-                if n == 0 or n < self._frame_byte_size:
+                total = 0
+                while total < self._frame_byte_size:
+                    n = proc.stdout.readinto(  # type: ignore[union-attr]
+                        memoryview(buffer)[total:]
+                    )
+                    if n == 0:
+                        break
+                    total += n
+                if total < self._frame_byte_size:
                     break
 
                 frame_bytes = bytes(buffer)
