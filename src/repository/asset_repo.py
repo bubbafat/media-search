@@ -241,6 +241,20 @@ class AssetRepository:
             )
             return session.execute(query).scalars().unique().one_or_none()
 
+    def get_asset_by_id(self, asset_id: int) -> Asset | None:
+        """
+        Return a single asset by id, or None if not found.
+        Only returns assets in non-deleted libraries (join library where deleted_at IS NULL).
+        """
+        with self._session_scope(write=False) as session:
+            query = (
+                select(Asset)
+                .join(Library, Asset.library_id == Library.slug)
+                .where(Asset.id == asset_id)
+                .where(Library.deleted_at.is_(None))
+            )
+            return session.execute(query).scalars().unique().one_or_none()
+
     def get_video_asset_ids_by_library(self, library_slug: str) -> list[int]:
         """
         Return asset IDs for all video assets in the library (non-deleted libraries only).

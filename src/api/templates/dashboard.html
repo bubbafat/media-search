@@ -7,7 +7,7 @@
   <link href="/static/css/app.css" rel="stylesheet" type="text/css" />
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </head>
-<body class="min-h-screen bg-base-200" x-data="mediaSearchDashboard()">
+<body class="min-h-screen bg-base-200" x-data='mediaSearchDashboard({{ initial_tag | tojson }})'>
   <div class="container mx-auto p-4 md:p-6">
     <header class="mb-6">
       <div class="flex flex-col gap-4">
@@ -54,8 +54,13 @@
                 <button class="btn join-item btn-sm" :class="layout === 'list' ? 'btn-primary' : 'btn-ghost'" @click="setLayout('list')">List</button>
                 <button class="btn join-item btn-sm" :class="layout === 'filmstrip' ? 'btn-primary' : 'btn-ghost'" @click="setLayout('filmstrip')">Filmstrip</button>
               </div>
+              <span class="badge badge-outline gap-1" x-show="tagFilter">
+                Tag: <span x-text="tagFilter"></span>
+                <button type="button" class="btn btn-ghost btn-xs" @click="clearTag()" aria-label="Clear tag">×</button>
+              </span>
               <span class="text-sm text-error" x-show="error" x-text="error"></span>
-              <span class="text-sm text-base-content/70" x-show="!error && results.length === 0 && query.trim().length > 0 && !loading">No results.</span>
+              <span class="text-sm text-base-content/70" x-show="!error && results.length === 0 && query.trim().length === 0 && !tagFilter && !loading">Enter a search or use a tag link.</span>
+              <span class="text-sm text-base-content/70" x-show="!error && results.length === 0 && (query.trim().length > 0 || tagFilter) && !loading">No results.</span>
               <span class="text-sm text-base-content/70" x-show="results.length > 0" x-text="`${results.length} results`"></span>
             </div>
           </div>
@@ -232,27 +237,59 @@
 
         <div class="mt-4 grid gap-4">
           <div class="grid md:grid-cols-2 gap-4">
-            <div class="card bg-base-200">
-              <div class="card-body p-3">
-                <div class="text-xs text-base-content/60 mb-2">Thumbnail</div>
-                <img class="w-full aspect-square object-cover rounded" :src="(selected?.type === 'video' && selected?.preview_url) ? selected.preview_url : selected?.thumbnail_url" />
+            <div class="space-y-4">
+              <div class="card bg-base-200">
+                <div class="card-body p-3">
+                  <div class="text-xs text-base-content/60 mb-2">Thumbnail</div>
+                  <img class="w-full aspect-square object-cover rounded" :src="(selected?.type === 'video' && selected?.preview_url) ? selected.preview_url : selected?.thumbnail_url" />
+                </div>
+              </div>
+              <div class="card bg-base-200" x-show="selected?.type === 'video'">
+                <div class="card-body p-3">
+                  <div class="text-xs text-base-content/60 mb-2">Animated preview</div>
+                  <template x-if="selected?.preview_url">
+                    <img class="w-full aspect-square object-cover rounded" :src="selected.preview_url" />
+                  </template>
+                  <div class="text-sm text-base-content/70" x-show="!selected?.preview_url">
+                    No preview available for this video.
+                  </div>
+                  <div class="mt-3 text-sm" x-show="selected?.best_scene_ts">
+                    Best match at <span class="font-semibold" x-text="selected.best_scene_ts"></span>
+                  </div>
+                  <div class="mt-2 text-sm text-base-content/70">
+                    Video playback proxies are not yet exposed in Phase 1; when available, this modal will seek the player to the best timestamp.
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="card bg-base-200" x-show="selected?.type === 'video'">
+            <div class="card bg-base-200">
               <div class="card-body p-3">
-                <div class="text-xs text-base-content/60 mb-2">Animated preview</div>
-                <template x-if="selected?.preview_url">
-                  <img class="w-full aspect-square object-cover rounded" :src="selected.preview_url" />
+                <div class="text-xs text-base-content/60 mb-2">Details</div>
+                <div x-show="selected && !selectedDetail && !selectedDetailError" class="flex items-center gap-2 text-base-content/70">
+                  <span class="loading loading-spinner loading-sm"></span>
+                  <span>Loading…</span>
+                </div>
+                <div x-show="selectedDetailError" class="text-sm text-error" x-text="selectedDetailError"></div>
+                <template x-if="selectedDetail">
+                  <div class="space-y-3">
+                    <div>
+                      <div class="text-xs text-base-content/50 mb-1">Description</div>
+                      <p class="text-sm text-base-content/90 whitespace-pre-wrap" x-text="selectedDetail.description || 'No description.'"></p>
+                    </div>
+                    <div x-show="selectedDetail.tags && selectedDetail.tags.length">
+                      <div class="text-xs text-base-content/50 mb-1">Tags</div>
+                      <div class="flex flex-wrap gap-2">
+                        <template x-for="t in (selectedDetail.tags || [])" :key="t">
+                          <a :href="'/dashboard?tag=' + encodeURIComponent(t)" class="badge badge-outline badge-sm hover:badge-primary cursor-pointer" x-text="t"></a>
+                        </template>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-base-content/50 mb-1">OCR text</div>
+                      <div class="text-sm text-base-content/80 whitespace-pre-wrap max-h-32 overflow-y-auto rounded bg-base-300/50 p-2" x-text="selectedDetail.ocr_text || 'No OCR text.'"></div>
+                    </div>
+                  </div>
                 </template>
-                <div class="text-sm text-base-content/70" x-show="!selected?.preview_url">
-                  No preview available for this video.
-                </div>
-                <div class="mt-3 text-sm" x-show="selected?.best_scene_ts">
-                  Best match at <span class="font-semibold" x-text="selected.best_scene_ts"></span>
-                </div>
-                <div class="mt-2 text-sm text-base-content/70">
-                  Video playback proxies are not yet exposed in Phase 1; when available, this modal will seek the player to the best timestamp.
-                </div>
               </div>
             </div>
           </div>
@@ -265,17 +302,27 @@
     </dialog>
 
     <script>
-      function mediaSearchDashboard() {
+      function mediaSearchDashboard(initialTag) {
         const allowedLayouts = ['masonry', 'bento', 'list', 'filmstrip'];
         const saved = typeof localStorage !== 'undefined' && allowedLayouts.includes(localStorage.getItem('mediaSearchLayout'));
+        const tagFromUrl = typeof window !== 'undefined' && window.location.search ? (new URLSearchParams(window.location.search)).get('tag') : null;
         return {
           mode: 'semantic',
           query: '',
+          tagFilter: tagFromUrl || (initialTag || '') || '',
           results: [],
           loading: false,
           error: '',
           selected: null,
+          selectedDetail: null,
+          selectedDetailError: null,
           layout: saved ? localStorage.getItem('mediaSearchLayout') : 'masonry',
+
+          init() {
+            if (this.tagFilter && !this.loading && this.results.length === 0) {
+              this.runTagSearch();
+            }
+          },
 
           setLayout(layout) {
             if (!allowedLayouts.includes(layout)) return;
@@ -309,24 +356,25 @@
             this.error = '';
           },
 
-          async runSearch() {
-            const q = (this.query || '').trim();
-            if (!q) {
-              this.results = [];
-              this.error = '';
-              return;
+          clearTag() {
+            this.tagFilter = '';
+            this.results = [];
+            this.error = '';
+            if (typeof window !== 'undefined' && window.history && window.location.pathname === '/dashboard') {
+              const u = new URL(window.location.href);
+              u.searchParams.delete('tag');
+              window.history.replaceState({}, '', u.toString());
             }
+          },
 
+          async runTagSearch() {
+            if (!this.tagFilter) return;
             this.loading = true;
             this.error = '';
             try {
               const params = new URLSearchParams();
-              if (this.mode === 'semantic') params.set('q', q);
-              else params.set('ocr', q);
-
-              const res = await fetch(`/api/search?${params.toString()}`, {
-                headers: { 'Accept': 'application/json' }
-              });
+              params.set('tag', this.tagFilter);
+              const res = await fetch(`/api/search?${params.toString()}`, { headers: { 'Accept': 'application/json' } });
               if (!res.ok) throw new Error(`Search failed (${res.status})`);
               this.results = await res.json();
             } catch (e) {
@@ -337,13 +385,55 @@
             }
           },
 
-          openDetail(item) {
+          async runSearch() {
+            const q = (this.query || '').trim();
+            if (q) {
+              this.loading = true;
+              this.error = '';
+              try {
+                const params = new URLSearchParams();
+                if (this.mode === 'semantic') params.set('q', q);
+                else params.set('ocr', q);
+                if (this.tagFilter) params.set('tag', this.tagFilter);
+                const res = await fetch(`/api/search?${params.toString()}`, { headers: { 'Accept': 'application/json' } });
+                if (!res.ok) throw new Error(`Search failed (${res.status})`);
+                this.results = await res.json();
+              } catch (e) {
+                this.error = e && e.message ? e.message : 'Search failed';
+                this.results = [];
+              } finally {
+                this.loading = false;
+              }
+              return;
+            }
+            if (this.tagFilter) {
+              await this.runTagSearch();
+              return;
+            }
+            this.results = [];
+            this.error = '';
+          },
+
+          async openDetail(item) {
             this.selected = item;
+            this.selectedDetail = null;
+            this.selectedDetailError = null;
             this.$refs.detailDialog.showModal();
+            try {
+              const ts = item.best_scene_ts_seconds != null ? item.best_scene_ts_seconds : '';
+              const url = ts !== '' ? `/api/asset/${item.asset_id}?best_scene_ts=${ts}` : `/api/asset/${item.asset_id}`;
+              const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+              if (!res.ok) throw new Error(res.status === 404 ? 'Asset not found' : `Failed to load (${res.status})`);
+              this.selectedDetail = await res.json();
+            } catch (e) {
+              this.selectedDetailError = e && e.message ? e.message : 'Failed to load details';
+            }
           },
 
           closeDetail() {
             this.selected = null;
+            this.selectedDetail = null;
+            this.selectedDetailError = null;
             this.$refs.detailDialog.close();
           },
         };

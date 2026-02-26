@@ -170,6 +170,38 @@ def test_get_asset_returns_asset_when_found(engine, _session_factory):
     assert asset.visual_analysis.get("ocr_text") == "Hello"
 
 
+def test_get_asset_by_id_returns_asset_when_found(engine, _session_factory):
+    """get_asset_by_id returns the asset when it exists in a non-deleted library."""
+    lib_repo, asset_repo = _create_tables_and_seed(engine, _session_factory)
+    slug = "by-id-lib"
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=slug,
+                name="By ID Lib",
+                absolute_path="/tmp/by-id",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(slug, "one.jpg", AssetType.image, 1000.0, 1024)
+    by_path = asset_repo.get_asset(slug, "one.jpg")
+    assert by_path is not None
+    asset_id = by_path.id
+    assert asset_id is not None
+
+    by_id = asset_repo.get_asset_by_id(asset_id)
+    assert by_id is not None
+    assert by_id.id == asset_id
+    assert by_id.rel_path == "one.jpg"
+    assert asset_repo.get_asset_by_id(999999) is None
+
+
 def test_get_asset_returns_none_when_path_missing(engine, _session_factory):
     """get_asset returns None when rel_path does not exist."""
     lib_repo, asset_repo = _create_tables_and_seed(engine, _session_factory)

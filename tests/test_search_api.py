@@ -57,7 +57,7 @@ def search_api_postgres():
                           id, library_id, rel_path, type, mtime, size, status, retry_count, visual_analysis, preview_path
                         ) VALUES (
                           101, 'testlib', 'images/a.jpg', 'image', 0.0, 1, 'completed', 0,
-                          '{"description":"a red car", "ocr_text":"HELLO WORLD"}'::jsonb, NULL
+                          '{"description":"a red car", "tags": ["car", "red"], "ocr_text":"HELLO WORLD"}'::jsonb, NULL
                         )
                         """
                     )
@@ -149,6 +149,25 @@ def test_api_search_ocr_uses_ocr_text(search_api_postgres):
         ids = {item["asset_id"] for item in data}
         assert 101 in ids
         assert 202 in ids
+    finally:
+        app.dependency_overrides.pop(_get_search_repo, None)
+        app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_api_search_tag_returns_matching_assets(search_api_postgres):
+    """GET /api/search?tag=car returns assets that have that tag."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    try:
+        client = TestClient(app)
+        res = client.get("/api/search", params={"tag": "car"})
+        assert res.status_code == 200
+        data = res.json()
+        assert isinstance(data, list)
+        assert len(data) >= 1
+        ids = [item["asset_id"] for item in data]
+        assert 101 in ids
     finally:
         app.dependency_overrides.pop(_get_search_repo, None)
         app.dependency_overrides.pop(_get_ui_repo, None)

@@ -3,7 +3,9 @@
 The MediaSearch web UI is a **Search-First dashboard** (Mission Control + Search). It provides:
 
 - A fast search box with a Semantic vs OCR toggle.
+- Optional **tag filter**: open `/dashboard?tag=Disneyland` or `/dashboard/tag/Disneyland` to see all assets with that tag (no text query).
 - A responsive results grid (thumbnails, animated WebP previews on hover for videos).
+- **Detail modal**: Click any result to open a pop-up with the thumbnail on the left and, on the right, **description**, **tags** (as clickable chiclets that navigate to that tag’s results), and **OCR text**.
 - A collapsible System Status section showing worker health and stats.
 
 ---
@@ -33,9 +35,9 @@ This writes `static/css/app.css`. The built file is committed so the app works w
 
 ---
 
-## Dashboard (GET /dashboard)
+## Dashboard (GET /dashboard and GET /dashboard/tag/{tag})
 
-The main page is **GET /dashboard**. It returns server-rendered HTML (Jinja2) and uses a small JSON API for search results.
+The main page is **GET /dashboard**. It returns server-rendered HTML (Jinja2) and uses a small JSON API for search results. You can pass an initial tag filter with **GET /dashboard?tag=...** or **GET /dashboard/tag/{tag}** (e.g. `/dashboard/tag/Disneyland`); the dashboard then runs a tag-only search and shows a “Tag: …” chip that can be cleared.
 
 ### Header
 
@@ -46,7 +48,7 @@ The main page is **GET /dashboard**. It returns server-rendered HTML (Jinja2) an
 
 - **Mode toggle** — Semantic (full-text on analysis text) vs OCR (full-text on OCR text).
 - **Search input** — Search runs only when you press **Enter** or click the **Search** button (no search-while-typing).
-- **Results** — Each result shows library name, filename, and **Match %** (relevance). For videos, a **Jump** badge shows the best match timestamp (MM:SS) and a density bar along the bottom of the card. Images and videos both show a Match percentage (e.g. 100% for images, or scene density for videos).
+- **Results** — Each result shows library name, filename, and **Match %** (relevance). For videos, a **Jump** badge shows the best match timestamp (MM:SS) and a density bar along the bottom of the card. Images and videos both show a Match percentage (e.g. 100% for images, or scene density for videos). **Click a result** to open the **detail modal**: thumbnail (and video preview) on the left; on the right, **description**, **tags** (click a tag to see all assets with that tag), and **OCR text**.
 
 ### Layout selector
 
@@ -97,6 +99,6 @@ Templates live under `src/api/templates/` (e.g. `dashboard.html`).
 
 ## Scope and limitations
 
-- **Single page:** Only the dashboard exists. There are no other pages or routes for the web UI.
+- **Single page:** Only the dashboard exists. Routes like `/dashboard` and `/dashboard/tag/{tag}` render the same single page with different initial state (e.g. tag filter).
 - **Read-only:** The dashboard only displays data; it does not create, update, or delete libraries or assets. Use the [CLI](cli_user_guide.md) for those operations.
 - **Derivatives only:** The UI only loads thumbnails and previews from `data_dir` via `/media/...` (no source library access).

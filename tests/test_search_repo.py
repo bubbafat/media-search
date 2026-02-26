@@ -298,3 +298,54 @@ def test_search_assets_video_scenes_density_ranking(engine, _session_factory):
     assert item.best_scene_ts is not None
     assert 0 < item.match_ratio <= 1.0
     assert item.final_rank > 0
+
+
+def test_search_assets_tag_only_returns_assets_with_tag(engine, _session_factory):
+    """search_assets with only tag returns assets that have that tag (image or video scene)."""
+    lib_repo, asset_repo, search_repo = _create_tables_and_seed(engine, _session_factory)
+    slug = "tag-lib"
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=slug,
+                name="Tag Lib",
+                absolute_path="/tmp/tag-lib",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(slug, "beach.jpg", AssetType.image, 1000.0, 1024)
+    asset_repo.upsert_asset(slug, "mountain.jpg", AssetType.image, 1001.0, 1024)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET visual_analysis = CAST(:va AS jsonb) WHERE library_id = :lib AND rel_path = 'beach.jpg'"
+            ),
+            {"va": '{"description": "beach", "tags": ["beach", "sun"], "ocr_text": ""}', "lib": slug},
+        )
+        session.execute(
+            text(
+                "UPDATE asset SET visual_analysis = CAST(:va AS jsonb) WHERE library_id = :lib AND rel_path = 'mountain.jpg'"
+            ),
+            {"va": '{"description": "mountain", "tags": ["mountain"], "ocr_text": ""}', "lib": slug},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    results_beach = search_repo.search_assets(tag="beach", limit=50)
+    assert len(results_beach) == 1
+    assert results_beach[0].asset.rel_path == "beach.jpg"
+
+    results_mountain = search_repo.search_assets(tag="mountain", limit=50)
+    assert len(results_mountain) == 1
+    assert results_mountain[0].asset.rel_path == "mountain.jpg"
+
+    results_none = search_repo.search_assets(tag="nonexistent", limit=50)
+    assert len(results_none) == 0

@@ -320,6 +320,49 @@ def test_metadata_jsonb_persists_nested(engine, _session_factory):
         session.close()
 
 
+def test_get_scene_metadata_at_timestamp_returns_nearest_scene_moondream(
+    engine, _session_factory
+):
+    """get_scene_metadata_at_timestamp returns metadata->moondream for the scene nearest start_ts."""
+    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-lib-ts-meta")
+    # Scene at 0–3s
+    scene1 = VideoSceneRow(
+        start_ts=0.0,
+        end_ts=3.0,
+        description="First scene",
+        metadata={"moondream": {"description": "first", "tags": ["a"], "ocr_text": "ONE"}},
+        sharpness_score=10.0,
+        rep_frame_path="/s1.jpg",
+        keep_reason="phash",
+    )
+    video_repo.save_scene_and_update_state(asset_id, scene1, None)
+    # Scene at 5–8s
+    scene2 = VideoSceneRow(
+        start_ts=5.0,
+        end_ts=8.0,
+        description="Second scene",
+        metadata={"moondream": {"description": "second", "tags": ["b"], "ocr_text": "TWO"}},
+        sharpness_score=20.0,
+        rep_frame_path="/s2.jpg",
+        keep_reason="temporal",
+    )
+    video_repo.save_scene_and_update_state(asset_id, scene2, None)
+
+    meta_near_0 = video_repo.get_scene_metadata_at_timestamp(asset_id, 0.5)
+    assert meta_near_0 is not None
+    assert meta_near_0.get("description") == "first"
+    assert meta_near_0.get("tags") == ["a"]
+    assert meta_near_0.get("ocr_text") == "ONE"
+
+    meta_near_5 = video_repo.get_scene_metadata_at_timestamp(asset_id, 5.2)
+    assert meta_near_5 is not None
+    assert meta_near_5.get("description") == "second"
+    assert meta_near_5.get("tags") == ["b"]
+
+    assert video_repo.get_scene_metadata_at_timestamp(999999, 0.0) is None
+
+
 def test_get_active_state_empty_returns_none(engine, _session_factory):
     """get_active_state when no row exists returns None."""
     _, video_repo = _create_tables_and_seed(engine, _session_factory)

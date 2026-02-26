@@ -10,7 +10,13 @@ These endpoints are intended for the Mission Control / Search UI.
 
 ### GET /dashboard
 
-Server-rendered HTML page (Jinja2) that hosts the search-first UI.
+Server-rendered HTML page (Jinja2) that hosts the search-first UI. Optional query parameter:
+
+- `tag` (optional): Initial tag filter; on load the UI runs a tag-only search and shows results for that tag.
+
+### GET /dashboard/tag/{tag}
+
+Same dashboard page with the given tag as initial filter (e.g. `/dashboard/tag/Disneyland`). Renders the same template as `/dashboard` with `initial_tag` set so the client runs a tag search on load. Useful for sharing or bookmarking “all assets with this tag”.
 
 ### GET /api/search
 
@@ -18,6 +24,7 @@ Search endpoint used by the UI result grid. Query parameters:
 
 - `q`: Semantic (“vibe”) full-text query.
 - `ocr`: OCR-only full-text query.
+- `tag` (optional): Filter by tag. When only `tag` is provided (no `q` or `ocr`), returns all assets that have that tag (tag-only search). Can be combined with `q` or `ocr` to restrict full-text results to that tag.
 - `library_slug` (optional): Limit results to a library.
 - `limit` (optional, default 50): Max results.
 
@@ -30,6 +37,21 @@ Response: JSON array of items with:
 - `match_ratio` (percentage)
 - `best_scene_ts` (formatted `MM:SS`)
 - `best_scene_ts_seconds` (raw seconds; used for deep-linking behaviors)
+
+### GET /api/asset/{asset_id}
+
+Returns description, tags, and OCR text for a single asset (used by the detail modal). Query parameters:
+
+- `best_scene_ts` (optional, float): For video assets, the scene start time in seconds. When provided, the response uses that scene’s metadata (e.g. `metadata->'moondream'`) instead of the asset’s `visual_analysis`.
+
+Response: JSON object (`AssetDetailOut`) with:
+
+- `description` (str | null)
+- `tags` (list of str)
+- `ocr_text` (str | null)
+- `library_slug`, `filename` (for display)
+
+Returns 404 if the asset does not exist or is in a deleted library.
 
 ### GET /media/...
 

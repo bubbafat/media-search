@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Literal
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -13,9 +13,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.core.config import get_config
+from src.repository.asset_repo import AssetRepository
 from src.repository.search_repo import SearchRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.ui_repo import UIRepository
+from src.repository.video_scene_repo import VideoSceneRepository
 
 
 @lru_cache(maxsize=1)
@@ -60,6 +62,16 @@ def _get_search_repo() -> SearchRepository:
     return SearchRepository(_get_session_factory())
 
 
+@lru_cache(maxsize=1)
+def _get_asset_repo() -> AssetRepository:
+    return AssetRepository(_get_session_factory())
+
+
+@lru_cache(maxsize=1)
+def _get_video_scene_repo() -> VideoSceneRepository:
+    return VideoSceneRepository(_get_session_factory())
+
+
 class SearchResultOut(BaseModel):
     asset_id: int
     type: Literal["image", "video"]
@@ -74,6 +86,14 @@ class SearchResultOut(BaseModel):
     filename: str
 
 
+class AssetDetailOut(BaseModel):
+    description: str | None = None
+    tags: list[str] = []
+    ocr_text: str | None = None
+    library_slug: str = ""
+    filename: str = ""
+
+
 def _format_mmss(seconds: float) -> str:
     total = max(int(seconds), 0)
     mm = total // 60
@@ -86,6 +106,7 @@ def api_search(
     q: str | None = Query(default=None, description="Semantic (vibe) full-text search query"),
     ocr: str | None = Query(default=None, description="OCR-only full-text search query"),
     library_slug: str | None = Query(default=None, description="Optional library slug filter"),
+    tag: str | None = Query(default=None, description="Filter by tag (tag-only search when q/ocr omitted)"),
     limit: int = Query(default=50, ge=1, le=500),
     search_repo: SearchRepository = Depends(_get_search_repo),
     ui_repo: UIRepository = Depends(_get_ui_repo),
@@ -94,6 +115,7 @@ def api_search(
         query_string=q,
         ocr_query=ocr,
         library_slug=library_slug,
+        tag=tag,
         limit=limit,
     )
 
@@ -135,10 +157,48 @@ def api_search(
     return out
 
 
+@app.get("/api/asset/{asset_id}", response_model=AssetDetailOut)
+def api_asset_detail(
+    asset_id: int,
+    best_scene_ts: float | None = Query(default=None, description="For videos: scene start_ts (seconds) for scene-level metadata"),
+    asset_repo: AssetRepository = Depends(_get_asset_repo),
+    video_scene_repo: VideoSceneRepository = Depends(_get_video_scene_repo),
+) -> AssetDetailOut:
+    """Return description, tags, and ocr_text for the asset (from visual_analysis or video scene metadata)."""
+    asset = asset_repo.get_asset_by_id(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    lib_slug = asset.library_id
+    filename = os.path.basename(asset.rel_path)
+
+    # Video with best_scene_ts: use scene metadata
+    if asset.type.value == "video" and best_scene_ts is not None:
+        scene_meta = video_scene_repo.get_scene_metadata_at_timestamp(asset_id, best_scene_ts)
+        if scene_meta is not None:
+            return AssetDetailOut(
+                description=scene_meta.get("description"),
+                tags=scene_meta.get("tags") or [],
+                ocr_text=scene_meta.get("ocr_text"),
+                library_slug=lib_slug,
+                filename=filename,
+            )
+
+    # Image or video without scene ts: use asset visual_analysis
+    va = asset.visual_analysis or {}
+    return AssetDetailOut(
+        description=va.get("description"),
+        tags=va.get("tags") or [],
+        ocr_text=va.get("ocr_text"),
+        library_slug=lib_slug,
+        filename=filename,
+    )
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(
     request: Request,
     ui_repo: UIRepository = Depends(_get_ui_repo),
+    tag: str | None = Query(default=None, description="Initial tag filter (runs tag search on load)"),
 ) -> HTMLResponse:
     """Render Mission Control dashboard: system version, DB status, fleet, stats."""
     health = ui_repo.get_system_health()
@@ -153,5 +213,30 @@ def dashboard(
             "fleet": fleet,
             "total_assets": stats.total_assets,
             "pending_assets": stats.pending_assets,
+            "initial_tag": tag or "",
+        },
+    )
+
+
+@app.get("/dashboard/tag/{tag:path}", response_class=HTMLResponse)
+def dashboard_tag(
+    request: Request,
+    tag: str,
+    ui_repo: UIRepository = Depends(_get_ui_repo),
+) -> HTMLResponse:
+    """Render dashboard with tag filter applied (same page as /dashboard?tag=...)."""
+    health = ui_repo.get_system_health()
+    fleet = ui_repo.get_worker_fleet()
+    stats = ui_repo.get_library_stats()
+    return templates.TemplateResponse(
+        request,
+        "dashboard.html",
+        {
+            "schema_version": health.schema_version,
+            "db_status": health.db_status,
+            "fleet": fleet,
+            "total_assets": stats.total_assets,
+            "pending_assets": stats.pending_assets,
+            "initial_tag": tag,
         },
     )

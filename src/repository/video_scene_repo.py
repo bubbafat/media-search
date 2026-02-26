@@ -150,6 +150,33 @@ class VideoSceneRepository:
                 return None
             return str(row[0])
 
+    def get_scene_metadata_at_timestamp(
+        self, asset_id: int, start_ts: float
+    ) -> dict[str, Any] | None:
+        """
+        Return the moondream metadata (description, tags, ocr_text) for the scene whose
+        start_ts is nearest to the given start_ts, or None if no scenes exist.
+        """
+        with self._session_scope(write=False) as session:
+            row = session.execute(
+                text("""
+                    SELECT metadata->'moondream'
+                    FROM video_scenes
+                    WHERE asset_id = :asset_id AND metadata IS NOT NULL
+                    ORDER BY abs(start_ts - :start_ts)
+                    LIMIT 1
+                """),
+                {"asset_id": asset_id, "start_ts": start_ts},
+            ).fetchone()
+            if row is None or row[0] is None:
+                return None
+            raw = row[0]
+            if isinstance(raw, dict):
+                return raw
+            if hasattr(raw, "items"):
+                return dict(raw)
+            return None
+
     def upsert_active_state(self, asset_id: int, state: VideoActiveState) -> None:
         """UPSERT a single row into video_active_state (e.g. when closing a scene with no best frame)."""
         with self._session_scope(write=True) as session:

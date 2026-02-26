@@ -45,13 +45,17 @@ class SearchRepository:
         query_string: str | None = None,
         ocr_query: str | None = None,
         library_slug: str | None = None,
+        tag: str | None = None,
         limit: int = 50,
     ) -> list[SearchResultItem]:
         """
-        Search assets by full-text query on visual_analysis (images) and video_scenes.metadata (videos).
-        When library_slug is set, only assets from that non-deleted library are returned.
-        Results are ordered by final_rank (relevance * density boost). Returns list of SearchResultItem.
+        Search assets by full-text query and/or tag.
+        When only tag is set, returns assets that have that tag (no FTS). When q/ocr and tag
+        are set, restricts FTS results to that tag. library_slug filters to one library.
         """
+        tag_only = tag is not None and not query_string and not ocr_query
+        if tag_only:
+            return self._search_assets_by_tag(library_slug=library_slug, tag=tag, limit=limit)
         if not query_string and not ocr_query:
             return []
 
@@ -70,6 +74,11 @@ class SearchRepository:
             library_join = ""
             library_filter = ""
 
+        tag_filter_img = "AND a.visual_analysis->'tags' @> jsonb_build_array(:tag)" if tag else ""
+        tag_filter_vid = (
+            "AND s.metadata->'moondream'->'tags' @> jsonb_build_array(:tag)" if tag else ""
+        )
+
         sql = f"""
         WITH fts_query AS (
             SELECT websearch_to_tsquery('english', :query) AS q
@@ -84,6 +93,7 @@ class SearchRepository:
             {library_join}
             WHERE a.type = 'image' AND a.visual_analysis IS NOT NULL
               AND to_tsvector('english', {image_search_target}) @@ f.q
+              {tag_filter_img}
               {library_filter}
         ),
         video_hits AS (
@@ -98,6 +108,7 @@ class SearchRepository:
             {library_join}
             WHERE s.metadata IS NOT NULL
               AND to_tsvector('english', {video_search_target}) @@ f.q
+              {tag_filter_vid}
               {library_filter}
         ),
         video_agg AS (
@@ -127,17 +138,99 @@ class SearchRepository:
         params: dict = {"query": query, "limit": limit}
         if library_slug:
             params["lib_slug"] = library_slug
+        if tag:
+            params["tag"] = tag
 
+        return self._execute_search_sql(session_factory_ctx=self._session_scope, sql=sql, params=params)
+
+    def _search_assets_by_tag(
+        self,
+        library_slug: str | None = None,
+        tag: str | None = None,
+        limit: int = 50,
+    ) -> list[SearchResultItem]:
+        """Return assets that have the given tag (images: visual_analysis.tags, videos: scene metadata)."""
+        if not tag:
+            return []
+
+        if library_slug:
+            library_join = "JOIN library l ON a.library_id = l.slug"
+            library_filter = "AND a.library_id = :lib_slug AND l.deleted_at IS NULL"
+        else:
+            library_join = ""
+            library_filter = ""
+
+        sql = f"""
+        WITH image_hits AS (
+            SELECT
+                a.id AS asset_id,
+                NULL::float AS best_scene_ts,
+                1.0::float AS match_ratio,
+                1.0::float AS base_rank
+            FROM asset a
+            {library_join}
+            WHERE a.type = 'image' AND a.visual_analysis IS NOT NULL
+              AND a.visual_analysis->'tags' @> jsonb_build_array(:tag)
+              {library_filter}
+        ),
+        video_hits AS (
+            SELECT
+                s.asset_id,
+                s.start_ts,
+                s.end_ts,
+                MAX(s.end_ts) OVER (PARTITION BY s.asset_id) AS total_duration,
+                1.0::float AS scene_rank
+            FROM video_scenes s
+            JOIN asset a ON s.asset_id = a.id
+            {library_join}
+            WHERE s.metadata IS NOT NULL
+              AND s.metadata->'moondream'->'tags' @> jsonb_build_array(:tag)
+              {library_filter}
+        ),
+        video_agg AS (
+            SELECT
+                asset_id,
+                (ARRAY_AGG(start_ts ORDER BY start_ts))[1] AS best_scene_ts,
+                SUM(end_ts - start_ts) / NULLIF(MAX(total_duration), 0) AS match_ratio,
+                1.0::float AS base_rank
+            FROM video_hits
+            GROUP BY asset_id
+        ),
+        combined AS (
+            SELECT asset_id, best_scene_ts, match_ratio, base_rank FROM image_hits
+            UNION ALL
+            SELECT asset_id, best_scene_ts, match_ratio, base_rank FROM video_agg
+        )
+        SELECT
+            c.asset_id,
+            c.best_scene_ts,
+            c.match_ratio,
+            (c.base_rank * (1.0 + COALESCE(c.match_ratio, 0) * 2.0)) AS final_rank
+        FROM combined c
+        ORDER BY final_rank DESC
+        LIMIT :limit
+        """
+        params: dict = {"tag": tag, "limit": limit}
+        if library_slug:
+            params["lib_slug"] = library_slug
+        return self._execute_search_sql(session_factory_ctx=self._session_scope, sql=sql, params=params)
+
+    def _execute_search_sql(
+        self,
+        *,
+        session_factory_ctx,
+        sql: str,
+        params: dict,
+    ) -> list[SearchResultItem]:
+        """Run search SQL and map rows to SearchResultItem list."""
         results: list[SearchResultItem] = []
-        with self._session_scope(write=False) as session:
+        with session_factory_ctx(write=False) as session:
             rows = session.execute(text(sql), params).fetchall()
             if not rows:
                 return []
-
             asset_ids = [r[0] for r in rows]
             assets = session.execute(select(Asset).where(Asset.id.in_(asset_ids))).scalars().all()
             asset_map = {a.id: a for a in assets}
-
             for r in rows:
                 asset_id, best_ts, ratio, rank = r
                 if asset_id in asset_map:
