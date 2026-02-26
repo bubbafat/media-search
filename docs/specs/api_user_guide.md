@@ -81,6 +81,21 @@ Response: JSON object (`AssetDetailOut`) with:
 
 Returns 404 if the asset does not exist or is in a deleted library.
 
+### GET /api/asset/{asset_id}/clip
+
+Lazy-loaded 10-second MP4 clip for video search-hit verification. Extracts on first request, caches in `data_dir/video_clips/{library_id}/{asset_id}/clip_{ts}.mp4`, redirects to the static file.
+
+**Query parameters:**
+
+- `ts` (required, float): Timestamp in seconds; clip starts ~2 s before this for context.
+
+**Behavior:**
+
+- Only for video assets; returns 400 for images.
+- Reads source from `library.absolute_path`; writes only to `data_dir` (source immutability).
+- On first request: runs FFmpeg to extract/transcode; 2–4 s typical.
+- Returns 302 to `/media/video_clips/{library_id}/{asset_id}/clip_{int(ts)}.mp4`.
+
 ### GET /media/...
 
 Static file mount rooted at `data_dir`. This serves derivative media only (thumbnails, animated previews, scene JPEGs, etc.). It must never be used to expose or write to source libraries.

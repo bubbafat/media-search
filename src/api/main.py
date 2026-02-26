@@ -6,19 +6,21 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.core.config import get_config
+from src.core.path_resolver import resolve_path
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 from src.repository.search_repo import SearchRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.ui_repo import UIRepository
 from src.repository.video_scene_repo import VideoSceneRepository
+from src.video.clip_extractor import extract_clip
 
 
 @lru_cache(maxsize=1)
@@ -256,6 +258,41 @@ def api_libraries(
     """Return non-deleted libraries for filter dropdown."""
     libs = library_repo.list_libraries(include_deleted=False)
     return [LibraryOut(slug=lib.slug, name=lib.name) for lib in libs]
+
+
+@app.get("/api/asset/{asset_id}/clip")
+async def api_asset_clip(
+    asset_id: int,
+    ts: float = Query(..., description="Timestamp in seconds"),
+    asset_repo: AssetRepository = Depends(_get_asset_repo),
+    library_repo: LibraryRepository = Depends(_get_library_repo),
+) -> RedirectResponse:
+    """Lazy-load a 10-second web-safe MP4 clip for video search-hit verification."""
+    asset = asset_repo.get_asset_by_id(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if asset.type.value != "video":
+        raise HTTPException(status_code=400, detail="Clip endpoint is for video assets only")
+    absolute_path = library_repo.get_absolute_path(asset.library_id)
+    if absolute_path is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+    try:
+        source_path = resolve_path(asset.library_id, asset.rel_path)
+    except (ValueError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail="Source file not found")
+
+    data_dir = Path(get_config().data_dir)
+    dest_path = data_dir / "video_clips" / asset.library_id / str(asset_id) / f"clip_{int(ts)}.mp4"
+
+    if not dest_path.exists():
+        ok = await extract_clip(source_path, dest_path, ts)
+        if not ok:
+            raise HTTPException(status_code=500, detail="Clip extraction failed")
+
+    return RedirectResponse(
+        url=f"/media/video_clips/{asset.library_id}/{asset_id}/clip_{int(ts)}.mp4",
+        status_code=302,
+    )
 
 
 @app.get("/api/asset/{asset_id}", response_model=AssetDetailOut)

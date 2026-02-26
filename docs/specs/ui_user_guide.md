@@ -49,7 +49,7 @@ The main page is **GET /dashboard**. It returns server-rendered HTML (Jinja2) an
 
 - **Mode toggle** — Semantic (full-text on analysis text) vs OCR (full-text on OCR text).
 - **Search input** — Search runs only when you press **Enter** or click the **Search** button (no search-while-typing).
-- **Results** — Each result shows library name, filename, and **Match %** (relevance). For videos, a **Jump** badge shows the best match timestamp (MM:SS) and a density bar along the bottom of the card. Images and videos both show a Match percentage (e.g. 100% for images, or scene density for videos). **Click a result** to open the **detail modal**: thumbnail (and video preview) on the left; on the right, **description**, **tags** (click a tag to see all assets with that tag), and **OCR text**.
+- **Results** — Each result shows library name, filename, and **Match %** (relevance). For videos, a **Jump** badge shows the best match timestamp (MM:SS) and a density bar along the bottom of the card. Images and videos both show a Match percentage (e.g. 100% for images, or scene density for videos). **Click a result** to open the **detail modal**: thumbnail (and video preview) on the left; on the right, **description**, **tags** (click a tag to see all assets with that tag), and **OCR text**. For video results with a best-match timestamp, the modal shows a playable 10-second clip for verification (extracted on demand).
 
 ### Layout selector
 
@@ -113,6 +113,7 @@ The UI never writes to source libraries and only loads **derivatives from `data_
 - **Static mount**: `GET /media/...` serves files rooted at `data_dir`.
 - **Thumbnails**: `/media/{library_slug}/thumbnails/{asset_id % 1000}/{asset_id}.jpg`
 - **Animated previews** (videos): `/media/{asset.preview_path}` (when `asset.preview_path` is set).
+- **Video clips** (search hit verification): `/api/asset/{asset_id}/clip?ts=...` lazy-extracts and redirects to `/media/video_clips/{library_id}/{asset_id}/clip_{ts}.mp4`.
 
 ---
 
