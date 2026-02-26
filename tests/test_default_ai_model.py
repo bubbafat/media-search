@@ -32,6 +32,16 @@ def _create_tables_and_seed(engine, session_factory):
 def test_get_default_ai_model_id_returns_none_when_unset(engine, _session_factory):
     """get_default_ai_model_id returns None when no default is set."""
     repo = _create_tables_and_seed(engine, _session_factory)
+    # Clear any default left by earlier tests (session-scoped DB) so this test is order-independent.
+    session = _session_factory()
+    try:
+        session.execute(
+            text("DELETE FROM system_metadata WHERE key = :key"),
+            {"key": SystemMetadataRepository.DEFAULT_AI_MODEL_ID_KEY},
+        )
+        session.commit()
+    finally:
+        session.close()
     assert repo.get_default_ai_model_id() is None
 
 

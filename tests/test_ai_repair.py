@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import text
 from sqlmodel import SQLModel
 
-from src.models.entities import AIModel, AssetStatus, AssetType, Library, SystemMetadata
+from src.models.entities import AssetStatus, AssetType, Library, SystemMetadata
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
@@ -26,17 +26,14 @@ def _create_tables_and_repos(engine, session_factory):
     finally:
         session.close()
 
-    session = session_factory()
-    try:
-        session.add(AIModel(name="repair_model_a", version="1"))
-        session.add(AIModel(name="repair_model_b", version="1"))
-        session.commit()
-        rows = session.execute(text("SELECT id FROM aimodel WHERE name IN ('repair_model_a', 'repair_model_b') ORDER BY name")).fetchall()
-        id_a, id_b = rows[0][0], rows[1][0]
-    finally:
-        session.close()
-
     system_metadata_repo = SystemMetadataRepository(session_factory)
+    m_a = system_metadata_repo.get_ai_model_by_name_version("repair_model_a", "1")
+    if m_a is None:
+        m_a = system_metadata_repo.add_ai_model("repair_model_a", "1")
+    m_b = system_metadata_repo.get_ai_model_by_name_version("repair_model_b", "1")
+    if m_b is None:
+        m_b = system_metadata_repo.add_ai_model("repair_model_b", "1")
+    id_a, id_b = m_a.id, m_b.id
     system_metadata_repo.set_value(SystemMetadataRepository.DEFAULT_AI_MODEL_ID_KEY, str(id_a))
 
     return (

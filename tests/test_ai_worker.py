@@ -57,6 +57,7 @@ def test_ai_worker_process_task_returns_false_when_no_asset(engine, _session_fac
         heartbeat_interval_seconds=15.0,
         asset_repo=asset_repo,
         system_metadata_repo=system_repo,
+        library_slug="empty-ai",
     )
     result = worker.process_task()
     assert result is False
