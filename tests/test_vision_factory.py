@@ -1,5 +1,8 @@
 """Tests for the vision analyzer factory (get_vision_analyzer)."""
 
+import sys
+import warnings
+
 import pytest
 
 from src.ai.factory import get_vision_analyzer
@@ -29,6 +32,30 @@ def test_get_vision_analyzer_moondream2_returns_moondream_analyzer():
     assert isinstance(analyzer, BaseVisionAnalyzer)
     assert analyzer.get_model_card().name == "moondream2"
     assert analyzer.get_model_card().version == "2025-01-09"
+
+
+@pytest.mark.order(2)  # Run before other moondream2 test so warning is emitted and captured
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="torch.jit.script_method deprecation only emitted on Python 3.14+")
+@pytest.mark.filterwarnings(
+    "always:.*torch\\.jit\\.script_method.*Python 3\\.14.*:DeprecationWarning"
+)
+def test_moondream_torch_jit_deprecation_still_present():
+    """Guard: fail when upstream removes this deprecation so we can remove the filter and this test."""
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        try:
+            get_vision_analyzer("moondream2")
+        except (ImportError, OSError):
+            pytest.skip("Moondream2 not loadable in this environment")
+
+        assert any(
+            issubclass(item.category, DeprecationWarning)
+            and "torch.jit.script_method" in str(item.message)
+            and "Python 3.14" in str(item.message)
+            for item in w
+        ), "Upstream torch.jit.script_method deprecation warning is gone; remove the filter and this test."
 
 
 def test_get_vision_analyzer_unknown_raises():

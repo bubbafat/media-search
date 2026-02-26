@@ -13,6 +13,8 @@ EXPECTED_TABLES = [
     "asset",
     "library",
     "system_metadata",
+    "video_active_state",
+    "video_scenes",
     "videoframe",
     "worker_status",
 ]
@@ -54,7 +56,7 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'worker_status') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status') "
                     "ORDER BY table_name"
                 )
             )
@@ -210,6 +212,19 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             ).fetchone()
             assert idx is not None, "ix_asset_fts index must exist on asset"
             assert "gin" in idx[1].lower(), "ix_asset_fts must be a GIN index"
+
+        # Assert video_scenes and video_active_state exist with FKs (migration 011)
+        with migration_engine.connect() as conn:
+            for table in ("video_scenes", "video_active_state"):
+                row = conn.execute(
+                    text(
+                        "SELECT constraint_name FROM information_schema.table_constraints "
+                        "WHERE table_schema = 'public' AND table_name = :t AND constraint_type = 'FOREIGN KEY'"
+                    ),
+                    {"t": table},
+                ).fetchone()
+                assert row is not None, f"{table} must have a foreign key constraint"
+        assert "video_scenes" in EXPECTED_TABLES and "video_active_state" in EXPECTED_TABLES
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev
@@ -240,7 +255,7 @@ def test_migration_02_downgrade_base(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'worker_status') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status') "
                     "ORDER BY table_name"
                 )
             )

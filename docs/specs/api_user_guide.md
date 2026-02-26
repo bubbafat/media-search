@@ -15,6 +15,7 @@ Enums are stored as strings in the database.
 | `AssetStatus` | `pending`, `processing`, `proxied`, `extracting`, `analyzing`, `completed`, `failed`, `poisoned` | Pipeline state for an asset |
 | `WorkerState` | `idle`, `processing`, `paused`, `offline` | Worker runtime state |
 | `WorkerCommand` | `none`, `pause`, `resume`, `shutdown`, `forensic_dump` | Command sent to a worker via `worker_status` |
+| `SceneKeepReason` | `phash`, `temporal`, `forced` | Why a video scene was closed (analytics: visual drift, 30s ceiling, or EOF) |
 
 ---
 
@@ -87,6 +88,24 @@ A frame extracted from a video asset; used for search and analysis.
 | `timestamp_ms` | int | Offset in video (milliseconds) |
 | `is_keyframe` | bool | True if from a native I-frame |
 | `search_vector` | TSVector | Full-text search vector (PostgreSQL) |
+
+---
+
+### VideoScene
+
+A closed scene from scene-based video indexing (one representative frame per scene). Used for resumable indexing and search.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int (PK) | Primary key |
+| `asset_id` | int (FK → asset.id) | Parent video asset |
+| `start_ts` | float | Scene start time (seconds) |
+| `end_ts` | float | Scene end time (seconds) |
+| `description` | str? | AI-generated caption from vision model (e.g. Moondream2); nullable when no analyzer is used. |
+| `metadata` | jsonb? | Optional: `moondream` (description, tags, ocr_text), `showinfo` (FFmpeg showinfo line), `semantic_duplicate` (true when description is very similar to previous scene). |
+| `sharpness_score` | float | Laplacian variance of representative frame |
+| `rep_frame_path` | str | Path to stored JPEG for this scene |
+| `keep_reason` | SceneKeepReason | Why the scene closed: `phash`, `temporal`, or `forced` (EOF) |
 
 ---
 

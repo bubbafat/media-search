@@ -60,7 +60,19 @@ By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-d
 - `search_vector` (TSVector): PostgreSQL Full-Text Search index for keywords/descriptions.
 - `tags_model_id` (FK): Provenance for this specific frame's analysis.
 
-### 2.4 `worker_status` Table
+### 2.4 Video scene persistence (resumable indexing)
+Scene-based video indexing (pHash + temporal ceiling + best-frame selection) is persisted so the process is **resumable** after a crash and metadata is searchable.
+
+- **`video_scenes` Table:** One row per closed scene.
+  - `id` (int, PK), `asset_id` (FK → asset.id), `start_ts`, `end_ts` (float seconds), `description` (text, nullable), `metadata` (JSONB, nullable), `sharpness_score`, `rep_frame_path` (path to representative JPEG), `keep_reason` (enum: `phash`, `temporal`, `forced`).
+  - Index on `(asset_id, end_ts)` for resume queries.
+- **`video_active_state` Table:** One row per asset currently being indexed (the "open" scene state).
+  - `asset_id` (PK/FK → asset.id), `anchor_phash`, `scene_start_ts`, `current_best_pts`, `current_best_sharpness`.
+  - Updated via **UPSERT** (`INSERT ... ON CONFLICT (asset_id) DO UPDATE`) so there are no orphaned state rows if the orchestrator is invoked multiple times for the same asset.
+
+**Resume semantics:** (1) On startup, query `video_scenes` for `max(end_ts)` for the target `asset_id`. (2) **Seek:** Initialize the frame scanner at `max(max_end_ts - 2.0, 0)` (FFmpeg input seek). (3) **Catch-up:** Consume frames and discard until scanner PTS ≥ `max_end_ts`. (4) **State restore:** Load `video_active_state` and re-initialize the segmenter with `anchor_phash` and `scene_start_ts`. **Atomicity:** When a scene is closed, one transaction inserts into `video_scenes` and either UPSERTs or deletes `video_active_state`; on EOF the active state row is deleted.
+
+### 2.5 `worker_status` Table
 - `worker_id` (String, PK): Unique identifier for the worker instance (e.g., hostname + UUID).
 - `last_seen_at` (DateTime): Heartbeat timestamp.
 - `state` (Enum): `idle`, `processing`, `paused`, `offline`.
@@ -116,6 +128,8 @@ When a Video Worker processes an asset, it must follow this exact sequence:
         - Calculate a **Pixel-Wise Mean Frame** (average color value per pixel across all extracted I-frames in the segment).
         - Select the I-Frame with the highest **Structural Similarity (SSIM)** or lowest **Mean Squared Error (MSE)** compared to that Mean Frame.
         - *Rationale:* This identifies the most "consistent" or "representative" frame, discarding black/white/blur transitions.
+
+**Foundation:** Frame extraction is built on a `VideoScanner` (persistent FFmpeg pipe with synchronized PTS from stderr), yielding `(frame_bytes, pts)` for indexing. Optionally, `SceneSegmenter` wraps `VideoScanner` to perform semantic scene segmentation (pHash drift, 30s temporal ceiling, 3s debounce) and best-frame selection (Laplacian sharpness, skipping the first two frames per scene), yielding one representative frame per scene. Scene results are persisted to `video_scenes` with deterministic resume via `video_active_state` (see §2.4).
 
 ---
 

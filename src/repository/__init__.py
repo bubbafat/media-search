@@ -2,6 +2,18 @@
 
 from src.repository.asset_repo import AssetRepository
 from src.repository.search_repo import SearchRepository
+from src.repository.video_scene_repo import (
+    VideoActiveState,
+    VideoSceneRepository,
+    VideoSceneRow,
+)
 from src.repository.worker_repo import WorkerRepository
 
-__all__ = ["AssetRepository", "SearchRepository", "WorkerRepository"]
+__all__ = [
+    "AssetRepository",
+    "SearchRepository",
+    "VideoActiveState",
+    "VideoSceneRepository",
+    "VideoSceneRow",
+    "WorkerRepository",
+]

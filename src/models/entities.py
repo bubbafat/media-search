@@ -50,6 +50,14 @@ class WorkerCommand(str, Enum):
     forensic_dump = "forensic_dump"
 
 
+class SceneKeepReason(str, Enum):
+    """Why a scene was closed (analytics: e.g. why so many scenes)."""
+
+    phash = "phash"  # Visual drift (Hamming > 51)
+    temporal = "temporal"  # 30s ceiling
+    forced = "forced"  # EOF
+
+
 # --- Tables (FK order: AIModel -> Library -> Asset -> VideoFrame; WorkerStatus standalone) ---
 
 
@@ -112,6 +120,36 @@ class VideoFrame(SQLModel, table=True):
     timestamp_ms: int = 0
     is_keyframe: bool = False
     search_vector: Optional[str] = Field(default=None, sa_column=Column(TSVECTOR))
+
+
+class VideoScene(SQLModel, table=True):
+    """One closed scene: rep frame path, bounds, caption, keep_reason."""
+
+    __tablename__ = "video_scenes"
+    __table_args__ = (Index("ix_video_scenes_asset_id_end_ts", "asset_id", "end_ts"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    asset_id: int = Field(foreign_key="asset.id")
+    start_ts: float = 0.0
+    end_ts: float = 0.0
+    description: str | None = Field(default=None)
+    # DB column "metadata" (JSONB); Python attr "scene_metadata" to avoid SQLAlchemy reserved name
+    scene_metadata: dict[str, Any] | None = Field(default=None, sa_column=Column("metadata", JSONB()))
+    sharpness_score: float = 0.0
+    rep_frame_path: str = ""
+    keep_reason: SceneKeepReason = Field(default=SceneKeepReason.forced)
+
+
+class VideoActiveState(SQLModel, table=True):
+    """One row per asset currently being indexed (resume state)."""
+
+    __tablename__ = "video_active_state"
+
+    asset_id: int = Field(foreign_key="asset.id", primary_key=True)
+    anchor_phash: str = ""
+    scene_start_ts: float = 0.0
+    current_best_pts: float = 0.0
+    current_best_sharpness: float = -1.0
 
 
 class WorkerStatus(SQLModel, table=True):

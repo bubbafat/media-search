@@ -1,0 +1,141 @@
+"""Tests for SceneSegmenter and CompositeStrategy (pHash, debounce, best-frame)."""
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+from PIL import Image
+
+from src.models.entities import SceneKeepReason
+from src.video.scene_segmenter import (
+    DEBOUNCE_SEC,
+    PHASH_THRESHOLD,
+    TEMPORAL_CEILING_SEC,
+    SceneResult,
+    SceneSegmenter,
+    _sharpness,
+    _trigger_keep_reason,
+)
+from src.video.video_scanner import VideoScanner
+
+
+# --- _trigger_keep_reason (CompositeStrategy) ---
+
+
+def test_trigger_keep_reason_none_anchor_returns_none():
+    """When anchor_phash is None, never trigger KEEP."""
+    img = Image.new("RGB", (10, 10), color="red")
+    import imagehash
+    h = imagehash.phash(img, hash_size=16)
+    assert _trigger_keep_reason(None, 0.0, h, 100.0) is None
+
+
+def test_trigger_keep_reason_temporal_ceiling_returns_temporal():
+    """When elapsed >= 30s, return temporal regardless of debounce."""
+    img = Image.new("RGB", (10, 10), color="red")
+    import imagehash
+    h = imagehash.phash(img, hash_size=16)
+    assert _trigger_keep_reason(h, 0.0, h, TEMPORAL_CEILING_SEC + 1.0) is SceneKeepReason.temporal
+
+
+def test_trigger_keep_reason_debounce_ignores_early_phash_drift():
+    """When Hamming > 51 but elapsed < 3s, do not trigger (debounce)."""
+    img = Image.new("RGB", (32, 32), color="red")
+    import imagehash
+    h1 = imagehash.phash(img, hash_size=16)
+    h2 = imagehash.phash(img, hash_size=16)
+    with patch("src.video.scene_segmenter._hamming_distance", return_value=52):
+        assert _trigger_keep_reason(h1, 0.0, h2, DEBOUNCE_SEC - 0.5) is None
+
+
+def test_trigger_keep_reason_phash_drift_after_debounce_returns_phash():
+    """When Hamming > 51 and elapsed >= 3s, return phash."""
+    img = Image.new("RGB", (32, 32), color="red")
+    import imagehash
+    h1 = imagehash.phash(img, hash_size=16)
+    h2 = imagehash.phash(img, hash_size=16)
+    with patch("src.video.scene_segmenter._hamming_distance", return_value=52):
+        assert _trigger_keep_reason(h1, 0.0, h2, DEBOUNCE_SEC + 0.1) is SceneKeepReason.phash
+
+
+def test_trigger_keep_reason_small_hamming_returns_none():
+    """When Hamming <= 51, do not trigger even after debounce."""
+    img = Image.new("RGB", (10, 10), color="red")
+    import imagehash
+    h = imagehash.phash(img, hash_size=16)
+    assert _trigger_keep_reason(h, 0.0, h, 10.0) is None
+
+
+# --- _sharpness ---
+
+
+def test_sharpness_returns_float():
+    """Laplacian variance is a non-negative float."""
+    import numpy as np
+    w, h = 48, 27
+    frame = np.zeros((h, w, 3), dtype=np.uint8)
+    frame[:] = 128
+    frame_bytes = frame.tobytes()
+    s = _sharpness(frame_bytes, w, h)
+    assert isinstance(s, float)
+    assert s >= 0
+
+
+# --- SceneSegmenter with mocked iter_frames ---
+
+
+def _make_frame_bytes(width: int, height: int, color: tuple[int, int, int] = (128, 128, 128)) -> bytes:
+    from PIL import Image
+    img = Image.new("RGB", (width, height), color=color)
+    return img.tobytes()
+
+
+def test_scene_segmenter_empty_stream_yields_nothing(tmp_path):
+    """When iter_frames yields no frames, iter_scenes yields nothing."""
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(tmp_path / "v.mp4")
+    with patch.object(scanner, "iter_frames", return_value=iter([])):
+        segmenter = SceneSegmenter(scanner)
+        results = list(segmenter.iter_scenes())
+    assert results == []  # no (scene, next_state) pairs
+
+
+def test_scene_segmenter_single_scene_eof_finalizes(tmp_path):
+    """One scene: EOF closes it and yields one SceneResult."""
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(tmp_path / "v.mp4")
+    w, h = scanner.out_width, scanner.out_height
+    frame_size = w * h * 3
+    # 5 frames, same content (no phash drift) -> one scene; best frame after skip 2
+    frames = [
+        (_make_frame_bytes(w, h), 0.0),
+        (_make_frame_bytes(w, h), 1.0),
+        (_make_frame_bytes(w, h), 2.0),
+        (_make_frame_bytes(w, h), 3.0),
+        (_make_frame_bytes(w, h), 4.0),
+    ]
+    with patch.object(scanner, "iter_frames", return_value=iter(frames)):
+        segmenter = SceneSegmenter(scanner)
+        results = list(segmenter.iter_scenes())
+    assert len(results) == 1
+    scene, next_state = results[0]
+    assert scene is not None
+    r = scene
+    assert r.scene_start_pts == 0.0
+    assert r.scene_end_pts == 4.0
+    assert r.keep_reason is SceneKeepReason.forced
+    assert next_state is None
+    assert len(r.best_frame_bytes) == frame_size
+
+
+def test_scene_segmenter_accepts_scanner_instance(tmp_path):
+    """SceneSegmenter(input_path) and SceneSegmenter(scanner) both work."""
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(tmp_path / "v.mp4")
+        segmenter_from_scanner = SceneSegmenter(scanner)
+        segmenter_from_path = SceneSegmenter(tmp_path / "v.mp4")
+    assert segmenter_from_scanner._scanner is scanner
+    assert segmenter_from_path._scanner.out_width == 480
