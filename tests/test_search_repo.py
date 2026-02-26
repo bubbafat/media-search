@@ -65,10 +65,12 @@ def test_search_assets_vibe_returns_matching_asset(engine, _session_factory):
 
     results = search_repo.search_assets(query_string="blue shirt", limit=50)
     assert len(results) == 1
-    asset, rank = results[0]
-    assert asset.rel_path == "vibe.jpg"
-    assert asset.library_id == slug
-    assert isinstance(rank, float) and rank > 0
+    item = results[0]
+    assert item.asset.rel_path == "vibe.jpg"
+    assert item.asset.library_id == slug
+    assert isinstance(item.final_rank, float) and item.final_rank > 0
+    assert item.match_ratio == 1.0
+    assert item.best_scene_ts is None
 
 
 def test_search_assets_ocr_returns_matching_asset(engine, _session_factory):
@@ -106,9 +108,11 @@ def test_search_assets_ocr_returns_matching_asset(engine, _session_factory):
 
     results = search_repo.search_assets(ocr_query="hamburger", limit=50)
     assert len(results) == 1
-    asset, rank = results[0]
-    assert asset.rel_path == "menu.jpg"
-    assert isinstance(rank, float) and rank > 0
+    item = results[0]
+    assert item.asset.rel_path == "menu.jpg"
+    assert isinstance(item.final_rank, float) and item.final_rank > 0
+    assert item.match_ratio == 1.0
+    assert item.best_scene_ts is None
 
 
 def test_search_assets_library_slug_filters(engine, _session_factory):
@@ -152,8 +156,8 @@ def test_search_assets_library_slug_filters(engine, _session_factory):
 
     results = search_repo.search_assets(query_string="xyz", library_slug="lib-a", limit=50)
     assert len(results) == 1
-    asset, _ = results[0]
-    assert asset.library_id == "lib-a" and asset.rel_path == "only.jpg"
+    item = results[0]
+    assert item.asset.library_id == "lib-a" and item.asset.rel_path == "only.jpg"
 
 
 def test_search_assets_null_visual_analysis_excluded(engine, _session_factory):
@@ -227,8 +231,70 @@ def test_search_assets_ordered_by_rank_descending(engine, _session_factory):
         query_string="blue shirt", library_slug=slug, limit=50
     )
     assert len(results) == 2
-    first_asset, first_rank = results[0]
-    second_asset, second_rank = results[1]
-    assert first_rank >= second_rank
-    assert first_asset.rel_path == "strong.jpg"
-    assert second_asset.rel_path == "weak.jpg"
+    first_item, second_item = results[0], results[1]
+    assert first_item.final_rank >= second_item.final_rank
+    assert first_item.asset.rel_path == "strong.jpg"
+    assert second_item.asset.rel_path == "weak.jpg"
+
+
+def test_search_assets_video_scenes_density_ranking(engine, _session_factory):
+    """search_assets returns video assets from video_scenes with best_scene_ts and match_ratio."""
+    lib_repo, asset_repo, search_repo = _create_tables_and_seed(engine, _session_factory)
+    slug = "video-search-lib"
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=slug,
+                name="Video Search Lib",
+                absolute_path="/tmp/video-search-lib",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(slug, "clip.mp4", AssetType.video, 1000.0, 1024)
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT id FROM asset WHERE library_id = :lib AND rel_path = 'clip.mp4'"),
+            {"lib": slug},
+        ).fetchone()
+        assert row is not None
+        asset_id = row[0]
+        # Two scenes: one matching "sunset beach", one not
+        session.execute(
+            text(
+                "INSERT INTO video_scenes (asset_id, start_ts, end_ts, description, metadata, sharpness_score, rep_frame_path, keep_reason) "
+                "VALUES (:aid, 0.0, 5.0, 'sunset', CAST(:meta1 AS jsonb), 0.0, '', 'phash')"
+            ),
+            {
+                "aid": asset_id,
+                "meta1": '{"moondream": {"description": "sunset beach", "tags": [], "ocr_text": null}}',
+            },
+        )
+        session.execute(
+            text(
+                "INSERT INTO video_scenes (asset_id, start_ts, end_ts, description, metadata, sharpness_score, rep_frame_path, keep_reason) "
+                "VALUES (:aid, 5.0, 10.0, 'indoor', CAST(:meta2 AS jsonb), 0.0, '', 'phash')"
+            ),
+            {
+                "aid": asset_id,
+                "meta2": '{"moondream": {"description": "person indoors", "tags": [], "ocr_text": null}}',
+            },
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    results = search_repo.search_assets(query_string="sunset beach", library_slug=slug, limit=50)
+    assert len(results) == 1
+    item = results[0]
+    assert item.asset.type == AssetType.video
+    assert item.asset.rel_path == "clip.mp4"
+    assert item.best_scene_ts is not None
+    assert 0 < item.match_ratio <= 1.0
+    assert item.final_rank > 0

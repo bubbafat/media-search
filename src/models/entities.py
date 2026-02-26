@@ -126,7 +126,14 @@ class VideoScene(SQLModel, table=True):
     """One closed scene: rep frame path, bounds, caption, keep_reason."""
 
     __tablename__ = "video_scenes"
-    __table_args__ = (Index("ix_video_scenes_asset_id_end_ts", "asset_id", "end_ts"),)
+    __table_args__ = (
+        Index("ix_video_scenes_asset_id_end_ts", "asset_id", "end_ts"),
+        Index(
+            "ix_video_scenes_fts",
+            text("to_tsvector('english', metadata)"),
+            postgresql_using="gin",
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     asset_id: int = Field(foreign_key="asset.id")

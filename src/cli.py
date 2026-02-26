@@ -409,8 +409,7 @@ def search(
     if not results:
         typer.secho("No matching assets found.", fg=typer.colors.YELLOW)
         return
-    ranks = [r for _, r in results]
-    max_rank = max(ranks) if results else 0
+    max_rank = max(r.final_rank for r in results) if results else 0
 
     def _confidence_cell(rank: float) -> Text:
         if max_rank <= 0:
@@ -423,19 +422,30 @@ def search(
             return Text(s, style="yellow")
         return Text(s, style="red")
 
+    def _best_ts_cell(best_scene_ts: float | None) -> str:
+        if best_scene_ts is None:
+            return "N/A"
+        m = int(best_scene_ts) // 60
+        s = int(best_scene_ts) % 60
+        return f"{m}:{s:02d}"
+
     table = Table(title=None)
     table.add_column("Library")
     table.add_column("Relative Path")
     table.add_column("Type")
     table.add_column("Status")
+    table.add_column("Best Timestamp")
+    table.add_column("Match Density")
     table.add_column("Confidence")
-    for a, rank in results:
+    for item in results:
         table.add_row(
-            a.library_id,
-            a.rel_path,
-            a.type.value,
-            a.status.value,
-            _confidence_cell(rank),
+            item.asset.library_id,
+            item.asset.rel_path,
+            item.asset.type.value,
+            item.asset.status.value,
+            _best_ts_cell(item.best_scene_ts),
+            f"{item.match_ratio * 100:.1f}%",
+            _confidence_cell(item.final_rank),
         )
     console = Console()
     console.print(table)

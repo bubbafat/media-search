@@ -309,11 +309,11 @@ uv run media-search ai video --library nas-main
 
 ### search [query]
 
-Full-text search over asset `visual_analysis` (AI description, tags, and extracted text). By default the query is applied to the whole JSON (vibe search). With `--ocr`, the query is applied only to the extracted OCR text. Only one search path is used per run: either global or OCR, not both.
+Full-text search over **image** assets (via `visual_analysis`) and **video** assets (via scene metadata in `video_scenes`). By default the query is applied to the whole JSON (vibe search). With `--ocr`, the query is applied only to the extracted OCR text (images: `visual_analysis`; videos: scene `metadata`). Only one search path is used per run: either global or OCR, not both.
 
-When a query is provided, results are ordered by **relevance** (best match first) and limited by `--limit`. Without a query, results are ordered by asset modification time (newest first).
+When a query is provided, results are ordered by **relevance** (best match first), with videos boosted by **match density** (the fraction of the video's duration that matched). Results are limited by `--limit`. Without a query, no results are returned.
 
-Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **Status**, **Confidence**. The **Confidence** column shows match strength as a percentage of the top result’s relevance score (100% for the best match). It is color-coded: green for high (>80%), yellow for medium (>50%), red for lower (≤50%). When there is no search query or when scores are not comparable, confidence is shown as "—".
+Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **Status**, **Best Timestamp**, **Match Density**, **Confidence**. **Best Timestamp** is the time (MM:SS) to jump to for videos, or "N/A" for images. **Match Density** is the percentage of the asset that matched: 100% for images, or for videos the percentage of total duration covered by matching scenes. The **Confidence** column shows match strength as a percentage of the top result’s relevance score (100% for the best match). It is color-coded: green for high (>80%), yellow for medium (>50%), red for lower (≤50%). When there is no search query or when scores are not comparable, confidence is shown as "—".
 
 If no assets match, a yellow message is printed.
 

@@ -244,6 +244,17 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             assert model_row is not None, "default_ai_model_id must reference an existing aimodel row"
             assert model_row[1] == "moondream2", "default AI model must be moondream2"
             assert model_row[2] == "2025-01-09", "moondream2 version must be 2025-01-09"
+
+        # Assert video_scenes has GIN FTS index (migration 013)
+        with migration_engine.connect() as conn:
+            idx = conn.execute(
+                text(
+                    "SELECT indexname, indexdef FROM pg_indexes "
+                    "WHERE tablename = 'video_scenes' AND indexname = 'ix_video_scenes_fts'"
+                )
+            ).fetchone()
+            assert idx is not None, "ix_video_scenes_fts index must exist on video_scenes"
+            assert "gin" in idx[1].lower(), "ix_video_scenes_fts must be a GIN index"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev
