@@ -10,9 +10,17 @@ from src.repository.video_scene_repo import VideoSceneRepository
 _log = logging.getLogger(__name__)
 
 PREVIEW_FILENAME = "preview.webp"
-PREVIEW_SIZE = (320, 320)
+PREVIEW_LONG_SIDE = 320
 PREVIEW_DURATION_MS = 400
 MAX_FRAMES = 60
+
+
+def _target_size(w: int, h: int) -> tuple[int, int]:
+    """Compute preview dimensions with long side PREVIEW_LONG_SIDE, preserving aspect ratio."""
+    scale = PREVIEW_LONG_SIDE / max(w, h)
+    tw = max(1, round(w * scale))
+    th = max(1, round(h * scale))
+    return (tw, th)
 
 
 def build_preview_webp(
@@ -24,6 +32,7 @@ def build_preview_webp(
     """
     Build an animated WebP from scene representative frames; save to the asset's scene folder.
 
+    Frames are resized so the long side is PREVIEW_LONG_SIDE pixels, preserving aspect ratio.
     Returns the path of the written file, or None if no file was written (no scenes or no loadable frames).
     """
     scenes = scene_repo.list_scenes(asset_id)
@@ -31,6 +40,7 @@ def build_preview_webp(
         return None
 
     frames: list[Image.Image] = []
+    target_size: tuple[int, int] | None = None
     for s in scenes:
         path = Path(s.rep_frame_path)
         if not path.exists():
@@ -40,13 +50,10 @@ def build_preview_webp(
             img = Image.open(path)
             img.load()
             img = img.convert("RGB")
-            thumb = img.copy()
-            thumb.thumbnail(PREVIEW_SIZE, Image.Resampling.LANCZOS)
-            # Pad to exact size if thumbnail didn't fill (e.g. portrait)
-            if thumb.size != PREVIEW_SIZE:
-                padded = Image.new("RGB", PREVIEW_SIZE, (0, 0, 0))
-                padded.paste(thumb, (0, 0))
-                thumb = padded
+            w, h = img.size
+            if target_size is None:
+                target_size = _target_size(w, h)
+            thumb = img.resize(target_size, Image.Resampling.LANCZOS)
             frames.append(thumb)
         except (OSError, ValueError) as e:
             _log.warning("Could not load scene frame %s: %s", path, e)

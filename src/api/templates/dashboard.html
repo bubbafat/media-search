@@ -66,11 +66,9 @@
               <figure class="relative">
                 <img
                   class="w-full aspect-square object-cover"
-                  :src="item.thumbnail_url"
+                  :src="(item.type === 'video' && item.preview_url) ? item.preview_url : item.thumbnail_url"
                   :data-thumb="item.thumbnail_url"
                   :data-preview="item.preview_url || ''"
-                  @mouseenter="swapPreview($event, true, item)"
-                  @mouseleave="swapPreview($event, false, item)"
                   loading="lazy"
                 />
 
@@ -151,7 +149,7 @@
             <div class="card bg-base-200">
               <div class="card-body p-3">
                 <div class="text-xs text-base-content/60 mb-2">Thumbnail</div>
-                <img class="w-full aspect-square object-cover rounded" :src="selected?.thumbnail_url" />
+                <img class="w-full aspect-square object-cover rounded" :src="(selected?.type === 'video' && selected?.preview_url) ? selected.preview_url : selected?.thumbnail_url" />
               </div>
             </div>
             <div class="card bg-base-200" x-show="selected?.type === 'video'">
@@ -234,14 +232,6 @@
             } finally {
               this.loading = false;
             }
-          },
-
-          swapPreview(evt, on, item) {
-            if (!item || item.type !== 'video' || !item.preview_url) return;
-            const img = evt.target;
-            const thumb = img.dataset.thumb;
-            const prev = img.dataset.preview;
-            img.src = on ? prev : thumb;
           },
 
           openDetail(item) {

@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from src.repository.video_scene_repo import VideoSceneListItem
-from src.video.preview import build_preview_webp
+from src.video.preview import PREVIEW_LONG_SIDE, build_preview_webp
 
 pytestmark = [pytest.mark.fast]
 
@@ -120,3 +120,54 @@ def test_build_preview_webp_single_frame(tmp_path):
     with Image.open(result) as im:
         im.load()
         assert im.format == "WEBP"
+
+
+def test_build_preview_webp_preserves_aspect_ratio_long_side_320(tmp_path):
+    """Preview uses 320px as long side and preserves aspect ratio (no square padding)."""
+    # Landscape: 400×200 -> 320×160
+    landscape_jpeg = tmp_path / "landscape.jpg"
+    _make_jpeg(landscape_jpeg, size=(400, 200))
+    mock_repo_landscape = MagicMock()
+    mock_repo_landscape.list_scenes.return_value = [
+        VideoSceneListItem(
+            id=1,
+            start_ts=0.0,
+            end_ts=3.0,
+            description=None,
+            metadata=None,
+            sharpness_score=1.0,
+            rep_frame_path=str(landscape_jpeg),
+            keep_reason="phash",
+        ),
+    ]
+    result_landscape = build_preview_webp(1, "lib", mock_repo_landscape, tmp_path)
+    assert result_landscape is not None
+    with Image.open(result_landscape) as im:
+        im.load()
+        w, h = im.size
+        assert max(w, h) == PREVIEW_LONG_SIDE
+        assert (w, h) == (320, 160)
+
+    # Portrait: 200×400 -> 160×320
+    portrait_jpeg = tmp_path / "portrait.jpg"
+    _make_jpeg(portrait_jpeg, size=(200, 400))
+    mock_repo_portrait = MagicMock()
+    mock_repo_portrait.list_scenes.return_value = [
+        VideoSceneListItem(
+            id=1,
+            start_ts=0.0,
+            end_ts=3.0,
+            description=None,
+            metadata=None,
+            sharpness_score=1.0,
+            rep_frame_path=str(portrait_jpeg),
+            keep_reason="phash",
+        ),
+    ]
+    result_portrait = build_preview_webp(2, "lib", mock_repo_portrait, tmp_path)
+    assert result_portrait is not None
+    with Image.open(result_portrait) as im:
+        im.load()
+        w, h = im.size
+        assert max(w, h) == PREVIEW_LONG_SIDE
+        assert (w, h) == (160, 320)
