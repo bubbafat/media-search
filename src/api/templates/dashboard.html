@@ -66,6 +66,7 @@
                         <label class="flex items-center gap-2 cursor-pointer">
                           <input type="checkbox" class="checkbox checkbox-sm" :checked="libraryFilters.includes(lib.slug)" @change="toggleLibrary(lib.slug)" />
                           <span x-text="lib.name || lib.slug"></span>
+                          <span class="badge badge-warning badge-sm" x-show="lib.is_analyzing">Processing AI…</span>
                         </label>
                       </li>
                     </template>
@@ -111,6 +112,10 @@
     </header>
 
     <main class="grid gap-6">
+      <div class="alert alert-warning" x-show="results.length > 0 && someLibrariesAnalyzing" x-cloak x-transition>
+        <span>AI analysis is still in progress for <span x-text="analyzingLibraryNames"></span>. Search results may be incomplete.</span>
+      </div>
+
       <section x-show="layout === 'masonry'" class="columns-3 md:columns-4 lg:columns-5 gap-3 space-y-3">
         <template x-for="item in results" :key="item.asset_id">
           <div class="card bg-base-100 shadow hover:shadow-md transition cursor-pointer overflow-hidden break-inside-avoid" @click="openDetail(item)">
@@ -427,6 +432,24 @@
           selectedDetail: null,
           selectedDetailError: null,
           layout: saved ? localStorage.getItem('mediaSearchLayout') : 'masonry',
+
+          get someLibrariesAnalyzing() {
+            const inScope = this.libraryFilters.length
+              ? this.libraryFilters
+              : this.libraries.map((l) => l.slug);
+            return this.libraries.some(
+              (l) => inScope.includes(l.slug) && l.is_analyzing
+            );
+          },
+          get analyzingLibraryNames() {
+            const inScope = this.libraryFilters.length
+              ? this.libraryFilters
+              : this.libraries.map((l) => l.slug);
+            return this.libraries
+              .filter((l) => inScope.includes(l.slug) && l.is_analyzing)
+              .map((l) => l.name || l.slug)
+              .join(', ');
+          },
 
           async init() {
             try {

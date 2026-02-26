@@ -33,12 +33,16 @@
                 <div class="dropdown dropdown-end">
                   <label tabindex="0" class="btn btn-primary gap-2">
                     <span x-text="selectedLibrary ? (libraryName(selectedLibrary) || selectedLibrary) : 'Select library…'"></span>
+                    <span class="badge badge-warning badge-sm" x-show="selectedLibrary && selectedLibraryIsAnalyzing">Processing AI…</span>
                     <svg class="w-2.5 h-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                   </label>
                   <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-64 z-10 max-h-64 overflow-y-auto">
                     <template x-for="lib in libraries" :key="lib.slug">
                       <li>
-                        <button type="button" class="w-full text-left" @click="selectLibrary(lib.slug)" x-text="lib.name || lib.slug"></button>
+                        <button type="button" class="w-full text-left flex items-center gap-2" @click="selectLibrary(lib.slug)">
+                          <span x-text="lib.name || lib.slug"></span>
+                          <span class="badge badge-warning badge-sm" x-show="lib.is_analyzing">Processing AI…</span>
+                        </button>
                       </li>
                     </template>
                     <li x-show="!libraries.length" class="text-base-content/60">No libraries</li>
@@ -418,6 +422,11 @@
           },
 
           get sortOptions() { return sortOptions; },
+
+          get selectedLibraryIsAnalyzing() {
+            const lib = this.libraries.find((l) => l.slug === this.selectedLibrary);
+            return lib ? !!lib.is_analyzing : false;
+          },
 
           libraryName(slug) {
             const lib = this.libraries.find(l => l.slug === slug);

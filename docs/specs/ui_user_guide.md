@@ -62,6 +62,13 @@ When results are shown, you can switch how they are displayed:
 
 The chosen layout is persisted in browser storage and restored on the next visit.
 
+### Indexing and analysis states
+
+A library is considered **analyzing** when AI workers are still processing assets—either the library's `scan_status` is `scanning`, or it has assets whose status is not yet `completed`, `failed`, or `poisoned`. The UI shows this state to help you interpret search results.
+
+- **Search dashboard:** If any library in the current search scope (all libraries when no filter is set, or the selected libraries when filtered) is analyzing, an amber banner appears above the results grid: "AI analysis is still in progress for [Library Names]. Search results may be incomplete."
+- **Library Browser:** In the library dropdown and header, a "Processing AI…" badge appears next to libraries that are currently analyzing. This helps you know that browsing that library may show fewer or incomplete results until processing finishes.
+
 ### System Status
 
 The “System Status” section shows workers from `worker_status`:
@@ -84,7 +91,7 @@ Use the header links **Search** and **Library** to switch between the search das
 
 ### Library selector
 
-Select a library from the dropdown. When a library is chosen, assets load automatically. You can bookmark or share a URL like `/library/nas-main` to open a specific library directly.
+Select a library from the dropdown. When a library is chosen, assets load automatically. You can bookmark or share a URL like `/library/nas-main` to open a specific library directly. Libraries that are still undergoing AI analysis show a "Processing AI…" badge in the dropdown and in the header when selected.
 
 ### Sort options
 

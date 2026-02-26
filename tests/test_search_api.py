@@ -6,8 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from src.api.main import app, _get_library_repo, _get_search_repo, _get_ui_repo
-from src.repository.library_repo import LibraryRepository
+from src.api.main import app, _get_search_repo, _get_ui_repo
 from src.core import config as config_module
 from src.repository.search_repo import SearchRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
@@ -229,10 +228,9 @@ def test_api_search_type_filter_video(search_api_postgres):
 
 
 def test_api_libraries_returns_list(search_api_postgres):
-    """GET /api/libraries returns non-deleted libraries."""
+    """GET /api/libraries returns non-deleted libraries with is_analyzing."""
     search_repo, ui_repo = search_api_postgres
-    library_repo = LibraryRepository(search_repo._session_factory)
-    app.dependency_overrides[_get_library_repo] = lambda: library_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
     try:
         client = TestClient(app)
         res = client.get("/api/libraries")
@@ -243,6 +241,47 @@ def test_api_libraries_returns_list(search_api_postgres):
         for item in data:
             assert "slug" in item
             assert "name" in item
+            assert "is_analyzing" in item
+        testlib = next(i for i in data if i["slug"] == "testlib")
+        assert testlib["is_analyzing"] is False
     finally:
-        app.dependency_overrides.pop(_get_library_repo, None)
+        app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_api_search_x_search_incomplete_header_false(search_api_postgres):
+    """GET /api/search returns X-Search-Incomplete: false when all libraries fully analyzed."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    try:
+        client = TestClient(app)
+        res = client.get("/api/search", params={"q": "car"})
+        assert res.status_code == 200
+        assert res.headers.get("X-Search-Incomplete") == "false"
+    finally:
+        app.dependency_overrides.pop(_get_search_repo, None)
+        app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_api_search_x_search_incomplete_header_true(search_api_postgres):
+    """GET /api/search returns X-Search-Incomplete: true when a library is analyzing."""
+    search_repo, ui_repo = search_api_postgres
+    with search_repo._session_factory() as session:
+        session.execute(
+            text(
+                "INSERT INTO asset (library_id, rel_path, type, mtime, size, status, retry_count) "
+                "VALUES ('testlib', 'new.jpg', 'image', 0, 1, 'pending', 0)"
+            )
+        )
+        session.commit()
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    try:
+        client = TestClient(app)
+        res = client.get("/api/search", params={"q": "car"})
+        assert res.status_code == 200
+        assert res.headers.get("X-Search-Incomplete") == "true"
+    finally:
+        app.dependency_overrides.pop(_get_search_repo, None)
+        app.dependency_overrides.pop(_get_ui_repo, None)
 

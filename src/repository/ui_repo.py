@@ -30,6 +30,14 @@ class WorkerFleetItem(BaseModel):
 class LibraryStats(BaseModel):
     total_assets: int
     pending_assets: int
+    pending_ai_count: int
+    is_analyzing: bool
+
+
+class LibraryWithStatus(BaseModel):
+    slug: str
+    name: str
+    is_analyzing: bool
 
 
 class UIRepository:
@@ -83,16 +91,65 @@ class UIRepository:
             ]
 
     def get_library_stats(self) -> LibraryStats:
-        """Return total and pending asset counts."""
+        """Return total, pending asset counts, pending_ai_count, and is_analyzing."""
         with self._session_scope() as session:
             total = session.execute(text("SELECT COUNT(*) FROM asset")).scalar()
             pending = session.execute(
                 text("SELECT COUNT(*) FROM asset WHERE status = 'pending'")
             ).scalar()
+            pending_ai = session.execute(
+                text(
+                    "SELECT COUNT(*) FROM asset WHERE status NOT IN ('completed', 'failed', 'poisoned')"
+                )
+            ).scalar()
+            any_scanning = session.execute(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM library WHERE deleted_at IS NULL AND scan_status = 'scanning')"
+                )
+            ).scalar()
+            pending_ai_count = int(pending_ai) if pending_ai is not None else 0
+            is_analyzing = pending_ai_count > 0 or bool(any_scanning)
             return LibraryStats(
                 total_assets=int(total) if total is not None else 0,
                 pending_assets=int(pending) if pending is not None else 0,
+                pending_ai_count=pending_ai_count,
+                is_analyzing=is_analyzing,
             )
+
+    def list_libraries_with_status(self) -> list[LibraryWithStatus]:
+        """Return non-deleted libraries with is_analyzing per library."""
+        with self._session_scope() as session:
+            rows = session.execute(
+                text("""
+                    SELECT l.slug, l.name, l.scan_status,
+                        COALESCE(agg.pending_ai, 0)::int AS pending_ai
+                    FROM library l
+                    LEFT JOIN (
+                        SELECT library_id,
+                            COUNT(*) FILTER (WHERE status NOT IN ('completed', 'failed', 'poisoned')) AS pending_ai
+                        FROM asset
+                        GROUP BY library_id
+                    ) agg ON agg.library_id = l.slug
+                    WHERE l.deleted_at IS NULL
+                    ORDER BY l.slug
+                """)
+            ).fetchall()
+            return [
+                LibraryWithStatus(
+                    slug=row[0],
+                    name=row[1] or row[0],
+                    is_analyzing=row[2] == "scanning" or (row[3] or 0) > 0,
+                )
+                for row in rows
+            ]
+
+    def any_libraries_analyzing(self, slugs: list[str] | None) -> bool:
+        """Return True if any library in scope has is_analyzing. slugs=None means all non-deleted libraries."""
+        libs = self.list_libraries_with_status()
+        if slugs is not None:
+            slug_set = set(slugs)
+            libs = [l for l in libs if l.slug in slug_set]
+        return any(l.is_analyzing for l in libs)
 
     def get_library_names(self, slugs: list[str]) -> dict[str, str]:
         """Return slug -> name for the given library slugs. Empty list returns {}."""

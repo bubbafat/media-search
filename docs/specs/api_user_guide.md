@@ -46,6 +46,10 @@ Pagination endpoint for Library Browser. Query parameters:
 
 Response: JSON object with `items` (array of asset objects shaped like search results) and `has_more` (boolean). Used for infinite scroll: when `has_more` is true, the client fetches the next page with `offset = items.length`.
 
+### GET /api/libraries
+
+Returns non-deleted libraries for the filter dropdown and library selector. Response: JSON array of objects with `slug`, `name`, and `is_analyzing` (boolean). `is_analyzing` is true when the library has assets not yet `completed`/`failed`/`poisoned` or when the library's `scan_status` is `scanning`. Used to show "Processing AI…" badges and the search-completeness banner.
+
 ### GET /api/search
 
 Search endpoint used by the UI result grid. Query parameters:
@@ -66,6 +70,10 @@ Response: JSON array of items with:
 - `match_ratio` (percentage)
 - `best_scene_ts` (formatted `MM:SS`)
 - `best_scene_ts_seconds` (raw seconds; used for deep-linking behaviors)
+
+Response headers:
+
+- `X-Search-Incomplete`: `true` when any library in the search scope (the `library` filter if provided, else all non-deleted libraries) has `is_analyzing` true; otherwise `false`. Clients can use this to display a warning that results may be incomplete.
 
 ### GET /api/asset/{asset_id}
 
@@ -259,6 +267,6 @@ The Mission Control dashboard is backed by read-only queries that return structu
 
 - **SystemHealth** — `schema_version`, `db_status` (e.g. connected / error).
 - **WorkerFleetItem** — `worker_id`, `state`, `version` (schema version).
-- **LibraryStats** — `total_assets`, `pending_assets` (counts from `asset` table).
+- **LibraryStats** — `total_assets`, `pending_assets`, `pending_ai_count` (assets not `completed`/`failed`/`poisoned`), `is_analyzing` (true if `pending_ai_count > 0` or any library `scan_status = 'scanning'`).
 
 These feed the single HTML dashboard route; there are no REST endpoints that return these as JSON.

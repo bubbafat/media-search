@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -120,7 +120,7 @@ def api_search(
     limit: int = Query(default=50, ge=1, le=500),
     search_repo: SearchRepository = Depends(_get_search_repo),
     ui_repo: UIRepository = Depends(_get_ui_repo),
-) -> list[SearchResultOut]:
+) -> JSONResponse:
     results = search_repo.search_assets(
         query_string=q,
         ocr_query=ocr,
@@ -171,12 +171,17 @@ def api_search(
                 filename=filename,
             )
         )
-    return out
+    is_incomplete = ui_repo.any_libraries_analyzing(library)
+    return JSONResponse(
+        content=[item.model_dump(mode="json") for item in out],
+        headers={"X-Search-Incomplete": "true" if is_incomplete else "false"},
+    )
 
 
 class LibraryOut(BaseModel):
     slug: str
     name: str
+    is_analyzing: bool
 
 
 class LibraryAssetOut(BaseModel):
@@ -267,11 +272,11 @@ def api_library_assets(
 
 @app.get("/api/libraries", response_model=list[LibraryOut])
 def api_libraries(
-    library_repo: LibraryRepository = Depends(_get_library_repo),
+    ui_repo: UIRepository = Depends(_get_ui_repo),
 ) -> list[LibraryOut]:
-    """Return non-deleted libraries for filter dropdown."""
-    libs = library_repo.list_libraries(include_deleted=False)
-    return [LibraryOut(slug=lib.slug, name=lib.name) for lib in libs]
+    """Return non-deleted libraries for filter dropdown, with is_analyzing status."""
+    libs = ui_repo.list_libraries_with_status()
+    return [LibraryOut(slug=lib.slug, name=lib.name, is_analyzing=lib.is_analyzing) for lib in libs]
 
 
 @app.get("/api/asset/{asset_id}/clip")
