@@ -85,6 +85,7 @@ class SearchResultOut(BaseModel):
     type: Literal["image", "video"]
     thumbnail_url: str
     preview_url: str | None = None
+    video_preview_url: str | None = None
     final_rank: float
     match_ratio: float  # percentage (0.0 to 100.0)
     best_scene_ts: str | None = None  # formatted MM:SS
@@ -144,6 +145,11 @@ def api_search(
             if asset.preview_path is not None
             else None
         )
+        video_preview = (
+            f"/media/{asset.video_preview_path.lstrip('/')}"
+            if asset.video_preview_path is not None
+            else None
+        )
         best_ts_seconds = r.best_scene_ts if r.best_scene_ts is not None else None
         best_ts = _format_mmss(best_ts_seconds) if best_ts_seconds is not None else None
         lib_slug = asset.library_id
@@ -155,6 +161,7 @@ def api_search(
                 type=asset.type.value,
                 thumbnail_url=thumb,
                 preview_url=preview,
+                video_preview_url=video_preview,
                 final_rank=r.final_rank,
                 match_ratio=round(r.match_ratio * 100.0, 1),
                 best_scene_ts=best_ts,
@@ -179,6 +186,7 @@ class LibraryAssetOut(BaseModel):
     type: Literal["image", "video"]
     thumbnail_url: str
     preview_url: str | None = None
+    video_preview_url: str | None = None
     match_ratio: float = 100.0  # neutral value for library browse
     best_scene_ts: str | None = None
     best_scene_ts_seconds: float | None = None
@@ -233,6 +241,11 @@ def api_library_assets(
             if asset.preview_path is not None
             else None
         )
+        video_preview = (
+            f"/media/{asset.video_preview_path.lstrip('/')}"
+            if asset.video_preview_path is not None
+            else None
+        )
         filename = os.path.basename(asset.rel_path)
         out.append(
             LibraryAssetOut(
@@ -240,6 +253,7 @@ def api_library_assets(
                 type=asset.type.value,
                 thumbnail_url=thumb,
                 preview_url=preview,
+                video_preview_url=video_preview,
                 match_ratio=100.0,
                 best_scene_ts=None,
                 best_scene_ts_seconds=None,

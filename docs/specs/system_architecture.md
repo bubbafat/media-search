@@ -52,6 +52,7 @@ By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-d
 - `retry_count` (Integer): Incremented on every claim attempt. If > 5, mark as `poisoned`.
 - `lease_expires_at` (DateTime): Dead-man's switch for worker failure recovery.
 - `preview_path` (String, nullable): For video assets, path **relative to data_dir** to the animated preview file (e.g. `video_scenes/{library_slug}/{asset_id}/preview.webp`). **Single source of truth** for "has animated preview": a video has a preview if and only if this is NOT NULL. Set when the preview is built (indexing or repair); set to NULL when the scene index is cleared. Full path on the server is `data_dir / preview_path`. The UI/API must use this field (or a backend-derived URL) and must not infer preview location from library_slug/asset_id.
+- `video_preview_path` (String, nullable): For video assets, path **relative to data_dir** to the 10-second head-clip MP4 (e.g. `video_clips/{library_slug}/{asset_id}/head_clip.mp4`). Used for hover preview in the UI. Set when the Video Worker generates the head clip; NULL until then.
 
 ### 2.3 `video_frames` Table
 - `id` (UUID or BigInt, PK): Primary identifier.
@@ -96,7 +97,7 @@ The pipeline is divided into specialized, isolated worker types to prevent hardw
 
 2. **The Proxy Worker (Network I/O & CPU Bound):**
    - **Role:** The Pre-Processor & Cache Builder.
-   - **Action:** Claims `pending` assets. It pulls the massive original media files (e.g., a 50GB video or 50MB RAW photo) across the network *exactly once*. It generates a lightweight UI Thumbnail and a standardized, high-quality AI Proxy on the local SSD. It updates the asset status to `proxied`.
+   - **Action:** Claims `pending` assets (images and videos). It pulls the massive original media files (e.g., a 50GB video or 50MB RAW photo) across the network *exactly once*. For images, it generates a lightweight UI Thumbnail and a standardized, high-quality AI Proxy on the local SSD. For videos, it generates a thumbnail only (no proxy). It updates the asset status to `proxied`.
 
 3. **The ML / AI Worker (GPU Bound):**
    - **Role:** The Intelligence Engine.

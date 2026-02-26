@@ -9,13 +9,20 @@ from typing import Callable, Iterator, Literal
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from src.core.file_extensions import IMAGE_EXTENSION_SUFFIXES
+from src.core.file_extensions import (
+    IMAGE_EXTENSION_SUFFIXES,
+    VIDEO_EXTENSION_SUFFIXES,
+)
 from src.models.entities import Asset, AssetStatus, AssetType, Library, ScanStatus
 
 DEFAULT_LEASE_SECONDS = 300
 
-# Image extensions matching proxy worker (for repair: assets that should have proxy files)
+# Image extensions matching proxy worker (for repair)
 _REPAIR_IMAGE_PATTERN = r"\." + "|".join(re.escape(s) for s in IMAGE_EXTENSION_SUFFIXES) + r"$"
+# Image + video extensions (ProxyWorker handles both)
+_REPAIR_PROXYABLE_PATTERN = (
+    r"\." + "|".join(re.escape(s) for s in IMAGE_EXTENSION_SUFFIXES + VIDEO_EXTENSION_SUFFIXES) + r"$"
+)
 
 
 class AssetRepository:
@@ -154,7 +161,7 @@ class AssetRepository:
         return int(val) if val is not None else 0
 
     def count_pending_proxyable(self, library_slug: str | None = None) -> int:
-        """Return count of pending assets that are proxyable (image extensions only)."""
+        """Return count of pending assets that are proxyable (image + video extensions)."""
         with self._session_scope(write=False) as session:
             q = """
                 SELECT COUNT(*) FROM asset a
@@ -162,7 +169,7 @@ class AssetRepository:
                 WHERE l.deleted_at IS NULL AND a.status = 'pending'
                   AND a.rel_path ~* :pattern
             """
-            params: dict = {"pattern": _REPAIR_IMAGE_PATTERN}
+            params: dict = {"pattern": _REPAIR_PROXYABLE_PATTERN}
             if library_slug is not None:
                 q += " AND a.library_id = :library_slug"
                 params["library_slug"] = library_slug
@@ -174,22 +181,22 @@ class AssetRepository:
         library_slug: str | None = None,
         limit: int = 500,
         offset: int = 0,
-    ) -> Sequence[tuple[int, str]]:
+    ) -> Sequence[tuple[int, str, str]]:
         """
-        Return (asset_id, library_slug) for assets that should have proxy/thumbnail files:
-        status in (proxied, completed, extracting, analyzing), image extensions only.
+        Return (asset_id, library_slug, type_str) for assets that should have proxy/thumbnail files:
+        status in (proxied, completed, extracting, analyzing), image + video extensions.
         Used by proxy --repair. Optionally filter by library_slug. Ordered by id for stable batching.
         """
         with self._session_scope(write=False) as session:
             q = """
-                SELECT a.id, a.library_id
+                SELECT a.id, a.library_id, a.type::text
                 FROM asset a
                 JOIN library l ON a.library_id = l.slug
                 WHERE l.deleted_at IS NULL
                   AND a.status IN ('proxied', 'completed', 'extracting', 'analyzing')
                   AND a.rel_path ~* :pattern
             """
-            params: dict = {"pattern": _REPAIR_IMAGE_PATTERN}
+            params: dict = {"pattern": _REPAIR_PROXYABLE_PATTERN}
             if library_slug is not None:
                 q += " AND a.library_id = :library_slug"
                 params["library_slug"] = library_slug
@@ -197,7 +204,7 @@ class AssetRepository:
             params["limit"] = limit
             params["offset"] = offset
             rows = session.execute(text(q), params).fetchall()
-        return [(int(r[0]), str(r[1])) for r in rows]
+        return [(int(r[0]), str(r[1]), str(r[2])) for r in rows]
 
     def count_assets_by_library(
         self,
@@ -260,7 +267,7 @@ class AssetRepository:
                 SELECT a.id, a.library_id, a.rel_path, a.type, a.mtime, a.size,
                        a.status, a.tags_model_id, a.analysis_model_id, a.worker_id,
                        a.lease_expires_at, a.retry_count, a.error_message,
-                       a.visual_analysis, a.preview_path
+                       a.visual_analysis, a.preview_path, a.video_preview_path
                 FROM asset a
                 JOIN library l ON a.library_id = l.slug
                 WHERE l.deleted_at IS NULL AND a.library_id = :slug
@@ -287,6 +294,7 @@ class AssetRepository:
                     error_message=r[12],
                     visual_analysis=r[13],
                     preview_path=r[14],
+                    video_preview_path=r[15],
                 )
                 for r in rows
             ]
@@ -497,6 +505,14 @@ class AssetRepository:
         with self._session_scope(write=True) as session:
             session.execute(
                 text("UPDATE asset SET preview_path = :path WHERE id = :asset_id"),
+                {"path": path, "asset_id": asset_id},
+            )
+
+    def set_video_preview_path(self, asset_id: int, path: str | None) -> None:
+        """Set or clear asset.video_preview_path (relative to data_dir). Path to 10s head-clip MP4."""
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("UPDATE asset SET video_preview_path = :path WHERE id = :asset_id"),
                 {"path": path, "asset_id": asset_id},
             )
 

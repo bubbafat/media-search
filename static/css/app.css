@@ -845,6 +845,12 @@ html {
     --tw-bg-opacity: 1;
     background-color: var(--fallback-b2,oklch(var(--b2)/var(--tw-bg-opacity)));
   }
+
+  .table-zebra tr.hover:hover,
+  .table-zebra tr.hover:nth-child(even):hover {
+    --tw-bg-opacity: 1;
+    background-color: var(--fallback-b3,oklch(var(--b3)/var(--tw-bg-opacity)));
+  }
 }
 
 .btn {
@@ -1899,6 +1905,10 @@ html {
   width: 1.25rem;
 }
 
+.loading-lg {
+  width: 2.5rem;
+}
+
 :where(.menu li:empty) {
   --tw-bg-opacity: 1;
   background-color: var(--fallback-bc,oklch(var(--bc)/var(--tw-bg-opacity)));
@@ -2357,6 +2367,10 @@ html {
   position: relative;
 }
 
+.inset-0 {
+  inset: 0px;
+}
+
 .bottom-0 {
   bottom: 0px;
 }
@@ -2431,8 +2445,8 @@ html {
   margin-left: 0.5rem;
 }
 
-.mt-2 {
-  margin-top: 0.5rem;
+.mt-1 {
+  margin-top: 0.25rem;
 }
 
 .mt-3 {
@@ -2459,6 +2473,10 @@ html {
   aspect-ratio: 1 / 1;
 }
 
+.aspect-video {
+  aspect-ratio: 16 / 9;
+}
+
 .h-0\.5 {
   height: 0.125rem;
 }
@@ -2473,6 +2491,10 @@ html {
 
 .h-20 {
   height: 5rem;
+}
+
+.h-4 {
+  height: 1rem;
 }
 
 .h-full {
@@ -2503,8 +2525,16 @@ html {
   width: 10rem;
 }
 
+.w-48 {
+  width: 12rem;
+}
+
 .w-56 {
   width: 14rem;
+}
+
+.w-64 {
+  width: 16rem;
 }
 
 .w-full {
@@ -2587,6 +2617,10 @@ html {
   align-items: center;
 }
 
+.justify-center {
+  justify-content: center;
+}
+
 .justify-between {
   justify-content: space-between;
 }
@@ -2657,6 +2691,10 @@ html {
   border-radius: var(--rounded-box, 1rem);
 }
 
+.border-t {
+  border-top-width: 1px;
+}
+
 .bg-base-100 {
   --tw-bg-opacity: 1;
   background-color: var(--fallback-b1,oklch(var(--b1)/var(--tw-bg-opacity, 1)));
@@ -2674,6 +2712,11 @@ html {
 
 .bg-base-300\/50 {
   background-color: var(--fallback-b3,oklch(var(--b3)/0.5));
+}
+
+.bg-black {
+  --tw-bg-opacity: 1;
+  background-color: rgb(0 0 0 / var(--tw-bg-opacity, 1));
 }
 
 .bg-primary {
@@ -2698,8 +2741,21 @@ html {
   padding: 1rem;
 }
 
+.py-8 {
+  padding-top: 2rem;
+  padding-bottom: 2rem;
+}
+
 .pb-2 {
   padding-bottom: 0.5rem;
+}
+
+.pt-1 {
+  padding-top: 0.25rem;
+}
+
+.text-left {
+  text-align: left;
 }
 
 .font-mono {
@@ -2782,6 +2838,14 @@ html {
   color: var(--fallback-su,oklch(var(--su)/var(--tw-text-opacity, 1)));
 }
 
+.opacity-0 {
+  opacity: 0;
+}
+
+.opacity-100 {
+  opacity: 1;
+}
+
 .shadow {
   --tw-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --tw-shadow-colored: 0 1px 3px 0 var(--tw-shadow-color), 0 1px 2px -1px var(--tw-shadow-color);
@@ -2804,6 +2868,12 @@ html {
 
 .search-input {
   line-height: 1.25;
+}
+
+/* Alpine.js x-cloak: hide elements until Alpine has processed them (prevents video flicker) */
+
+[x-cloak] {
+  display: none !important;
 }
 
 .hover\:badge-primary:hover {

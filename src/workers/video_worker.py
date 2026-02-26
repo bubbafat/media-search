@@ -11,6 +11,7 @@ from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
+from src.video.clip_extractor import extract_video_clip
 from src.video.indexing import run_video_scene_indexing
 from src.video.preview import build_preview_webp
 from src.workers.base import BaseWorker
@@ -20,7 +21,7 @@ _log = logging.getLogger(__name__)
 
 class VideoWorker(BaseWorker):
     """
-    Worker that claims pending video assets, runs scene indexing (pHash + temporal ceiling,
+    Worker that claims proxied video assets, runs scene indexing (pHash + temporal ceiling,
     best-frame selection, optional vision analysis), and marks assets completed or poisoned.
     Renews the asset lease after each closed scene and aborts cleanly on shutdown (InterruptedError).
     When system_default_model_id is set, only claims assets whose library's effective target
@@ -114,7 +115,7 @@ class VideoWorker(BaseWorker):
             claim_kwargs["system_default_model_id"] = self._system_default_model_id
         asset = self.asset_repo.claim_asset_by_status(
             self.worker_id,
-            AssetStatus.pending,
+            AssetStatus.proxied,
             VIDEO_EXTENSIONS_LIST,
             lease_seconds=300,
             **claim_kwargs,
@@ -151,6 +152,15 @@ class VideoWorker(BaseWorker):
                 on_scene_saved=_on_scene_saved,
                 check_interrupt=_check_interrupt,
             )
+            data_dir = Path(get_config().data_dir)
+            clip_path = data_dir / "video_clips" / asset.library.slug / str(asset.id) / "head_clip.mp4"
+            clip_path.parent.mkdir(parents=True, exist_ok=True)
+            if extract_video_clip(
+                source_path, clip_path, start_ts=0.0, duration=10.0, context_seconds=0
+            ):
+                self.asset_repo.set_video_preview_path(
+                    asset.id, f"video_clips/{asset.library.slug}/{asset.id}/head_clip.mp4"
+                )
             self.asset_repo.mark_completed(asset.id, self.db_model_id)
             _log.info(
                 "Completed: %s (%s/%s)",
@@ -164,7 +174,7 @@ class VideoWorker(BaseWorker):
                 _log.info("Preview: %s", preview_path.resolve())
             return True
         except InterruptedError:
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.pending)
+            self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
             return False
         except Exception as e:
             _log.error(

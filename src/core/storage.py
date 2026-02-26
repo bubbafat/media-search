@@ -79,12 +79,21 @@ class LocalMediaStore:
         proxy.thumbnail((768, 768))
         proxy.save(path, "JPEG", quality=85)
 
+    def get_thumbnail_write_path(self, library_slug: str, asset_id: int) -> Path:
+        """Return path for writing a thumbnail; creates parent dirs. Used for video thumbnails."""
+        return self._get_shard_path(library_slug, asset_id, "thumbnails", create_dirs=True)
+
     def get_thumbnail_path(self, library_slug: str, asset_id: int) -> Path:
         """Return path to thumbnail; raise FileNotFoundError if it does not exist."""
         path = self._get_shard_path(library_slug, asset_id, "thumbnails")
         if not path.exists():
             raise FileNotFoundError(path)
         return path
+
+    def thumbnail_exists(self, library_slug: str, asset_id: int) -> bool:
+        """Return True if the thumbnail file exists. Used by proxy --repair for videos."""
+        path = self._get_shard_path(library_slug, asset_id, "thumbnails")
+        return path.exists()
 
     def get_proxy_path(self, library_slug: str, asset_id: int) -> Path:
         """Return path to proxy; raise FileNotFoundError if it does not exist."""

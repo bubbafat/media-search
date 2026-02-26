@@ -6,3 +6,8 @@
 .search-input {
   line-height: 1.25;
 }
+
+/* Alpine.js x-cloak: hide elements until Alpine has processed them (prevents video flicker) */
+[x-cloak] {
+  display: none !important;
+}

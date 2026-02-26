@@ -1,10 +1,101 @@
-"""FFmpeg-based extraction of web-safe MP4 clips for search hit verification."""
+"""FFmpeg-based extraction of web-safe MP4 clips and single frames for thumbnails."""
 
 import asyncio
 import logging
+import subprocess
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
+
+
+def extract_video_frame(source: Path, dest: Path, timestamp: float = 0.0) -> bool:
+    """
+    Extract a single high-quality JPEG frame from a video at the given timestamp.
+
+    Uses fast-seeking (-ss before -i). Reads only from source; writes only to dest.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ss",
+        str(timestamp),
+        "-i",
+        str(source),
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        "-vf",
+        "scale='min(1280,iw)':-2",
+        str(dest),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode == 0:
+        return True
+    if result.stderr:
+        _log.warning("FFmpeg frame extraction failed: %s", result.stderr.strip())
+    return False
+
+
+def extract_video_clip(
+    source: Path,
+    dest: Path,
+    start_ts: float,
+    duration: float = 10.0,
+    *,
+    context_seconds: float = 0,
+) -> bool:
+    """
+    Extract a web-safe H.264/AAC MP4 clip from a video.
+
+    Uses fast-seeking (-ss before -i) and -movflags +faststart for instant web playback.
+    For head clips, pass context_seconds=0 so the clip starts exactly at start_ts.
+    For search-hit clips, pass context_seconds=2 to include ~2s context before the hit.
+    """
+    safe_start = max(0.0, start_ts - context_seconds)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ss",
+        str(safe_start),
+        "-i",
+        str(source),
+        "-t",
+        str(duration),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "28",
+        "-vf",
+        "scale='min(1280,iw)':-2",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        str(dest),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode == 0:
+        return True
+    if result.stderr:
+        _log.warning("FFmpeg clip extraction failed: %s", result.stderr.strip())
+    return False
 
 
 async def extract_clip(

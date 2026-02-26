@@ -61,6 +61,7 @@ Response: JSON array of items with:
 - `asset_id`, `type` (`image` | `video`)
 - `thumbnail_url` (derivative URL)
 - `preview_url` (animated preview WebP URL if available)
+- `video_preview_url` (10-second head-clip MP4 URL for hover preview; `null` if not yet generated)
 - `final_rank`
 - `match_ratio` (percentage)
 - `best_scene_ts` (formatted `MM:SS`)

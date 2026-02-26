@@ -3,10 +3,12 @@
 import logging
 from pathlib import Path
 
-from src.core.file_extensions import IMAGE_EXTENSIONS_LIST
+from src.core.file_extensions import PROXYABLE_EXTENSIONS_LIST
 from src.core.storage import LocalMediaStore
+from src.models.entities import AssetType
 from src.models.entities import AssetStatus
 from src.repository.asset_repo import AssetRepository
+from src.video.clip_extractor import extract_video_frame
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
@@ -16,8 +18,8 @@ _log = logging.getLogger(__name__)
 
 class ProxyWorker(BaseWorker):
     """
-    Worker that claims pending assets, loads source images, writes thumbnail and proxy
-    to the local sharded store, and updates status to proxied (or poisoned on error).
+    Worker that claims pending assets (images + videos), writes thumbnails to the local
+    sharded store, proxy for images only, and updates status to proxied (or poisoned on error).
     """
 
     def __init__(
@@ -61,8 +63,12 @@ class ProxyWorker(BaseWorker):
             )
             if not batch:
                 break
-            for asset_id, library_slug in batch:
-                if not self.storage.proxy_and_thumbnail_exist(library_slug, asset_id):
+            for asset_id, library_slug, type_str in batch:
+                if type_str == "video":
+                    check_ok = self.storage.thumbnail_exists(library_slug, asset_id)
+                else:
+                    check_ok = self.storage.proxy_and_thumbnail_exist(library_slug, asset_id)
+                if not check_ok:
                     self.asset_repo.update_asset_status(asset_id, AssetStatus.pending)
                     total_reset += 1
                 total_checked += 1
@@ -88,7 +94,7 @@ class ProxyWorker(BaseWorker):
         asset = self.asset_repo.claim_asset_by_status(
             self.worker_id,
             AssetStatus.pending,
-            IMAGE_EXTENSIONS_LIST,
+            PROXYABLE_EXTENSIONS_LIST,
             library_slug=self._library_slug,
         )
         if asset is None:
@@ -96,9 +102,14 @@ class ProxyWorker(BaseWorker):
         assert asset.id is not None
         source_path = Path(asset.library.absolute_path) / asset.rel_path
         try:
-            image = self.storage.load_source_image(source_path)
-            self.storage.save_thumbnail(asset.library.slug, asset.id, image)
-            self.storage.save_proxy(asset.library.slug, asset.id, image)
+            if asset.type == AssetType.image:
+                image = self.storage.load_source_image(source_path)
+                self.storage.save_thumbnail(asset.library.slug, asset.id, image)
+                self.storage.save_proxy(asset.library.slug, asset.id, image)
+            else:
+                thumb_path = self.storage.get_thumbnail_write_path(asset.library.slug, asset.id)
+                if not extract_video_frame(source_path, thumb_path, 0.0):
+                    raise RuntimeError("FFmpeg frame extraction failed")
             self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
             self._processed_count += 1
             if self._verbose:

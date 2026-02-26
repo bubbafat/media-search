@@ -114,14 +114,29 @@
       <section x-show="layout === 'masonry'" class="columns-3 md:columns-4 lg:columns-5 gap-3 space-y-3">
         <template x-for="item in results" :key="item.asset_id">
           <div class="card bg-base-100 shadow hover:shadow-md transition cursor-pointer overflow-hidden break-inside-avoid" @click="openDetail(item)">
-            <figure class="relative">
+            <figure class="relative" x-data="{ hover: false, videoReady: false }" @mouseenter="item.video_preview_url && (hover = true)" @mouseleave="hover = false; videoReady = false">
               <img
                 class="w-full aspect-square object-cover"
+                :class="{ 'opacity-0': hover && item.video_preview_url && videoReady }"
                 :src="(item.type === 'video' && item.preview_url) ? item.preview_url : item.thumbnail_url"
                 :data-thumb="item.thumbnail_url"
                 :data-preview="item.preview_url || ''"
                 loading="lazy"
               />
+              <template x-if="item.type === 'video' && item.video_preview_url">
+                <video
+                  x-show="hover"
+                  x-cloak
+                  class="absolute inset-0 w-full h-full object-cover aspect-square"
+                  :class="videoReady ? 'opacity-100' : 'opacity-0'"
+                  :src="item.video_preview_url"
+                  muted
+                  loop
+                  playsinline
+                  autoplay
+                  @canplay="videoReady = true"
+                ></video>
+              </template>
               <div class="badge badge-neutral absolute top-2 left-2" x-show="item.type === 'video'">Video</div>
               <div class="badge badge-primary absolute top-2 right-2" x-show="item.best_scene_ts" x-text="`Jump ${item.best_scene_ts}`"></div>
               <div class="absolute bottom-0 left-0 right-0 h-1 bg-base-300" x-show="item.type === 'video'">
@@ -145,14 +160,29 @@
             :class="index === 0 ? 'md:col-span-2 md:row-span-2' : ''"
             @click="openDetail(item)"
           >
-            <figure class="relative" :class="index === 0 ? 'aspect-square' : ''">
+            <figure class="relative" :class="index === 0 ? 'aspect-square' : ''" x-data="{ hover: false, videoReady: false }" @mouseenter="item.video_preview_url && (hover = true)" @mouseleave="hover = false; videoReady = false">
               <img
                 class="w-full aspect-square object-cover"
+                :class="{ 'opacity-0': hover && item.video_preview_url && videoReady }"
                 :src="(item.type === 'video' && item.preview_url) ? item.preview_url : item.thumbnail_url"
                 :data-thumb="item.thumbnail_url"
                 :data-preview="item.preview_url || ''"
                 loading="lazy"
               />
+              <template x-if="item.type === 'video' && item.video_preview_url">
+                <video
+                  x-show="hover"
+                  x-cloak
+                  class="absolute inset-0 w-full h-full object-cover aspect-square"
+                  :class="videoReady ? 'opacity-100' : 'opacity-0'"
+                  :src="item.video_preview_url"
+                  muted
+                  loop
+                  playsinline
+                  autoplay
+                  @canplay="videoReady = true"
+                ></video>
+              </template>
               <div class="badge badge-neutral absolute top-2 left-2" x-show="item.type === 'video'">Video</div>
               <div class="badge badge-primary absolute top-2 right-2" x-show="item.best_scene_ts" x-text="`Jump ${item.best_scene_ts}`"></div>
               <div class="absolute bottom-0 left-0 right-0 h-1 bg-base-300" x-show="item.type === 'video'">
@@ -172,12 +202,27 @@
       <section x-show="layout === 'list'" class="flex flex-col gap-2">
         <template x-for="item in results" :key="item.asset_id">
           <div class="card bg-base-100 shadow hover:shadow-md transition cursor-pointer overflow-hidden flex flex-row gap-3 p-2 items-center" @click="openDetail(item)">
-            <figure class="relative shrink-0 w-20 h-20 md:w-24 md:h-24 rounded overflow-hidden">
+            <figure class="relative shrink-0 w-20 h-20 md:w-24 md:h-24 rounded overflow-hidden" x-data="{ hover: false, videoReady: false }" @mouseenter="item.video_preview_url && (hover = true)" @mouseleave="hover = false; videoReady = false">
               <img
                 class="w-full h-full object-cover"
+                :class="{ 'opacity-0': hover && item.video_preview_url && videoReady }"
                 :src="(item.type === 'video' && item.preview_url) ? item.preview_url : item.thumbnail_url"
                 loading="lazy"
               />
+              <template x-if="item.type === 'video' && item.video_preview_url">
+                <video
+                  x-show="hover"
+                  x-cloak
+                  class="absolute inset-0 w-full h-full object-cover rounded"
+                  :class="videoReady ? 'opacity-100' : 'opacity-0'"
+                  :src="item.video_preview_url"
+                  muted
+                  loop
+                  playsinline
+                  autoplay
+                  @canplay="videoReady = true"
+                ></video>
+              </template>
               <div class="badge badge-neutral badge-sm absolute top-0.5 left-0.5" x-show="item.type === 'video'">Video</div>
             </figure>
             <div class="min-w-0 flex-1 flex flex-wrap items-center gap-2">
@@ -197,14 +242,29 @@
             <div class="flex overflow-x-auto gap-3 pb-2 snap-x snap-mandatory">
               <template x-for="item in group.items" :key="item.asset_id">
                 <div class="card bg-base-100 shadow hover:shadow-md transition cursor-pointer overflow-hidden shrink-0 w-40 snap-start" @click="openDetail(item)">
-                  <figure class="relative">
+                  <figure class="relative" x-data="{ hover: false, videoReady: false }" @mouseenter="item.video_preview_url && (hover = true)" @mouseleave="hover = false; videoReady = false">
                     <img
                       class="w-full aspect-square object-cover"
+                      :class="{ 'opacity-0': hover && item.video_preview_url && videoReady }"
                       :src="(item.type === 'video' && item.preview_url) ? item.preview_url : item.thumbnail_url"
                       :data-thumb="item.thumbnail_url"
                       :data-preview="item.preview_url || ''"
                       loading="lazy"
                     />
+                    <template x-if="item.type === 'video' && item.video_preview_url">
+                      <video
+                        x-show="hover"
+                        x-cloak
+                        class="absolute inset-0 w-full h-full object-cover aspect-square"
+                        :class="videoReady ? 'opacity-100' : 'opacity-0'"
+                        :src="item.video_preview_url"
+                        muted
+                        loop
+                        playsinline
+                        autoplay
+                        @canplay="videoReady = true"
+                      ></video>
+                    </template>
                     <div class="badge badge-neutral badge-sm absolute top-1 left-1" x-show="item.type === 'video'">Video</div>
                     <div class="badge badge-primary badge-sm absolute top-1 right-1" x-show="item.best_scene_ts" x-text="item.best_scene_ts"></div>
                     <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-base-300" x-show="item.type === 'video'">

@@ -267,6 +267,29 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             assert row is not None, "asset.preview_path column must exist"
             assert row[1] == "YES", "asset.preview_path must be nullable"
             assert row[2] == "character varying", "asset.preview_path must be string type"
+
+        # Assert asset has video_preview_path column (migration 015)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT column_name, is_nullable, data_type FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'asset' AND column_name = 'video_preview_path'"
+                )
+            ).fetchone()
+            assert row is not None, "asset.video_preview_path column must exist"
+            assert row[1] == "YES", "asset.video_preview_path must be nullable"
+            assert row[2] == "character varying", "asset.video_preview_path must be string type"
+
+        # Assert asset.size is BIGINT (migration 016)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT udt_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'asset' AND column_name = 'size'"
+                )
+            ).fetchone()
+            assert row is not None, "asset.size column must exist"
+            assert row[0] == "int8", "asset.size must be BIGINT (udt_name=int8)"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

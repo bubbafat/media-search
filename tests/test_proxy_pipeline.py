@@ -1,9 +1,18 @@
 """Tests for proxy pipeline: claim_asset_by_status and update_asset_status (testcontainers Postgres)."""
 
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 from sqlalchemy import text
 from sqlmodel import SQLModel
 
+from src.core.file_extensions import (
+    IMAGE_EXTENSIONS_LIST,
+    PROXYABLE_EXTENSIONS_LIST,
+    VIDEO_EXTENSIONS_LIST,
+)
 from src.models.entities import AIModel, Asset, AssetStatus, AssetType, Library, SystemMetadata
 from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
@@ -621,8 +630,8 @@ def test_count_pending_filtered_by_library(engine, _session_factory):
     assert asset_repo.count_pending("other") == 0
 
 
-def test_count_pending_proxyable_excludes_video(engine, _session_factory):
-    """count_pending_proxyable returns only pending image assets; videos are excluded."""
+def test_count_pending_proxyable_includes_images_and_videos(engine, _session_factory):
+    """count_pending_proxyable returns pending image + video assets (ProxyWorker handles both)."""
     asset_repo = _create_tables_and_seed(engine, _session_factory)
     _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
     session = _session_factory()
@@ -644,7 +653,7 @@ def test_count_pending_proxyable_excludes_video(engine, _session_factory):
     asset_repo.upsert_asset("proxyable-lib", "b.png", AssetType.image, 1000.0, 200)
     asset_repo.upsert_asset("proxyable-lib", "c.mp4", AssetType.video, 1000.0, 300)
     assert asset_repo.count_pending("proxyable-lib") == 3
-    assert asset_repo.count_pending_proxyable("proxyable-lib") == 2
+    assert asset_repo.count_pending_proxyable("proxyable-lib") == 3
 
 
 def test_get_asset_ids_expecting_proxy_returns_only_relevant_statuses(
@@ -685,6 +694,7 @@ def test_get_asset_ids_expecting_proxy_returns_only_relevant_statuses(
     ids = asset_repo.get_asset_ids_expecting_proxy(library_slug="repair-lib")
     assert len(ids) == 1
     assert ids[0][1] == "repair-lib"
+    assert ids[0][2] == "image"
     session = _session_factory()
     try:
         row = session.execute(
@@ -693,7 +703,7 @@ def test_get_asset_ids_expecting_proxy_returns_only_relevant_statuses(
             )
         ).fetchone()
         assert row is not None
-        assert (row[0], row[1]) == ids[0]
+        assert (row[0], row[1]) == (ids[0][0], ids[0][1])
     finally:
         session.close()
 
@@ -741,10 +751,10 @@ def test_get_asset_ids_expecting_proxy_respects_library_slug(engine, _session_fa
     assert len(ids_b) == 1 and ids_b[0][1] == "repair-b"
 
 
-def test_get_asset_ids_expecting_proxy_filters_by_image_extension(
+def test_get_asset_ids_expecting_proxy_includes_images_and_videos(
     engine, _session_factory
 ):
-    """get_asset_ids_expecting_proxy excludes video/non-image extensions (e.g. .mp4)."""
+    """get_asset_ids_expecting_proxy returns both image and video assets (ProxyWorker handles both)."""
     asset_repo = _create_tables_and_seed(engine, _session_factory)
     _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
     session = _session_factory()
@@ -772,15 +782,103 @@ def test_get_asset_ids_expecting_proxy_filters_by_image_extension(
         session.close()
 
     ids = asset_repo.get_asset_ids_expecting_proxy(library_slug="ext-repair")
-    assert len(ids) == 1
+    assert len(ids) == 2
+    asset_ids = {r[0]: r[2] for r in ids}
     session = _session_factory()
     try:
-        row = session.execute(
-            text(
-                "SELECT id FROM asset WHERE rel_path = 'photo.jpg' AND library_id = 'ext-repair'"
-            )
-        ).fetchone()
-        assert row is not None
-        assert ids[0][0] == row[0]
+        for rel_path, expected_type in [("photo.jpg", "image"), ("clip.mp4", "video")]:
+            row = session.execute(
+                text(
+                    "SELECT id, type::text FROM asset WHERE rel_path = :p AND library_id = 'ext-repair'"
+                ),
+                {"p": rel_path},
+            ).fetchone()
+            assert row is not None
+            assert row[0] in asset_ids
+            assert asset_ids[row[0]] == expected_type
     finally:
         session.close()
+
+
+@pytest.mark.fast
+def test_proxyable_extensions_no_duplicates_disjoint():
+    """PROXYABLE_EXTENSIONS_LIST has no duplicates; IMAGE and VIDEO extensions are disjoint."""
+    assert len(PROXYABLE_EXTENSIONS_LIST) == len(set(PROXYABLE_EXTENSIONS_LIST))
+    image_set = set(IMAGE_EXTENSIONS_LIST)
+    video_set = set(VIDEO_EXTENSIONS_LIST)
+    assert image_set.isdisjoint(video_set), "IMAGE and VIDEO extensions must be disjoint"
+
+
+def test_proxy_worker_video_generates_thumbnail_only(engine, _session_factory, tmp_path):
+    """When a video is proxied, a thumbnail is generated (no proxy); status becomes proxied."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+
+    lib_root = tmp_path / "vid-proxy-lib"
+    lib_root.mkdir()
+    (lib_root / "clip.mp4").write_bytes(b"fake-video")
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="vid-proxy-lib",
+                name="Vid Proxy Lib",
+                absolute_path=str(lib_root),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("vid-proxy-lib", "clip.mp4", AssetType.video, 1000.0, 100)
+    asset = asset_repo.get_asset("vid-proxy-lib", "clip.mp4")
+    assert asset is not None
+    assert asset.id is not None
+    asset_id = asset.id
+
+    def mock_extract_video_frame(source: Path, dest: Path, timestamp: float = 0.0) -> bool:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9")
+        return True
+
+    from src.repository.system_metadata_repo import SystemMetadataRepository
+    from src.repository.worker_repo import WorkerRepository
+    from src.workers.proxy_worker import ProxyWorker
+
+    worker_repo = WorkerRepository(_session_factory)
+    system_metadata_repo = SystemMetadataRepository(_session_factory)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp)
+        with patch("src.core.storage.get_config") as m:
+            m.return_value.data_dir = str(data_dir)
+            with patch("src.workers.proxy_worker.extract_video_frame", side_effect=mock_extract_video_frame):
+                worker = ProxyWorker(
+                    worker_id="vid-proxy-worker",
+                    repository=worker_repo,
+                    heartbeat_interval_seconds=15.0,
+                    asset_repo=asset_repo,
+                    system_metadata_repo=system_metadata_repo,
+                    library_slug="vid-proxy-lib",
+                )
+                result = worker.process_task()
+
+        assert result is True
+        session = _session_factory()
+        try:
+            row = session.execute(
+                text("SELECT status FROM asset WHERE id = :id"), {"id": asset_id}
+            ).fetchone()
+            assert row is not None
+            assert row[0] == "proxied"
+        finally:
+            session.close()
+
+        shard = asset_id % 1000
+        thumb_path = data_dir / "vid-proxy-lib" / "thumbnails" / str(shard) / f"{asset_id}.jpg"
+        proxy_path = data_dir / "vid-proxy-lib" / "proxies" / str(shard) / f"{asset_id}.jpg"
+        assert thumb_path.exists()
+        assert not proxy_path.exists()
