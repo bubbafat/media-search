@@ -20,6 +20,17 @@ Default URL: **http://127.0.0.1:8000**
 
 **Requirements:** A running PostgreSQL instance and applied migrations (`alembic upgrade head`). The app reads from the same database as the CLI and workers.
 
+### Building the dashboard CSS
+
+Dashboard styles (Tailwind + DaisyUI) are built from source so that layout utilities (masonry, bento, list, filmstrip) are included. From the project root:
+
+```bash
+npm install
+npm run build:css
+```
+
+This writes `static/css/app.css`. The built file is committed so the app works without Node; re-run `build:css` when you change dashboard markup or add new Tailwind/DaisyUI classes.
+
 ---
 
 ## Dashboard (GET /dashboard)
@@ -78,7 +89,7 @@ The dashboard is built with:
 - **Jinja2** — Server-side HTML templates.
 - **Alpine.js** — Lightweight interactivity (search, hover previews, modal).
 - **DaisyUI** — UI component classes.
-- **Tailwind CSS** — Via DaisyUI’s base.
+- **Tailwind CSS + DaisyUI** — Built from source (`npm run build:css`); see “Building the dashboard CSS” above.
 
 Templates live under `src/api/templates/` (e.g. `dashboard.html`).
 

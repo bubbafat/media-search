@@ -43,6 +43,11 @@ app = FastAPI(title="MediaSearch Mission Control")
 templates_dir = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
 
+# Built Tailwind + DaisyUI CSS (npm run build:css from project root)
+_static_dir = Path(__file__).resolve().parent.parent.parent / "static"
+if _static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
 app.mount(
     "/media",
     StaticFiles(directory=str(Path(get_config().data_dir)), check_dir=False),
