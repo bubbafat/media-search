@@ -139,3 +139,35 @@ def test_save_visual_analysis_updates_asset_jsonb(engine, _session_factory):
         assert va["ocr_text"] == "HELLO"
     finally:
         session.close()
+
+
+def test_save_visual_analysis_with_model_stamp(engine, _session_factory):
+    """save_visual_analysis with model_name and model_version stores them in the payload."""
+    repo = _create_tables_and_seed(engine, _session_factory)
+    asset_repo = AssetRepository(_session_factory)
+    session = _session_factory()
+    try:
+        session.add(Library(slug="stamplib", name="Stamp", absolute_path="/tmp/stamp", is_active=True, sampling_limit=100))
+        session.commit()
+    finally:
+        session.close()
+    asset_repo.upsert_asset("stamplib", "img.jpg", AssetType.image, 0.0, 0)
+    session = _session_factory()
+    try:
+        row = session.execute(text("SELECT id FROM asset WHERE library_id = 'stamplib' AND rel_path = 'img.jpg'")).fetchone()
+        asset_id = row[0]
+    finally:
+        session.close()
+
+    analysis = VisualAnalysis(description="D", tags=["t"], ocr_text="O")
+    repo.save_visual_analysis(asset_id, analysis, model_name="moondream2", model_version="2025-01-09")
+
+    session = _session_factory()
+    try:
+        row = session.execute(text("SELECT visual_analysis FROM asset WHERE id = :id"), {"id": asset_id}).fetchone()
+        assert row is not None
+        va = row[0]
+        assert va.get("model_name") == "moondream2"
+        assert va.get("model_version") == "2025-01-09"
+    finally:
+        session.close()

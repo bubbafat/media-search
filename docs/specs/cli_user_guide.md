@@ -13,15 +13,17 @@ uv run media-search --help
 
 ## Command tree
 
-| Group / Command | Description |
-|-----------------|-------------|
-| `library`       | Add, remove, restore, and list libraries |
-| `trash`         | Manage soft-deleted libraries (list, empty one, empty all) |
-| `asset`         | List discovered assets for a library |
-| `search`        | Full-text search over asset visual analysis (vibe or OCR) |
-| `scan`          | Run a one-shot scan for a library (no daemon) |
-| `proxy`         | Start the proxy worker (thumbnails and proxies for pending assets) |
-| `ai`            | Manage AI models and workers (start worker, list/add/remove models) |
+
+| Group / Command | Description                                                         |
+| --------------- | ------------------------------------------------------------------- |
+| `library`       | Add, remove, restore, and list libraries                            |
+| `trash`         | Manage soft-deleted libraries (list, empty one, empty all)          |
+| `asset`         | List discovered assets for a library                                |
+| `search`        | Full-text search over asset visual analysis (vibe or OCR)           |
+| `scan`          | Run a one-shot scan for a library (no daemon)                       |
+| `proxy`         | Start the proxy worker (thumbnails and proxies for pending assets)  |
+| `ai`            | Manage AI models and workers (default model, start worker, list/add/remove models) |
+
 
 ---
 
@@ -41,14 +43,16 @@ RAW and DNG files are opened for proxy generation using libvips when Pillow cann
 
 ## library
 
-### library add \<name\> \<path\>
+### library add name path
 
 Add a new library. The slug is generated from the name (URL-safe). If the generated slug matches a soft-deleted library, the command fails with an error; restore or permanently delete the old library first, or use a different name.
 
-| Argument | Description |
-|----------|-------------|
-| `name`   | Display name for the library |
+
+| Argument | Description                                                          |
+| -------- | -------------------------------------------------------------------- |
+| `name`   | Display name for the library                                         |
 | `path`   | Absolute or relative path to the library root (resolved to absolute) |
+
 
 **Example:**
 
@@ -58,13 +62,15 @@ uv run media-search library add "My NAS" /mnt/nas/photos
 
 ---
 
-### library remove \<slug\>
+### library remove slug
 
 Soft-delete a library: set `deleted_at` so the library and its assets are hidden from normal queries. The library moves to the trash and can be restored or permanently deleted later.
 
-| Argument | Description |
-|----------|-------------|
+
+| Argument | Description                 |
+| -------- | --------------------------- |
 | `slug`   | Library slug to soft-delete |
+
 
 **Example:**
 
@@ -74,13 +80,15 @@ uv run media-search library remove nas-main
 
 ---
 
-### library restore \<slug\>
+### library restore slug
 
 Restore a soft-deleted library by clearing `deleted_at`. The library and its assets become visible again.
 
-| Argument | Description |
-|----------|-------------|
+
+| Argument | Description                        |
+| -------- | ---------------------------------- |
 | `slug`   | Library slug to restore from trash |
+
 
 **Example:**
 
@@ -94,9 +102,11 @@ uv run media-search library restore nas-main
 
 List libraries in a table: slug, name, path, deleted_at. Paths are truncated for display. By default only non-deleted libraries are shown.
 
-| Option | Description |
-|--------|-------------|
+
+| Option              | Description                                |
+| ------------------- | ------------------------------------------ |
 | `--include-deleted` | Include soft-deleted libraries in the list |
+
 
 **Example:**
 
@@ -121,17 +131,21 @@ uv run media-search trash list
 
 ---
 
-### trash empty \<slug\>
+### trash empty slug
 
 Permanently delete a single trashed library and all its assets. Uses chunked deletion to avoid long DB locks. Cannot be undone. Prompts for confirmation unless `--force` is used.
 
-| Argument | Description |
-|----------|-------------|
+
+| Argument | Description                        |
+| -------- | ---------------------------------- |
 | `slug`   | Library slug to permanently delete |
 
-| Option | Description |
-|--------|-------------|
+
+
+| Option    | Description              |
+| --------- | ------------------------ |
 | `--force` | Skip confirmation prompt |
+
 
 **Example:**
 
@@ -148,10 +162,12 @@ Permanently delete all trashed libraries and their assets. Cannot be undone. Pro
 
 With `--verbose` / `-v`, prints progress (e.g. `Emptying 1/3: slug`) before each library.
 
-| Option | Description |
-|--------|-------------|
-| `--force` | Skip confirmation prompt |
+
+| Option            | Description                         |
+| ----------------- | ----------------------------------- |
+| `--force`         | Skip confirmation prompt            |
 | `--verbose`, `-v` | Print progress (Emptying 1/N: slug) |
+
 
 **Example:**
 
@@ -165,18 +181,22 @@ uv run media-search trash empty-all --force --verbose
 
 ## asset
 
-### asset list \<library_slug\>
+### asset list library_slug
 
 List discovered assets for a library. Output is a Rich table: ID, Rel Path, Type, Status, Size (KB). A summary line reports how many assets are shown and the total (e.g. "Showing 50 of 213 assets for library 'disneyland'.").
 
-| Argument | Description |
-|----------|-------------|
+
+| Argument       | Description                     |
+| -------------- | ------------------------------- |
 | `library_slug` | Library slug to list assets for |
 
-| Option | Description |
-|--------|-------------|
-| `--limit` | Maximum number of assets to show (default: 50) |
+
+
+| Option     | Description                                    |
+| ---------- | ---------------------------------------------- |
+| `--limit`  | Maximum number of assets to show (default: 50) |
 | `--status` | Filter by status (e.g. `pending`, `completed`) |
+
 
 Valid status values: `pending`, `processing`, `proxied`, `extracting`, `analyzing`, `completed`, `failed`, `poisoned`.
 
@@ -191,20 +211,24 @@ uv run media-search asset list nas-main --limit 100 --status pending
 
 ---
 
-### asset show \<library_slug\> \<rel_path\>
+### asset show library_slug rel_path
 
 Show one asset by library slug and relative path (as shown in `asset list`). By default prints a minimal summary: id, library_id, rel_path, type, status, and size (KB). With `--metadata`, prints the full asset record as JSON, including `visual_analysis` (description, tags, and extracted text in `ocr_text`).
 
 Exits with code 1 if the library is not found or soft-deleted, or if the asset is not found.
 
-| Argument | Description |
-|----------|-------------|
-| `library_slug` | Library slug |
-| `rel_path` | Relative path of the asset within the library |
 
-| Option | Description |
-|--------|-------------|
+| Argument       | Description                                   |
+| -------------- | --------------------------------------------- |
+| `library_slug` | Library slug                                  |
+| `rel_path`     | Relative path of the asset within the library |
+
+
+
+| Option       | Description                                                                 |
+| ------------ | --------------------------------------------------------------------------- |
 | `--metadata` | Dump full asset record as JSON (including visual_analysis / extracted text) |
+
 
 **Example:**
 
@@ -227,15 +251,19 @@ Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **S
 
 If no assets match, a yellow message is printed.
 
-| Argument | Description |
-|----------|-------------|
+
+| Argument | Description                                                                               |
+| -------- | ----------------------------------------------------------------------------------------- |
 | `query`  | Search string (optional; if omitted, returns assets subject to `--library` and `--limit`) |
 
-| Option | Description |
-|--------|-------------|
-| `--ocr` | Search only within extracted OCR text instead of the full visual analysis |
-| `--library` | Filter results to this library slug only |
-| `--limit` | Maximum number of results (default 50) |
+
+
+| Option      | Description                                                               |
+| ----------- | ------------------------------------------------------------------------- |
+| `--ocr`     | Search only within extracted OCR text instead of the full visual analysis |
+| `--library` | Filter results to this library slug only                                  |
+| `--limit`   | Maximum number of results (default 50)                                    |
+
 
 **Example:**
 
@@ -249,7 +277,7 @@ uv run media-search search "beach" --library nas-main --limit 20
 
 ## scan
 
-### scan \<slug\>
+### scan slug
 
 Run a one-shot scan for the given library. Does not start the scanner worker daemon; it runs the scanner logic once and exits. Useful for immediate discovery or testing. The library’s scan status is set so a running scanner worker would also pick up work.
 
@@ -257,13 +285,17 @@ Exits with code 1 if the library is not found or is soft-deleted; the message su
 
 With `--verbose` / `-v`, progress is printed every 100 files (e.g. `Scanner: files_processed=100`). Total is shown only at the end.
 
-| Argument | Description |
-|----------|-------------|
+
+| Argument | Description               |
+| -------- | ------------------------- |
 | `slug`   | Library slug to scan once |
 
-| Option | Description |
-|--------|-------------|
+
+
+| Option            | Description                                       |
+| ----------------- | ------------------------------------------------- |
 | `--verbose`, `-v` | Enable DEBUG logging and progress every 100 files |
+
 
 **Example:**
 
@@ -282,17 +314,19 @@ Start the proxy worker. It runs until interrupted (Ctrl+C). The worker claims pe
 
 When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted (same message as `scan`).
 
-With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g. `Proxied asset 123 (disneyland/photo.jpg) 5/200`). The total is the number of pending **image** (proxyable) assets at start, so videos and other non-proxyable assets are not included in the denominator. When there is no work, the worker logs that it is entering polling mode and at what interval (e.g. every 5s), and logs "Checking for work..." each time it wakes to poll, so you can see it is waiting rather than stuck.
+With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g. `Proxied asset 123 (photo.jpg) 5/200`). The path shown is the relative path within the library (rel_path only), so you can copy-paste it into commands like `asset show <library_slug> <rel_path>`. The total is the number of pending **image** (proxyable) assets at start, so videos and other non-proxyable assets are not included in the denominator. When there is no work, the worker logs that it is entering polling mode and at what interval (e.g. every 5s), and logs "Checking for work..." each time it wakes to poll, so you can see it is waiting rather than stuck.
 
 With `--repair`, before the main loop the worker runs a one-time check: it finds assets that are supposed to have proxy and thumbnail files (status proxied, completed, etc.) but are missing them on disk (e.g. after deleting the data directory), sets their status to pending, then runs the normal loop so they are regenerated. Combine with `--library` to repair only one library.
 
-| Option | Description |
-|--------|-------------|
-| `--heartbeat` | Heartbeat interval in seconds (default: 15.0) |
-| `--worker-name` | Force a specific worker ID; defaults to auto-generated |
-| `--library` | Limit to this library slug only (optional) |
-| `--verbose`, `-v` | Print progress (each asset and N/total) |
-| `--repair` | Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated |
+
+| Option            | Description                                                                                     |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                   |
+| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                          |
+| `--library`       | Limit to this library slug only (optional)                                                      |
+| `--verbose`, `-v` | Print progress (each asset and N/total)                                                         |
+| `--repair`        | Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated |
+
 
 **Example:**
 
@@ -311,19 +345,60 @@ uv run media-search proxy --library disneyland --repair
 
 The `ai` group manages AI/vision models and the AI worker. Models are registered by name and version; the AI worker claims proxied assets, runs vision analysis (e.g. description, tags, OCR), and marks assets completed (or poisoned on error).
 
+**Default model:** A system-wide default AI model can be set with `ai default set`. Each library may override this via its target tagger (library default). The effective default for a library is the library’s target tagger if set, otherwise the system default. When you start the AI worker without `--analyzer`, it uses the effective default for the selected library (or the system default if no library is specified). The worker only claims assets whose effective target model matches the worker’s model.
+
+### ai default set name [version]
+
+Set the system default AI model. The model is resolved by name and optional version; if version is omitted, the latest registered version for that name (by id) is used. Setting `mock` (or `mock-analyzer`) as default is rejected unless `MEDIASEARCH_ALLOW_MOCK_DEFAULT=1` (for tests only).
+
+
+| Argument  | Description                                      |
+| --------- | ------------------------------------------------ |
+| `name`    | Model name (e.g. moondream2)                     |
+| `version` | Optional; if omitted, latest by id for that name  |
+
+
+**Example:**
+
+```bash
+uv run media-search ai default set moondream2
+uv run media-search ai default set moondream2 2025-01-09
+```
+
+---
+
+### ai default show
+
+Print the current system default AI model (id, name, version), or a message if none is set.
+
+**Example:**
+
+```bash
+uv run media-search ai default show
+```
+
+---
+
 ### ai start
 
 Start the AI worker. It runs until interrupted (Ctrl+C). The worker claims proxied image assets, runs the configured vision analyzer on their local proxy files, saves visual analysis to the asset, and sets status to completed (or poisoned on failure). Worker ID is auto-generated from hostname and a short UUID unless overridden.
 
 When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted.
 
-| Option | Description |
-|--------|-------------|
-| `--heartbeat` | Heartbeat interval in seconds (default: 15.0) |
-| `--worker-name` | Force a specific worker ID; defaults to auto-generated |
-| `--library` | Limit to this library slug only (optional) |
-| `--verbose`, `-v` | Print progress for each completed asset |
-| `--analyzer` | Which AI model to use: `mock` (default) or `moondream2` |
+When `--analyzer` is omitted, the worker uses the effective default: if `--library` was given, the library’s target tagger or (if null) the system default; otherwise the system default. If no default is set or the resolved model is `mock`, the command exits with an error (unless `MEDIASEARCH_ALLOW_MOCK_DEFAULT=1` in tests).
+
+With `--repair`, before the main loop the worker runs a one-time repair pass: it finds assets that are in status completed or analyzing but whose library’s effective target model differs from the model that produced their current analysis, sets their status to proxied so they are re-claimed and re-analyzed. Use with `--library` to repair only that library.
+
+
+| Option            | Description                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------- |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                     |
+| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                             |
+| `--library`       | Limit to this library slug only (optional)                                                        |
+| `--verbose`, `-v` | Print progress for each completed asset                                                           |
+| `--analyzer`      | AI model to use (e.g. mock, moondream2). If omitted, uses library or system default               |
+| `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop        |
+
 
 **Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile).
 
@@ -333,6 +408,7 @@ When `--library` is provided, the command exits with code 1 if the library is no
 uv run media-search ai start
 uv run media-search ai start --library nas-main --verbose
 uv run media-search ai start --analyzer moondream2
+uv run media-search ai start --library nas-main --repair
 ```
 
 ---
@@ -349,14 +425,16 @@ uv run media-search ai list
 
 ---
 
-### ai add \<name\> \<version\>
+### ai add name version
 
 Register an AI model by name and version. Useful for pre-registering models or when using a custom analyzer.
 
-| Argument | Description |
-|----------|-------------|
-| `name`   | Model name |
+
+| Argument  | Description   |
+| --------- | ------------- |
+| `name`    | Model name    |
 | `version` | Model version |
+
 
 **Example:**
 
@@ -366,17 +444,21 @@ uv run media-search ai add moondream 1.0
 
 ---
 
-### ai remove \<name\>
+### ai remove name
 
 Remove an AI model by name (all versions with that name are removed). Prompts for confirmation unless `--force` is used. **Fails with an error** if any asset references the model (e.g. has been analyzed by it); you must re-process or clear those assets before removing the model.
 
-| Argument | Description |
-|----------|-------------|
+
+| Argument | Description          |
+| -------- | -------------------- |
 | `name`   | Model name to remove |
 
-| Option | Description |
-|--------|-------------|
+
+
+| Option    | Description              |
+| --------- | ------------------------ |
 | `--force` | Skip confirmation prompt |
+
 
 **Example:**
 
@@ -490,13 +572,15 @@ The CLI does not currently support filtering search results by asset type. When 
 
 Tests are run via `test.sh` from the project root. Tests are categorized as **fast** (no DB, no AI), **slow** (need Postgres testcontainer), or **ai** (need real AI, e.g. moondream). Migration tests are separate and run only with `--all`.
 
-| Invocation | What runs |
-|------------|-----------|
-| `./test.sh` | Default: fast + slow (no ai, no migration) |
-| `./test.sh --fast` | Fast only (unit tests, mocks, no DB) |
-| `./test.sh --slow` | Slow only (tests that need Postgres) |
-| `./test.sh --ai` | AI only (tests that load/use moondream) |
-| `./test.sh --all` | Everything: fast, slow, ai, and migration tests |
+
+| Invocation         | What runs                                       |
+| ------------------ | ----------------------------------------------- |
+| `./test.sh`        | Default: fast + slow (no ai, no migration)      |
+| `./test.sh --fast` | Fast only (unit tests, mocks, no DB)            |
+| `./test.sh --slow` | Slow only (tests that need Postgres)            |
+| `./test.sh --ai`   | AI only (tests that load/use moondream)         |
+| `./test.sh --all`  | Everything: fast, slow, ai, and migration tests |
+
 
 Extra arguments are passed to pytest. Examples: `./test.sh --fast tests/test_storage.py`, `./test.sh tests/test_vision_factory.py -k mock`.
 
@@ -507,3 +591,4 @@ Extra arguments are passed to pytest. Examples: `./test.sh --fast tests/test_sto
 - **uv:** Use `uv run media-search` (or the installed `media-search` entry point) so the correct environment is used.
 - **Destructive commands:** `trash empty` and `trash empty-all` prompt for confirmation unless `--force` is given.
 - **Exit codes:** `0` on success; `1` on error (e.g. library not found, invalid status, slug collision on add).
+

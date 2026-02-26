@@ -241,6 +241,42 @@ class AssetRepository:
             )
             return session.execute(query).scalars().unique().one_or_none()
 
+    def get_asset_ids_expecting_reanalysis(
+        self,
+        effective_target_model_id: int,
+        library_slug: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> Sequence[tuple[int, str]]:
+        """
+        Return (asset_id, library_slug) for assets that should be re-analyzed: status in
+        (completed, analyzing), image extensions, and analysis_model_id IS DISTINCT FROM
+        effective_target_model_id. Used by AI worker --repair. Optionally filter by library_slug.
+        Ordered by id for stable batching.
+        """
+        with self._session_scope(write=False) as session:
+            q = """
+                SELECT a.id, a.library_id
+                FROM asset a
+                JOIN library l ON a.library_id = l.slug
+                WHERE l.deleted_at IS NULL
+                  AND a.status IN ('completed', 'analyzing')
+                  AND a.rel_path ~* :pattern
+                  AND a.analysis_model_id IS DISTINCT FROM :effective_target_model_id
+            """
+            params: dict = {
+                "pattern": _REPAIR_IMAGE_PATTERN,
+                "effective_target_model_id": effective_target_model_id,
+            }
+            if library_slug is not None:
+                q += " AND a.library_id = :library_slug"
+                params["library_slug"] = library_slug
+            q += " ORDER BY a.id LIMIT :limit OFFSET :offset"
+            params["limit"] = limit
+            params["offset"] = offset
+            rows = session.execute(text(q), params).fetchall()
+        return [(int(r[0]), str(r[1])) for r in rows]
+
     def claim_asset_by_status(
         self,
         worker_id: str,
@@ -248,11 +284,17 @@ class AssetRepository:
         supported_exts: list[str],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         library_slug: str | None = None,
+        *,
+        target_model_id: int | None = None,
+        system_default_model_id: int | None = None,
     ) -> Asset | None:
         """
         Claim one asset with status == current_status in a non-deleted library,
         with rel_path ending (case-insensitive) in supported_exts.
         When library_slug is set, only assets from that library are considered.
+        When target_model_id and system_default_model_id are set, only claim assets whose
+        library's effective target model (COALESCE(library.target_tagger_id, system_default))
+        equals target_model_id.
         Uses FOR UPDATE SKIP LOCKED. Sets status=processing, worker_id, lease_expires_at.
         Returns the Asset with library (slug, absolute_path) populated.
         """
@@ -266,6 +308,11 @@ class AssetRepository:
         if library_slug is not None:
             library_clause = " AND a.library_id = :library_slug"
             params["library_slug"] = library_slug
+        effective_target_clause = ""
+        if target_model_id is not None and system_default_model_id is not None:
+            effective_target_clause = " AND COALESCE(l.target_tagger_id, :system_default_model_id) = :target_model_id"
+            params["target_model_id"] = target_model_id
+            params["system_default_model_id"] = system_default_model_id
         with self._session_scope(write=True) as session:
             row = session.execute(
                 text(f"""
@@ -278,6 +325,7 @@ class AssetRepository:
                       AND a.status = :status
                       AND a.rel_path ~* :pattern
                       {library_clause}
+                      {effective_target_clause}
                     FOR UPDATE OF a SKIP LOCKED
                     LIMIT 1
                 """),

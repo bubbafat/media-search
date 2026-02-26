@@ -6,6 +6,7 @@ from sqlmodel import SQLModel
 
 from src.models.entities import AIModel, Asset, AssetStatus, AssetType, Library, SystemMetadata
 from src.repository.asset_repo import AssetRepository
+from src.repository.system_metadata_repo import SystemMetadataRepository
 
 pytestmark = [pytest.mark.slow]
 
@@ -341,6 +342,109 @@ def test_claim_asset_by_status_with_library_slug_returns_none_when_no_pending_in
         "worker-1", AssetStatus.pending, [".jpg"], library_slug=slug_b
     )
     assert claimed is None
+
+
+def test_claim_asset_by_status_filters_by_effective_target_model(engine, _session_factory):
+    """claim_asset_by_status with target_model_id and system_default_model_id only claims assets whose library effective target matches."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.pending)
+    session = _session_factory()
+    try:
+        session.add(AIModel(name="model_a", version="1"))
+        session.add(AIModel(name="model_b", version="1"))
+        session.commit()
+        rows = session.execute(
+            text("SELECT id FROM aimodel WHERE name IN ('model_a', 'model_b') ORDER BY name")
+        ).fetchall()
+        id_a, id_b = rows[0][0], rows[1][0]
+        session.add(
+            Library(
+                slug="eff-lib-default",
+                name="Default",
+                absolute_path="/tmp/eff-default",
+                is_active=True,
+                sampling_limit=100,
+                target_tagger_id=None,
+            )
+        )
+        session.add(
+            Library(
+                slug="eff-lib-a",
+                name="A",
+                absolute_path="/tmp/eff-a",
+                is_active=True,
+                sampling_limit=100,
+                target_tagger_id=id_a,
+            )
+        )
+        session.add(
+            Library(
+                slug="eff-lib-b",
+                name="B",
+                absolute_path="/tmp/eff-b",
+                is_active=True,
+                sampling_limit=100,
+                target_tagger_id=id_b,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    system_metadata_repo = SystemMetadataRepository(_session_factory)
+    system_metadata_repo.set_value(SystemMetadataRepository.DEFAULT_AI_MODEL_ID_KEY, str(id_a))
+
+    asset_repo.upsert_asset("eff-lib-default", "d.jpg", AssetType.image, 0.0, 100)
+    asset_repo.upsert_asset("eff-lib-a", "a.jpg", AssetType.image, 0.0, 100)
+    asset_repo.upsert_asset("eff-lib-b", "b.jpg", AssetType.image, 0.0, 100)
+    session = _session_factory()
+    try:
+        session.execute(
+            text("UPDATE asset SET status = 'proxied' WHERE library_id IN ('eff-lib-default', 'eff-lib-a', 'eff-lib-b')")
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    claimed1 = asset_repo.claim_asset_by_status(
+        "worker-a",
+        AssetStatus.proxied,
+        [".jpg"],
+        target_model_id=id_a,
+        system_default_model_id=id_a,
+    )
+    assert claimed1 is not None
+    assert claimed1.library_id in ("eff-lib-default", "eff-lib-a")
+
+    claimed2 = asset_repo.claim_asset_by_status(
+        "worker-a",
+        AssetStatus.proxied,
+        [".jpg"],
+        target_model_id=id_a,
+        system_default_model_id=id_a,
+    )
+    assert claimed2 is not None
+    assert claimed2.library_id in ("eff-lib-default", "eff-lib-a")
+    assert claimed2.id != claimed1.id
+
+    claimed3 = asset_repo.claim_asset_by_status(
+        "worker-a",
+        AssetStatus.proxied,
+        [".jpg"],
+        target_model_id=id_a,
+        system_default_model_id=id_a,
+    )
+    assert claimed3 is None
+
+    claimed_b = asset_repo.claim_asset_by_status(
+        "worker-b",
+        AssetStatus.proxied,
+        [".jpg"],
+        target_model_id=id_b,
+        system_default_model_id=id_a,
+    )
+    assert claimed_b is not None
+    assert claimed_b.library_id == "eff-lib-b"
 
 
 def test_count_pending(engine, _session_factory):

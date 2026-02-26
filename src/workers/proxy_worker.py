@@ -104,9 +104,8 @@ class ProxyWorker(BaseWorker):
             if self._verbose:
                 total = self._initial_pending if self._initial_pending is not None else "?"
                 _log.info(
-                    "Proxied asset %s (%s/%s) %s/%s",
+                    "Proxied asset %s (%s) %s/%s",
                     asset.id,
-                    asset.library.slug,
                     asset.rel_path,
                     self._processed_count,
                     total,

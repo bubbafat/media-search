@@ -225,6 +225,25 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 ).fetchone()
                 assert row is not None, f"{table} must have a foreign key constraint"
         assert "video_scenes" in EXPECTED_TABLES and "video_active_state" in EXPECTED_TABLES
+
+        # Assert default AI model is moondream2 (migration 012)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT key, value FROM system_metadata WHERE key = 'default_ai_model_id'"
+                )
+            ).fetchone()
+            assert row is not None, "default_ai_model_id must be set in system_metadata"
+            default_id = int(row[1])
+            model_row = conn.execute(
+                text(
+                    "SELECT id, name, version FROM aimodel WHERE id = :id"
+                ),
+                {"id": default_id},
+            ).fetchone()
+            assert model_row is not None, "default_ai_model_id must reference an existing aimodel row"
+            assert model_row[1] == "moondream2", "default AI model must be moondream2"
+            assert model_row[2] == "2025-01-09", "moondream2 version must be 2025-01-09"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

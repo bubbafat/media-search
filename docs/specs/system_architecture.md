@@ -35,7 +35,7 @@ By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-d
 - `deleted_at` (DateTime | None): Timestamp for soft-deletion. If NOT NULL, the library and its assets are considered "in the trash" and hidden from standard worker queries.
 - `is_active` (Boolean): The master "Pause" switch.
 - `scan_status` (Enum): `idle`, `scan_req`, `scanning`.
-- `target_tagger_id` (FK): Links to `AIModel`. Defines the "Goal" state for assets.
+- `target_tagger_id` (FK): Links to `AIModel`. Defines the "Goal" state for assets. If NULL, the effective target is the system default AI model (stored in `system_metadata` and used at claim/repair time).
 - `sampling_limit` (Integer): The hard cap on frames extracted per video (Default: 100).
 - `sampling_policy` (JSONB): Configuration for the extraction strategy.
 

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import socket
 import sys
 import uuid
@@ -17,7 +18,10 @@ from src.models.entities import AssetStatus, ScanStatus, WorkerState
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 from src.repository.search_repo import SearchRepository
-from src.repository.system_metadata_repo import SystemMetadataRepository
+from src.repository.system_metadata_repo import (
+    ALLOW_MOCK_DEFAULT_ENV,
+    SystemMetadataRepository,
+)
 from src.repository.worker_repo import WorkerRepository
 from src.workers.ai_worker import AIWorker
 from src.workers.proxy_worker import ProxyWorker
@@ -32,6 +36,8 @@ asset_app = typer.Typer(help="Manage individual assets.")
 app.add_typer(asset_app, name="asset")
 ai_app = typer.Typer(help="Manage AI models and workers")
 app.add_typer(ai_app, name="ai")
+ai_default_app = typer.Typer(help="Get or set the system default AI model.")
+ai_app.add_typer(ai_default_app, name="default")
 
 
 def _get_session_factory():
@@ -423,25 +429,84 @@ def proxy(
         typer.secho(f"Worker {worker_id} shutting down...")
 
 
+def _resolve_effective_default_model_id(
+    system_metadata_repo: SystemMetadataRepository,
+    library_repo: LibraryRepository,
+    library_slug: str | None,
+) -> int | None:
+    """Resolve effective default: COALESCE(library.target_tagger_id, system_default_id)."""
+    system_default_id = system_metadata_repo.get_default_ai_model_id()
+    if library_slug is not None:
+        lib = library_repo.get_by_slug(library_slug)
+        if lib is None:
+            return None
+        return lib.target_tagger_id if lib.target_tagger_id is not None else system_default_id
+    return system_default_id
+
+
+def _aimodel_name_is_mock(name: str) -> bool:
+    """True if this aimodel name should be treated as mock (forbidden as default unless override)."""
+    return name in ("mock", "mock-analyzer")
+
+
+@ai_default_app.command("set")
+def ai_default_set(
+    name: str = typer.Argument(..., help="Model name (e.g. moondream2)."),
+    version: str | None = typer.Argument(None, help="Model version; if omitted, latest by id for that name."),
+) -> None:
+    """Set the system default AI model. Resolved by name and optional version. Rejects 'mock' unless MEDIASEARCH_ALLOW_MOCK_DEFAULT=1."""
+    session_factory = _get_session_factory()
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+    model = system_metadata_repo.get_ai_model_by_name_version(name, version)
+    if model is None:
+        typer.secho(
+            f"No AI model found for name '{name}'" + (f" version '{version}'" if version else "") + ".",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    assert model.id is not None
+    try:
+        system_metadata_repo.set_default_ai_model_id(model.id)
+        typer.secho(f"Default AI model set to '{model.name}' version '{model.version}' (id={model.id}).", fg=typer.colors.GREEN)
+    except ValueError as e:
+        typer.secho(str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+
+@ai_default_app.command("show")
+def ai_default_show() -> None:
+    """Show the current system default AI model (id, name, version) or a message if unset."""
+    session_factory = _get_session_factory()
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+    model_id = system_metadata_repo.get_default_ai_model_id()
+    if model_id is None:
+        typer.echo("No default AI model set. Use 'ai default set <name> [version]' to set one.")
+        return
+    model = system_metadata_repo.get_ai_model_by_id(model_id)
+    if model is None:
+        typer.echo(f"Default AI model id {model_id} is set but the model row was not found (may have been removed).")
+        return
+    typer.echo(f"Default AI model: id={model.id} name={model.name} version={model.version}")
+
+
 @ai_app.command("start")
 def ai_start(
     heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
-    analyzer: str = typer.Option("mock", "--analyzer", help="Which AI model to use (mock or moondream2)."),
+    analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
+    repair: bool = typer.Option(False, "--repair", help="Before the main loop, set assets that need re-analysis (effective model changed) to proxied."),
 ) -> None:
     """Start the AI worker: claims proxied assets, runs vision analysis, marks completed."""
-    worker_id = (
-        worker_name
-        if worker_name is not None
-        else f"ai-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
-    )
-    typer.secho(f"Starting AI Worker: {worker_id} (analyzer: {analyzer})")
-
     session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+
     if library_slug is not None:
-        lib_repo = LibraryRepository(session_factory)
         lib = lib_repo.get_by_slug(library_slug)
         if lib is None:
             typer.echo(
@@ -450,9 +515,41 @@ def ai_start(
             )
             raise typer.Exit(1)
 
-    asset_repo = AssetRepository(session_factory)
-    worker_repo = WorkerRepository(session_factory)
-    system_metadata_repo = SystemMetadataRepository(session_factory)
+    resolved_analyzer: str
+    system_default_model_id: int | None = system_metadata_repo.get_default_ai_model_id()
+
+    if analyzer is not None:
+        resolved_analyzer = analyzer
+    else:
+        effective_id = _resolve_effective_default_model_id(system_metadata_repo, lib_repo, library_slug)
+        if effective_id is None:
+            typer.secho(
+                "No default AI model. Set one with 'ai default set <name> [version]' or use --analyzer.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        model = system_metadata_repo.get_ai_model_by_id(effective_id)
+        if model is None:
+            typer.secho(f"Default AI model id {effective_id} not found.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
+        if _aimodel_name_is_mock(model.name) and os.environ.get(ALLOW_MOCK_DEFAULT_ENV, "").strip() != "1":
+            typer.secho(
+                f"Cannot use 'mock' as default. Set {ALLOW_MOCK_DEFAULT_ENV}=1 only in tests if needed.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        resolved_analyzer = model.name
+        if resolved_analyzer == "mock-analyzer":
+            resolved_analyzer = "mock"
+
+    worker_id = (
+        worker_name
+        if worker_name is not None
+        else f"ai-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+    )
+    typer.secho(f"Starting AI Worker: {worker_id} (analyzer: {resolved_analyzer})")
 
     if verbose:
         root = logging.getLogger("src.workers")
@@ -469,7 +566,10 @@ def ai_start(
         system_metadata_repo=system_metadata_repo,
         library_slug=library_slug,
         verbose=verbose,
-        analyzer_name=analyzer,
+        analyzer_name=resolved_analyzer,
+        system_default_model_id=system_default_model_id,
+        repair=repair,
+        library_repo=lib_repo if repair else None,
     )
     try:
         worker.run()
