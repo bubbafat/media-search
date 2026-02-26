@@ -6,9 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from src.api.main import app, _get_search_repo
+from src.api.main import app, _get_search_repo, _get_ui_repo
 from src.core import config as config_module
 from src.repository.search_repo import SearchRepository
+from src.repository.system_metadata_repo import SystemMetadataRepository
+from src.repository.ui_repo import UIRepository
 
 pytestmark = [pytest.mark.slow]
 
@@ -87,7 +89,10 @@ def search_api_postgres():
                 )
                 session.commit()
 
-            yield SearchRepository(session_factory)
+            search_repo = SearchRepository(session_factory)
+            system_metadata_repo = SystemMetadataRepository(session_factory)
+            ui_repo = UIRepository(session_factory, system_metadata_repo.get_schema_version)
+            yield search_repo, ui_repo
         finally:
             if prev is not None:
                 os.environ["DATABASE_URL"] = prev
@@ -97,7 +102,9 @@ def search_api_postgres():
 
 
 def test_api_search_semantic_returns_image_and_video(search_api_postgres):
-    app.dependency_overrides[_get_search_repo] = lambda: search_api_postgres
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
     try:
         client = TestClient(app)
         res = client.get("/api/search", params={"q": "car"})
@@ -113,18 +120,27 @@ def test_api_search_semantic_returns_image_and_video(search_api_postgres):
         assert by_id[101]["thumbnail_url"].endswith("/media/testlib/thumbnails/101/101.jpg")
         assert by_id[101]["preview_url"] is None
         assert by_id[101]["match_ratio"] == 100.0
+        assert by_id[101]["library_slug"] == "testlib"
+        assert by_id[101]["library_name"] == "Test Library"
+        assert by_id[101]["filename"] == "a.jpg"
 
         assert by_id[202]["type"] == "video"
         assert by_id[202]["preview_url"].endswith("/media/video_scenes/testlib/202/preview.webp")
         assert by_id[202]["best_scene_ts"] == "00:03"
         assert by_id[202]["best_scene_ts_seconds"] == 3.0
         assert 0.0 <= by_id[202]["match_ratio"] <= 100.0
+        assert by_id[202]["library_slug"] == "testlib"
+        assert by_id[202]["library_name"] == "Test Library"
+        assert by_id[202]["filename"] == "b.mp4"
     finally:
         app.dependency_overrides.pop(_get_search_repo, None)
+        app.dependency_overrides.pop(_get_ui_repo, None)
 
 
 def test_api_search_ocr_uses_ocr_text(search_api_postgres):
-    app.dependency_overrides[_get_search_repo] = lambda: search_api_postgres
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
     try:
         client = TestClient(app)
         res = client.get("/api/search", params={"ocr": "hello"})
@@ -135,4 +151,5 @@ def test_api_search_ocr_uses_ocr_text(search_api_postgres):
         assert 202 in ids
     finally:
         app.dependency_overrides.pop(_get_search_repo, None)
+        app.dependency_overrides.pop(_get_ui_repo, None)
 

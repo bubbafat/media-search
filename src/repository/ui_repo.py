@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from src.models.entities import Library
 from src.models.entities import WorkerState
 from src.models.entities import WorkerStatus as WorkerStatusEntity
 
@@ -92,3 +93,15 @@ class UIRepository:
                 total_assets=int(total) if total is not None else 0,
                 pending_assets=int(pending) if pending is not None else 0,
             )
+
+    def get_library_names(self, slugs: list[str]) -> dict[str, str]:
+        """Return slug -> name for the given library slugs. Empty list returns {}."""
+        if not slugs:
+            return {}
+        with self._session_scope() as session:
+            rows = (
+                session.execute(select(Library).where(Library.slug.in_(slugs)))
+                .scalars()
+                .all()
+            )
+            return {r.slug: r.name or r.slug for r in rows}

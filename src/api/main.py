@@ -1,5 +1,6 @@
 """Mission Control API: dashboard and dependencies."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Literal
@@ -63,6 +64,9 @@ class SearchResultOut(BaseModel):
     match_ratio: float  # percentage (0.0 to 100.0)
     best_scene_ts: str | None = None  # formatted MM:SS
     best_scene_ts_seconds: float | None = None  # raw seconds for deep-linking
+    library_slug: str
+    library_name: str
+    filename: str
 
 
 def _format_mmss(seconds: float) -> str:
@@ -79,6 +83,7 @@ def api_search(
     library_slug: str | None = Query(default=None, description="Optional library slug filter"),
     limit: int = Query(default=50, ge=1, le=500),
     search_repo: SearchRepository = Depends(_get_search_repo),
+    ui_repo: UIRepository = Depends(_get_ui_repo),
 ) -> list[SearchResultOut]:
     results = search_repo.search_assets(
         query_string=q,
@@ -86,6 +91,9 @@ def api_search(
         library_slug=library_slug,
         limit=limit,
     )
+
+    library_ids = list({r.asset.library_id for r in results})
+    names = ui_repo.get_library_names(library_ids)
 
     out: list[SearchResultOut] = []
     for r in results:
@@ -101,6 +109,9 @@ def api_search(
         )
         best_ts_seconds = r.best_scene_ts if r.best_scene_ts is not None else None
         best_ts = _format_mmss(best_ts_seconds) if best_ts_seconds is not None else None
+        lib_slug = asset.library_id
+        lib_name = names.get(lib_slug, lib_slug)
+        filename = os.path.basename(asset.rel_path)
         out.append(
             SearchResultOut(
                 asset_id=asset.id,
@@ -111,6 +122,9 @@ def api_search(
                 match_ratio=round(r.match_ratio * 100.0, 1),
                 best_scene_ts=best_ts,
                 best_scene_ts_seconds=best_ts_seconds,
+                library_slug=lib_slug,
+                library_name=lib_name,
+                filename=filename,
             )
         )
     return out

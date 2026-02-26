@@ -34,12 +34,19 @@ The main page is **GET /dashboard**. It returns server-rendered HTML (Jinja2) an
 ### Search
 
 - **Mode toggle** — Semantic (full-text on analysis text) vs OCR (full-text on OCR text).
-- **Search input** — Enter triggers search; typing also triggers debounced search.
-- **Results grid** — Responsive grid (`grid-cols-2 md:grid-cols-4 lg:grid-cols-6`):
-  - **Images** show static thumbnails.
-  - **Videos** show static thumbnails by default and swap to animated WebP previews on hover (when available).
-  - **Match density** is shown as a subtle bar along the bottom of video cards.
-  - **Jump badge** shows the best match timestamp (MM:SS) when available.
+- **Search input** — Search runs only when you press **Enter** or click the **Search** button (no search-while-typing).
+- **Results** — Each result shows library name, filename, and **Match %** (relevance). For videos, a **Jump** badge shows the best match timestamp (MM:SS) and a density bar along the bottom of the card. Images and videos both show a Match percentage (e.g. 100% for images, or scene density for videos).
+
+### Layout selector
+
+When results are shown, you can switch how they are displayed:
+
+- **Masonry** — Multi-column flow with variable-height cards (columns adapt to viewport).
+- **Bento** — First result is large; remaining results in a dense grid.
+- **List** — Single column of horizontal rows (thumbnail left, library · filename and Match % on the right).
+- **Filmstrip** — One horizontal scrollable strip per library; each library has a section heading and its results in a strip.
+
+The chosen layout is persisted in browser storage and restored on the next visit.
 
 ### System Status
 
