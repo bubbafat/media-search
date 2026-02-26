@@ -23,6 +23,7 @@ class WorkerFleetItem(BaseModel):
     worker_id: str
     state: str
     version: str
+    stats: dict | None = None
 
 
 class LibraryStats(BaseModel):
@@ -75,6 +76,7 @@ class UIRepository:
                     worker_id=r.worker_id,
                     state=r.state.value if isinstance(r.state, WorkerState) else str(r.state),
                     version=version,
+                    stats=r.stats if isinstance(r.stats, dict) or r.stats is None else dict(r.stats),
                 )
                 for r in rows
             ]

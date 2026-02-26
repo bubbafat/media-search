@@ -1,6 +1,39 @@
 # MediaSearch API / Data Model User Guide
 
-This document describes the MediaSearch **data model**: entities (tables), enums, and how they relate. The system uses PostgreSQL 16+ and is accessed via **repositories** and **workers**; there are no REST CRUD HTTP endpoints for these entities. The only HTTP surface is the Mission Control dashboard (see [UI User Guide](ui_user_guide.md)).
+This document describes the MediaSearch **data model**: entities (tables), enums, and how they relate. The system uses PostgreSQL 16+ and is accessed via **repositories** and **workers**; there are no REST CRUD HTTP endpoints for these entities. The HTTP surface is intentionally small and UI-focused (see [UI User Guide](ui_user_guide.md)).
+
+---
+
+## UI HTTP endpoints
+
+These endpoints are intended for the Mission Control / Search UI.
+
+### GET /dashboard
+
+Server-rendered HTML page (Jinja2) that hosts the search-first UI.
+
+### GET /api/search
+
+Search endpoint used by the UI result grid. Query parameters:
+
+- `q`: Semantic (“vibe”) full-text query.
+- `ocr`: OCR-only full-text query.
+- `library_slug` (optional): Limit results to a library.
+- `limit` (optional, default 50): Max results.
+
+Response: JSON array of items with:
+
+- `asset_id`, `type` (`image` | `video`)
+- `thumbnail_url` (derivative URL)
+- `preview_url` (animated preview WebP URL if available)
+- `final_rank`
+- `match_ratio` (percentage)
+- `best_scene_ts` (formatted `MM:SS`)
+- `best_scene_ts_seconds` (raw seconds; used for deep-linking behaviors)
+
+### GET /media/...
+
+Static file mount rooted at `data_dir`. This serves derivative media only (thumbnails, animated previews, scene JPEGs, etc.). It must never be used to expose or write to source libraries.
 
 ---
 

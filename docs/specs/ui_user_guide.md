@@ -1,6 +1,10 @@
 # MediaSearch UI User Guide
 
-The MediaSearch web UI is **Mission Control**: a single-page dashboard for system status. It shows schema version, database connectivity, the worker fleet, and aggregate library stats. There is no asset browser, library CRUD, or search UI yet—only this dashboard.
+The MediaSearch web UI is a **Search-First dashboard** (Mission Control + Search). It provides:
+
+- A fast search box with a Semantic vs OCR toggle.
+- A responsive results grid (thumbnails, animated WebP previews on hover for videos).
+- A collapsible System Status section showing worker health and stats.
 
 ---
 
@@ -20,29 +24,42 @@ Default URL: **http://127.0.0.1:8000**
 
 ## Dashboard (GET /dashboard)
 
-The only route is **GET /dashboard**. It returns server-rendered HTML (Jinja2); no separate JSON API is used for the dashboard data.
+The main page is **GET /dashboard**. It returns server-rendered HTML (Jinja2) and uses a small JSON API for search results.
 
 ### Header
 
 - **System Version** — Schema version from `system_metadata` (e.g. `V1`). Shown as “V{schema_version}”.
 - **DB Status** — Connection status: **Connected** (green) or **Error** (red), depending on whether a simple DB check succeeds.
 
-### Worker Fleet
+### Search
 
-A grid of cards, one per registered worker in `worker_status`:
+- **Mode toggle** — Semantic (full-text on analysis text) vs OCR (full-text on OCR text).
+- **Search input** — Enter triggers search; typing also triggers debounced search.
+- **Results grid** — Responsive grid (`grid-cols-2 md:grid-cols-4 lg:grid-cols-6`):
+  - **Images** show static thumbnails.
+  - **Videos** show static thumbnails by default and swap to animated WebP previews on hover (when available).
+  - **Match density** is shown as a subtle bar along the bottom of video cards.
+  - **Jump badge** shows the best match timestamp (MM:SS) when available.
 
-- **Worker ID** — Unique identifier (e.g. hostname + UUID).
-- **State** — Current worker state: `idle`, `processing`, `paused`, or `offline`.
-- **Version** — Schema version (same for all workers in the current implementation).
+### System Status
 
-If no workers are registered, the section shows: “No workers registered.”
+The “System Status” section shows workers from `worker_status`:
 
-### Library Stats
+- **worker_id** — Unique identifier (e.g. hostname + UUID).
+- **state** — `idle`, `processing`, `paused`, or `offline`.
+- **files_processed** — Derived from the worker’s `stats` JSONB if present.
 
-Two aggregate counts from the `asset` table:
+If no workers are registered, the table shows: “No workers registered.”
 
-- **Total Assets** — Total number of assets across all libraries.
-- **Pending Assets** — Number of assets with status `pending`.
+---
+
+## Media URLs (derivatives only)
+
+The UI never writes to source libraries and only loads **derivatives from `data_dir`**:
+
+- **Static mount**: `GET /media/...` serves files rooted at `data_dir`.
+- **Thumbnails**: `/media/{library_slug}/thumbnails/{asset_id % 1000}/{asset_id}.jpg`
+- **Animated previews** (videos): `/media/{asset.preview_path}` (when `asset.preview_path` is set).
 
 ---
 
@@ -52,7 +69,7 @@ The dashboard is built with:
 
 - **FastAPI** — Web framework and dependency injection.
 - **Jinja2** — Server-side HTML templates.
-- **HTMX** — For optional dynamic behavior (included in the template).
+- **Alpine.js** — Lightweight interactivity (search, hover previews, modal).
 - **DaisyUI** — UI component classes.
 - **Tailwind CSS** — Via DaisyUI’s base.
 
@@ -64,4 +81,4 @@ Templates live under `src/api/templates/` (e.g. `dashboard.html`).
 
 - **Single page:** Only the dashboard exists. There are no other pages or routes for the web UI.
 - **Read-only:** The dashboard only displays data; it does not create, update, or delete libraries or assets. Use the [CLI](cli_user_guide.md) for those operations.
-- **No asset browser or search:** Browsing assets, searching, or viewing thumbnails/frames is not implemented in the UI.
+- **Derivatives only:** The UI only loads thumbnails and previews from `data_dir` via `/media/...` (no source library access).

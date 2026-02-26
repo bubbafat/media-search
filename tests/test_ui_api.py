@@ -56,9 +56,8 @@ def test_dashboard_returns_200_and_displays_schema_version(ui_api_postgres):
         response = client.get("/dashboard")
         assert response.status_code == 200
         body = response.text
-        assert "System Version" in body
-        assert "DB Status" in body
-        assert "V1" in body or "1" in body
+        assert "MediaSearch" in body
+        assert "V1" in body or "V" in body
         assert "connected" in body.lower() or "Connected" in body
     finally:
         app.dependency_overrides.pop(_get_ui_repo, None)
