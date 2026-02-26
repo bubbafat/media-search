@@ -83,7 +83,7 @@ def search_api_postgres():
                         ) VALUES (
                           202, 3.0, 6.0, 'a car driving',
                           '{"moondream":{"description":"a car driving","ocr_text":"HELLO FROM VIDEO"}}'::jsonb,
-                          1.0, '/tmp/rep.jpg', 'forced'
+                          1.0, 'video_scenes/testlib/202/3.000_6.000.jpg', 'forced'
                         )
                         """
                     )

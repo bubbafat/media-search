@@ -20,8 +20,9 @@ def _make_jpeg(path: Path, size: tuple[int, int] = (100, 100)) -> None:
 
 def test_build_preview_webp_produces_valid_file(tmp_path):
     """build_preview_webp with scene JPEGs produces preview.webp in the scene folder."""
-    jpeg1 = tmp_path / "0.000_3.000.jpg"
-    jpeg2 = tmp_path / "3.000_6.000.jpg"
+    scenes_dir = tmp_path / "video_scenes" / "lib" / "42"
+    jpeg1 = scenes_dir / "0.000_3.000.jpg"
+    jpeg2 = scenes_dir / "3.000_6.000.jpg"
     _make_jpeg(jpeg1)
     _make_jpeg(jpeg2)
 
@@ -34,7 +35,7 @@ def test_build_preview_webp_produces_valid_file(tmp_path):
             description=None,
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path=str(jpeg1),
+            rep_frame_path="video_scenes/lib/42/0.000_3.000.jpg",
             keep_reason="phash",
         ),
         VideoSceneListItem(
@@ -44,12 +45,11 @@ def test_build_preview_webp_produces_valid_file(tmp_path):
             description=None,
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path=str(jpeg2),
+            rep_frame_path="video_scenes/lib/42/3.000_6.000.jpg",
             keep_reason="temporal",
         ),
     ]
 
-    scenes_dir = tmp_path / "video_scenes" / "lib" / "42"
     result = build_preview_webp(42, "lib", mock_repo, tmp_path)
 
     assert result is not None
@@ -84,7 +84,7 @@ def test_build_preview_webp_returns_none_when_no_loadable_frames(tmp_path):
             description=None,
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path=str(tmp_path / "missing.jpg"),
+            rep_frame_path="video_scenes/lib/1/missing.jpg",
             keep_reason="phash",
         ),
     ]
@@ -97,7 +97,7 @@ def test_build_preview_webp_returns_none_when_no_loadable_frames(tmp_path):
 
 def test_build_preview_webp_single_frame(tmp_path):
     """build_preview_webp with one scene produces valid single-frame WebP."""
-    jpeg1 = tmp_path / "only.jpg"
+    jpeg1 = tmp_path / "video_scenes" / "lib" / "1" / "only.jpg"
     _make_jpeg(jpeg1)
     mock_repo = MagicMock()
     mock_repo.list_scenes.return_value = [
@@ -108,7 +108,7 @@ def test_build_preview_webp_single_frame(tmp_path):
             description=None,
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path=str(jpeg1),
+            rep_frame_path="video_scenes/lib/1/only.jpg",
             keep_reason="forced",
         ),
     ]
@@ -125,7 +125,7 @@ def test_build_preview_webp_single_frame(tmp_path):
 def test_build_preview_webp_preserves_aspect_ratio_long_side_320(tmp_path):
     """Preview uses 320px as long side and preserves aspect ratio (no square padding)."""
     # Landscape: 400×200 -> 320×160
-    landscape_jpeg = tmp_path / "landscape.jpg"
+    landscape_jpeg = tmp_path / "video_scenes" / "lib" / "1" / "landscape.jpg"
     _make_jpeg(landscape_jpeg, size=(400, 200))
     mock_repo_landscape = MagicMock()
     mock_repo_landscape.list_scenes.return_value = [
@@ -136,7 +136,7 @@ def test_build_preview_webp_preserves_aspect_ratio_long_side_320(tmp_path):
             description=None,
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path=str(landscape_jpeg),
+            rep_frame_path="video_scenes/lib/1/landscape.jpg",
             keep_reason="phash",
         ),
     ]
@@ -149,7 +149,7 @@ def test_build_preview_webp_preserves_aspect_ratio_long_side_320(tmp_path):
         assert (w, h) == (320, 160)
 
     # Portrait: 200×400 -> 160×320
-    portrait_jpeg = tmp_path / "portrait.jpg"
+    portrait_jpeg = tmp_path / "video_scenes" / "lib" / "2" / "portrait.jpg"
     _make_jpeg(portrait_jpeg, size=(200, 400))
     mock_repo_portrait = MagicMock()
     mock_repo_portrait.list_scenes.return_value = [
@@ -160,7 +160,7 @@ def test_build_preview_webp_preserves_aspect_ratio_long_side_320(tmp_path):
             description=None,
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path=str(portrait_jpeg),
+            rep_frame_path="video_scenes/lib/2/portrait.jpg",
             keep_reason="phash",
         ),
     ]

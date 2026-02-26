@@ -154,6 +154,10 @@ def test_indexing_resume_continues_and_clears_state(engine, _session_factory, tm
     """Resume: pre-seed one scene and active_state; mock segmenter yields one more scene (EOF). Assert 2 scenes and no active_state."""
     asset_repo, video_repo = _create_tables_and_seed(engine, _session_factory)
     asset_id = _ensure_library_and_asset(_session_factory, "vid-int-resume")
+    # Pre-seed JPEG for the pre-inserted scene (build_preview_webp loads it)
+    rep_frame_dir = tmp_path / "video_scenes" / "vid-int-resume" / str(asset_id)
+    rep_frame_dir.mkdir(parents=True)
+    (rep_frame_dir / "0.000_5.000.jpg").write_bytes(b"fake jpeg")
     # Pre-insert one scene and active state (simulate crash after first scene)
     video_repo.save_scene_and_update_state(
         asset_id,
@@ -163,7 +167,7 @@ def test_indexing_resume_continues_and_clears_state(engine, _session_factory, tm
             description=None,
             metadata=None,
             sharpness_score=10.0,
-            rep_frame_path=str(tmp_path / "0_5.jpg"),
+            rep_frame_path=f"video_scenes/vid-int-resume/{asset_id}/0.000_5.000.jpg",
             keep_reason="phash",
         ),
         VideoActiveState(

@@ -141,7 +141,7 @@ def run_video_scene_indexing(
                 description=description,
                 metadata=metadata,
                 sharpness_score=scene.sharpness_score,
-                rep_frame_path=str(rep_path),
+                rep_frame_path=rep_path.relative_to(data_dir).as_posix(),
                 keep_reason=scene.keep_reason.value,
             )
             # ARCHITECTURE NOTE: We intentionally only update the active state when a scene CLOSES.

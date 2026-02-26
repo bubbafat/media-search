@@ -64,6 +64,8 @@ def test_list_scenes_returns_ordered_scenes(engine, _session_factory):
     """list_scenes returns all scenes for the asset ordered by start_ts with all fields."""
     _, video_repo = _create_tables_and_seed(engine, _session_factory)
     asset_id = _ensure_library_and_asset(_session_factory, "vid-lib-list")
+    rel_path_1 = f"video_scenes/vid-lib-list/{asset_id}/0.000_5.000.jpg"
+    rel_path_2 = f"video_scenes/vid-lib-list/{asset_id}/5.000_12.000.jpg"
     video_repo.save_scene_and_update_state(
         asset_id,
         VideoSceneRow(
@@ -72,7 +74,7 @@ def test_list_scenes_returns_ordered_scenes(engine, _session_factory):
             description="Second",
             metadata={"key": "value"},
             sharpness_score=20.0,
-            rep_frame_path="/data/2.jpg",
+            rep_frame_path=rel_path_2,
             keep_reason="temporal",
         ),
         None,
@@ -85,7 +87,7 @@ def test_list_scenes_returns_ordered_scenes(engine, _session_factory):
             description="First",
             metadata=None,
             sharpness_score=10.0,
-            rep_frame_path="/data/1.jpg",
+            rep_frame_path=rel_path_1,
             keep_reason="phash",
         ),
         None,
@@ -99,11 +101,12 @@ def test_list_scenes_returns_ordered_scenes(engine, _session_factory):
     assert scenes[0].description == "First"
     assert scenes[0].metadata is None
     assert scenes[0].keep_reason == "phash"
-    assert scenes[0].rep_frame_path == "/data/1.jpg"
+    assert scenes[0].rep_frame_path == rel_path_1
     assert scenes[1].start_ts == 5.0
     assert scenes[1].end_ts == 12.0
     assert scenes[1].description == "Second"
     assert scenes[1].metadata == {"key": "value"}
+    assert scenes[1].rep_frame_path == rel_path_2
     assert scenes[1].keep_reason == "temporal"
 
 
@@ -120,7 +123,7 @@ def test_get_asset_ids_with_scenes_returns_assets_with_scenes(engine, _session_f
             description=None,
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path="/data/a.jpg",
+            rep_frame_path=f"video_scenes/lib-repair-a/{asset_id_a}/0.000_3.000.jpg",
             keep_reason="phash",
         ),
         None,
@@ -133,7 +136,7 @@ def test_get_asset_ids_with_scenes_returns_assets_with_scenes(engine, _session_f
             description=None,
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path="/data/b.jpg",
+            rep_frame_path=f"video_scenes/lib-repair-b/{asset_id_b}/0.000_5.000.jpg",
             keep_reason="forced",
         ),
         None,
@@ -168,7 +171,7 @@ def test_clear_index_for_asset_removes_scenes_and_active_state(engine, _session_
             description="First",
             metadata=None,
             sharpness_score=10.0,
-            rep_frame_path="/data/1.jpg",
+            rep_frame_path=f"video_scenes/vid-lib-clear/{asset_id}/0.000_5.000.jpg",
             keep_reason="phash",
         ),
         VideoActiveState("abc", 0.0, 2.0, 10.0),
@@ -181,7 +184,7 @@ def test_clear_index_for_asset_removes_scenes_and_active_state(engine, _session_
             description="Second",
             metadata={},
             sharpness_score=20.0,
-            rep_frame_path="/data/2.jpg",
+            rep_frame_path=f"video_scenes/vid-lib-clear/{asset_id}/5.000_12.000.jpg",
             keep_reason="temporal",
         ),
         None,
@@ -220,7 +223,7 @@ def test_get_max_end_ts_returns_max(engine, _session_factory):
         description=None,
         metadata={"showinfo": {}},
         sharpness_score=100.0,
-        rep_frame_path="/data/scenes/1.jpg",
+        rep_frame_path=f"video_scenes/vid-lib-max/{asset_id}/0.000_10.500.jpg",
         keep_reason="phash",
     )
     video_repo.save_scene_and_update_state(asset_id, scene, None)
@@ -232,7 +235,7 @@ def test_get_max_end_ts_returns_max(engine, _session_factory):
         description=None,
         metadata=None,
         sharpness_score=80.0,
-        rep_frame_path="/data/scenes/2.jpg",
+        rep_frame_path=f"video_scenes/vid-lib-max/{asset_id}/10.500_25.000.jpg",
         keep_reason="temporal",
     )
     video_repo.save_scene_and_update_state(asset_id, scene2, None)
@@ -258,7 +261,7 @@ def test_get_last_scene_description_returns_most_recent(engine, _session_factory
             description="First scene",
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path="/data/1.jpg",
+            rep_frame_path=f"video_scenes/vid-lib-desc/{asset_id}/0.000_5.000.jpg",
             keep_reason="phash",
         ),
         None,
@@ -271,7 +274,7 @@ def test_get_last_scene_description_returns_most_recent(engine, _session_factory
             description="Second scene",
             metadata=None,
             sharpness_score=2.0,
-            rep_frame_path="/data/2.jpg",
+            rep_frame_path=f"video_scenes/vid-lib-desc/{asset_id}/5.000_10.000.jpg",
             keep_reason="temporal",
         ),
         None,
@@ -297,7 +300,7 @@ def test_metadata_jsonb_persists_nested(engine, _session_factory):
         description="A person in a room",
         metadata=nested,
         sharpness_score=50.0,
-        rep_frame_path="/data/s.jpg",
+        rep_frame_path=f"video_scenes/vid-lib-jsonb/{asset_id}/0.000_3.000.jpg",
         keep_reason="phash",
     )
     video_repo.save_scene_and_update_state(asset_id, scene, None)
@@ -333,7 +336,7 @@ def test_get_scene_metadata_at_timestamp_returns_nearest_scene_moondream(
         description="First scene",
         metadata={"moondream": {"description": "first", "tags": ["a"], "ocr_text": "ONE"}},
         sharpness_score=10.0,
-        rep_frame_path="/s1.jpg",
+        rep_frame_path=f"video_scenes/vid-lib-ts-meta/{asset_id}/0.000_3.000.jpg",
         keep_reason="phash",
     )
     video_repo.save_scene_and_update_state(asset_id, scene1, None)
@@ -344,7 +347,7 @@ def test_get_scene_metadata_at_timestamp_returns_nearest_scene_moondream(
         description="Second scene",
         metadata={"moondream": {"description": "second", "tags": ["b"], "ocr_text": "TWO"}},
         sharpness_score=20.0,
-        rep_frame_path="/s2.jpg",
+        rep_frame_path=f"video_scenes/vid-lib-ts-meta/{asset_id}/5.000_8.000.jpg",
         keep_reason="temporal",
     )
     video_repo.save_scene_and_update_state(asset_id, scene2, None)
@@ -380,7 +383,7 @@ def test_save_scene_and_update_state_upserts_active_state(engine, _session_facto
         description=None,
         metadata=None,
         sharpness_score=50.0,
-        rep_frame_path="/data/1.jpg",
+        rep_frame_path=f"video_scenes/vid-lib-upsert/{asset_id}/0.000_5.000.jpg",
         keep_reason="phash",
     )
     state = VideoActiveState(
@@ -415,7 +418,7 @@ def test_save_scene_and_update_state_delete_on_finalization(engine, _session_fac
         description=None,
         metadata=None,
         sharpness_score=10.0,
-        rep_frame_path="/data/final.jpg",
+        rep_frame_path=f"video_scenes/vid-lib-finalize/{asset_id}/0.000_10.000.jpg",
         keep_reason="forced",
     )
     video_repo.save_scene_and_update_state(asset_id, scene, state)
@@ -434,7 +437,7 @@ def test_save_scene_upsert_idempotent(engine, _session_factory):
         description=None,
         metadata=None,
         sharpness_score=1.0,
-        rep_frame_path="/data/a.jpg",
+        rep_frame_path=f"video_scenes/vid-lib-idempotent/{asset_id}/0.000_3.000.jpg",
         keep_reason="phash",
     )
     state = VideoActiveState(

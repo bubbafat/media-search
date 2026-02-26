@@ -273,7 +273,7 @@ def test_video_worker_repair_builds_missing_preview(engine, _session_factory, tm
             description=None,
             metadata=None,
             sharpness_score=1.0,
-            rep_frame_path=str(scene_jpeg),
+            rep_frame_path=f"video_scenes/repair-preview-lib/{asset_id}/0.000_3.000.jpg",
             keep_reason="phash",
         ),
         None,

@@ -187,7 +187,7 @@ A closed scene from scene-based video indexing (one representative frame per sce
 | `description` | str? | AI-generated caption from vision model (e.g. Moondream2); nullable when no analyzer is used. |
 | `metadata` | jsonb? | Optional: `moondream` (description, tags, ocr_text), `showinfo` (FFmpeg showinfo line), `semantic_duplicate` (true when description is very similar to previous scene). |
 | `sharpness_score` | float | Laplacian variance of representative frame |
-| `rep_frame_path` | str | Path to stored JPEG for this scene |
+| `rep_frame_path` | str | Path relative to data_dir to the scene representative JPEG |
 | `keep_reason` | SceneKeepReason | Why the scene closed: `phash`, `temporal`, or `forced` (EOF) |
 
 ---

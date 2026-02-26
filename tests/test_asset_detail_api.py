@@ -80,7 +80,7 @@ def asset_detail_api_postgres():
                         ) VALUES (
                           302, 5.0, 10.0, 'sunset beach',
                           '{"moondream":{"description":"sunset beach","tags":["beach","sunset"],"ocr_text":"SUNSET"}}'::jsonb,
-                          1.0, '/tmp/s.jpg', 'forced'
+                          1.0, 'video_scenes/detail-lib/302/5.000_10.000.jpg', 'forced'
                         )
                         """
                     )

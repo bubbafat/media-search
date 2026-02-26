@@ -42,7 +42,7 @@ def build_preview_webp(
     frames: list[Image.Image] = []
     target_size: tuple[int, int] | None = None
     for s in scenes:
-        path = Path(s.rep_frame_path)
+        path = data_dir / s.rep_frame_path
         if not path.exists():
             _log.warning("Scene frame missing, skipping: %s", path)
             continue

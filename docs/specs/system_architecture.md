@@ -65,7 +65,7 @@ By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-d
 Scene-based video indexing (pHash + temporal ceiling + best-frame selection) is persisted so the process is **resumable** after a crash and metadata is searchable.
 
 - **`video_scenes` Table:** One row per closed scene.
-  - `id` (int, PK), `asset_id` (FK → asset.id), `start_ts`, `end_ts` (float seconds), `description` (text, nullable), `metadata` (JSONB, nullable), `sharpness_score`, `rep_frame_path` (path to representative JPEG), `keep_reason` (enum: `phash`, `temporal`, `forced`).
+  - `id` (int, PK), `asset_id` (FK → asset.id), `start_ts`, `end_ts` (float seconds), `description` (text, nullable), `metadata` (JSONB, nullable), `sharpness_score`, `rep_frame_path` (path relative to data_dir; e.g. video_scenes/{library_slug}/{asset_id}/{start}_{end}.jpg), `keep_reason` (enum: `phash`, `temporal`, `forced`).
   - Index on `(asset_id, end_ts)` for resume queries.
 - **`video_active_state` Table:** One row per asset currently being indexed (the "open" scene state).
   - `asset_id` (PK/FK → asset.id), `anchor_phash`, `scene_start_ts`, `current_best_pts`, `current_best_sharpness`.
