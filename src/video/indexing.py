@@ -138,6 +138,10 @@ def run_video_scene_indexing(
                 rep_frame_path=str(rep_path),
                 keep_reason=scene.keep_reason.value,
             )
+            # ARCHITECTURE NOTE: We intentionally only update the active state when a scene CLOSES.
+            # Mid-scene best-frame tracking is kept purely in-memory for performance.
+            # If a crash occurs mid-scene, the resume logic safely rewinds to max_end_ts
+            # and recalculates the unclosed scene's best frame during the catch-up phase.
             repo.save_scene_and_update_state(asset_id, row, active_state_for_db)
         else:
             if active_state_for_db is not None:

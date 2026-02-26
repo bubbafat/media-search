@@ -147,6 +147,9 @@ class SceneSegmenter:
                 )
             else:
                 yield (None, next_state)
+            # Reset state for the next scene.
+            # Note: This reset state is what gets persisted to the DB as 'video_active_state'.
+            # The resume logic relies on this clean slate + the discard_until_pts catch-up loop.
             scene_start_pts = end_pts
             anchor_phash = None
             current_best_pts = end_pts
