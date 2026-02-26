@@ -14,7 +14,7 @@ We open a single, long-running FFmpeg pipe. Because FFmpeg provides pixel data o
 * **Low-Res Stream:** FFmpeg outputs raw RGB24 frames at 1 FPS, scaled to **480px width** (even height) to minimize memory churn. The scanner passes explicit width and height to the scale filter so Python and FFmpeg stay in sync.
 * **Metadata Extraction:** We parse `pts_time` from the `showinfo` filter on `stderr`.
 * **The Synchronized Queue:** A `pts_queue` ensures that every frame read from `stdout` is paired with its exact timestamp. 
-* **The Heartbeat:** If the two streams desync (more than 5 frames of difference), the system fails-fast to prevent metadata poisoning.
+* **The Heartbeat:** If PTS for the current frame is not received from stderr within 10 seconds, the system fails-fast (FFmpeg hung or stderr thread died).
 
 
 

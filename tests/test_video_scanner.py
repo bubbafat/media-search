@@ -166,7 +166,7 @@ def test_iter_frames_eof_after_partial_stdout(tmp_path):
 
 
 def test_iter_frames_sync_error_when_no_pts(tmp_path):
-    """When stdout yields 6+ frames and stderr never sends PTS, SyncError is raised."""
+    """When stderr never sends PTS for the current frame within the timeout, SyncError is raised."""
     fake_video = tmp_path / "v.mp4"
     fake_video.write_bytes(b"x")
     with patch("src.video.video_scanner._get_video_dimensions", return_value=(1920, 1080)):
@@ -178,7 +178,7 @@ def test_iter_frames_sync_error_when_no_pts(tmp_path):
     class FakeStdout:
         def readinto(self, buf):
             call_count[0] += 1
-            if call_count[0] <= 6:
+            if call_count[0] <= 1:
                 buf[:frame_size] = full_frame
                 return frame_size
             return 0
@@ -197,6 +197,7 @@ def test_iter_frames_sync_error_when_no_pts(tmp_path):
     mock_proc.wait = MagicMock(return_value=0)
     mock_proc.kill = MagicMock()
 
-    with patch("subprocess.Popen", return_value=mock_proc):
-        with pytest.raises(SyncError, match="more than 5 frames without PTS"):
-            list(scanner.iter_frames())
+    with patch("src.video.video_scanner.PTS_QUEUE_TIMEOUT", 0.01):
+        with patch("subprocess.Popen", return_value=mock_proc):
+            with pytest.raises(SyncError, match="no PTS from stderr within timeout"):
+                list(scanner.iter_frames())

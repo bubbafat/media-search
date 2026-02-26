@@ -8,13 +8,12 @@ from queue import Empty, Queue
 from typing import Iterator
 
 PTS_REGEX = re.compile(r"pts_time:([\d.]+)")
-SYNC_THRESHOLD = 5
-PTS_QUEUE_TIMEOUT = 0.1
+PTS_QUEUE_TIMEOUT = 10.0
 OUT_WIDTH = 480
 
 
 class SyncError(Exception):
-    """Raised when too many frames are read from stdout without a PTS from stderr."""
+    """Raised when PTS for the current frame is not received from stderr within the timeout (FFmpeg hung or stderr thread died)."""
 
     pass
 
@@ -166,7 +165,6 @@ class VideoScanner:
         try:
             buffer = bytearray(self._frame_byte_size)
             last_pts: float = -1.0
-            frames_without_pts = 0
 
             while True:
                 n = proc.stdout.readinto(buffer)  # type: ignore[union-attr]
@@ -174,29 +172,20 @@ class VideoScanner:
                     break
 
                 frame_bytes = bytes(buffer)
-                frames_without_pts += 1
 
-                while True:
-                    if stderr_finished.is_set() and pts_queue.empty():
-                        last_pts += 1.0
-                        yield (frame_bytes, last_pts)
-                        frames_without_pts = 0
-                        break
+                if stderr_finished.is_set() and pts_queue.empty():
+                    last_pts += 1.0
+                    yield (frame_bytes, last_pts)
+                    continue
 
-                    try:
-                        pts = pts_queue.get(timeout=PTS_QUEUE_TIMEOUT)
-                        yield (frame_bytes, pts)
-                        last_pts = pts
-                        frames_without_pts = 0
-                        break
-                    except Empty:
-                        # Count consecutive timeouts; after >5 without PTS, desync
-                        if frames_without_pts > SYNC_THRESHOLD:
-                            raise SyncError(
-                                f"more than {SYNC_THRESHOLD} frames without PTS from stderr"
-                            )
-                        frames_without_pts += 1
-                        # retry get (same frame still needs a PTS)
+                try:
+                    pts = pts_queue.get(timeout=PTS_QUEUE_TIMEOUT)
+                except Empty:
+                    raise SyncError(
+                        "no PTS from stderr within timeout (FFmpeg hung or stderr thread died)"
+                    )
+                yield (frame_bytes, pts)
+                last_pts = pts
         finally:
             try:
                 proc.terminate()
