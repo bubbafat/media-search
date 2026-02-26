@@ -10,6 +10,8 @@ from src.core import config as config_module
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.ui_repo import UIRepository
 
+pytestmark = [pytest.mark.slow]
+
 
 @pytest.fixture(scope="module")
 def ui_api_postgres():

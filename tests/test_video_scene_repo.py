@@ -12,6 +12,8 @@ from src.repository.video_scene_repo import (
     VideoSceneRow,
 )
 
+pytestmark = [pytest.mark.slow]
+
 
 def _create_tables_and_seed(engine, session_factory):
     """Create all tables and seed schema_version. Return (AssetRepository, VideoSceneRepository)."""

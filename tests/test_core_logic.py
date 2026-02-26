@@ -16,6 +16,7 @@ from src.core.logging import FlightLogger, FLIGHT_LOG_CAPACITY
 from src.core.path_resolver import _reset_session_factory_for_tests, resolve_path
 
 
+@pytest.mark.fast
 def test_settings_loads_from_yaml(tmp_path):
     """Settings loads correctly from a sample YAML."""
     yaml_path = tmp_path / "worker_config.yml"
@@ -35,6 +36,7 @@ log_level: DEBUG
     assert cfg.log_level == "DEBUG"
 
 
+@pytest.mark.fast
 def test_settings_worker_id_auto_from_hostname(tmp_path):
     """When worker_id is missing in YAML, it is set from hostname."""
     yaml_path = tmp_path / "worker_config.yml"
@@ -82,6 +84,7 @@ def path_resolver_db():
             config_module._config = None  # type: ignore[attr-defined]
 
 
+@pytest.mark.slow
 def test_resolve_path_joins_mapped_slug_and_verifies_exists(tmp_path, path_resolver_db):
     """resolve_path returns absolute path for mapped slug when file exists; raises for unknown slug."""
     lib_root = tmp_path / "library_root"
@@ -113,6 +116,7 @@ def test_resolve_path_joins_mapped_slug_and_verifies_exists(tmp_path, path_resol
         resolve_path("unknown_slug", "x")
 
 
+@pytest.mark.slow
 def test_resolve_path_raises_for_missing_file(tmp_path, path_resolver_db):
     """resolve_path raises FileNotFoundError when the resolved path does not exist."""
     lib_root = tmp_path / "library_root"
@@ -135,6 +139,7 @@ def test_resolve_path_raises_for_missing_file(tmp_path, path_resolver_db):
         resolve_path("mylib", "nonexistent.txt")
 
 
+@pytest.mark.slow
 def test_resolve_path_rejects_traversal(tmp_path, path_resolver_db):
     """resolve_path raises ValueError when rel_path escapes library root."""
     lib_root = tmp_path / "library_root"
@@ -157,6 +162,7 @@ def test_resolve_path_rejects_traversal(tmp_path, path_resolver_db):
         resolve_path("mylib", "../../etc/passwd")
 
 
+@pytest.mark.fast
 def test_flight_logger_stores_all_levels_in_memory_until_dump(tmp_path):
     """FlightLogger stores all levels (DEBUG, INFO, WARNING, ERROR) in memory and does not write to disk until dump() is called."""
     forensics_dir = tmp_path / "logs" / "forensics"
@@ -186,6 +192,7 @@ def test_flight_logger_stores_all_levels_in_memory_until_dump(tmp_path):
     root.removeHandler(handler)
 
 
+@pytest.mark.fast
 def test_flight_logger_gets_all_levels_console_only_above_config(tmp_path):
     """With root at DEBUG and console at INFO: DEBUG goes only to flight log; INFO goes to flight log and console."""
     forensics_dir = tmp_path / "logs" / "forensics"
@@ -219,6 +226,7 @@ def test_flight_logger_gets_all_levels_console_only_above_config(tmp_path):
     assert "in-flight-and-console" in console_out
 
 
+@pytest.mark.fast
 def test_flight_logger_only_last_50000_after_60000_messages(tmp_path):
     """After 60,000 log lines, dump contains only the last 50,000 entries."""
     forensics_dir = tmp_path / "logs" / "forensics"

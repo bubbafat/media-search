@@ -16,6 +16,8 @@ from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
 
+pytestmark = [pytest.mark.slow]
+
 
 def _create_repo_and_tables(engine, session_factory) -> tuple[WorkerRepository, SystemMetadataRepository]:
     """Create all tables, seed schema_version for pre-flight check (idempotent), return worker_repo and system_metadata_repo."""

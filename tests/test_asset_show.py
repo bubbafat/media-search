@@ -13,6 +13,8 @@ from src.models.entities import AssetType, Library, SystemMetadata
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 
+pytestmark = [pytest.mark.slow]
+
 
 def _create_tables_and_seed(engine, session_factory):
     """Create all tables and seed schema_version. Return (lib_repo, asset_repo)."""

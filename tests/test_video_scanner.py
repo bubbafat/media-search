@@ -14,6 +14,8 @@ from src.video.video_scanner import (
     _output_height_and_frame_size,
 )
 
+pytestmark = [pytest.mark.fast]
+
 
 # --- _output_height_and_frame_size (pure, no subprocess) ---
 

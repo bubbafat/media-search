@@ -18,6 +18,8 @@ from src.video.scene_segmenter import (
 )
 from src.video.video_scanner import VideoScanner
 
+pytestmark = [pytest.mark.fast]
+
 
 # --- _trigger_keep_reason (CompositeStrategy) ---
 

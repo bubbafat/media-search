@@ -486,6 +486,22 @@ The CLI does not currently support filtering search results by asset type. When 
 
 ---
 
+## Running tests
+
+Tests are run via `test.sh` from the project root. Tests are categorized as **fast** (no DB, no AI), **slow** (need Postgres testcontainer), or **ai** (need real AI, e.g. moondream). Migration tests are separate and run only with `--all`.
+
+| Invocation | What runs |
+|------------|-----------|
+| `./test.sh` | Default: fast + slow (no ai, no migration) |
+| `./test.sh --fast` | Fast only (unit tests, mocks, no DB) |
+| `./test.sh --slow` | Slow only (tests that need Postgres) |
+| `./test.sh --ai` | AI only (tests that load/use moondream) |
+| `./test.sh --all` | Everything: fast, slow, ai, and migration tests |
+
+Extra arguments are passed to pytest. Examples: `./test.sh --fast tests/test_storage.py`, `./test.sh tests/test_vision_factory.py -k mock`.
+
+---
+
 ## Conventions
 
 - **uv:** Use `uv run media-search` (or the installed `media-search` entry point) so the correct environment is used.

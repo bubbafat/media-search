@@ -3,6 +3,8 @@
 import pytest
 from sqlalchemy import text
 
+pytestmark = [pytest.mark.slow]
+
 
 def test_db_connection(session):
     """Verify we can execute a query against the Postgres testcontainer."""

@@ -14,6 +14,8 @@ from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.ai_worker import AIWorker
 
+pytestmark = [pytest.mark.slow]
+
 
 def _create_tables_and_seed(engine, session_factory):
     """Create all tables and seed schema_version."""

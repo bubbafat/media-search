@@ -18,6 +18,8 @@ from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.proxy_worker import ProxyWorker
 
+pytestmark = [pytest.mark.slow]
+
 
 def _create_tables_and_repos(engine, session_factory):
     """Create tables, seed schema_version, return asset_repo, worker_repo, system_metadata_repo."""

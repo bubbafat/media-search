@@ -52,8 +52,11 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "migration: run Alembic migration tests (use: pytest -m migration)",
+    "fast: no DB, no AI; unit tests, mocks, tmp_path only",
+    "slow: need DB (testcontainers Postgres)",
+    "ai: need real AI (e.g. moondream)",
 ]
-addopts = ["-m", "not migration"]
+addopts = ["-m", "not migration and (fast or slow)"]
 filterwarnings = [
     "ignore:.*torch\\.jit\\.script_method.*Python 3\\.14.*:DeprecationWarning",
 ]

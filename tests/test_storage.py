@@ -9,6 +9,8 @@ from PIL import Image
 
 from src.core.storage import LocalMediaStore
 
+pytestmark = [pytest.mark.fast]
+
 
 @pytest.fixture
 def temp_data_dir():

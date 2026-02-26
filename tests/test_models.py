@@ -1,8 +1,11 @@
 """Verify Core Data Models: tables, FKs, and relationships (testcontainers Postgres)."""
 
+import pytest
 from sqlmodel import SQLModel
 
 from src.models.entities import AIModel, Asset, AssetStatus, AssetType, Library
+
+pytestmark = [pytest.mark.slow]
 
 
 def test_asset_fk_to_library_and_aimodel(session, engine):

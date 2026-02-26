@@ -26,6 +26,9 @@ All workers must inherit from BaseWorker and implement handle_signal(command).
 
 - Anytime the uv sync command is run (or shared as a command for the viewer to run manually), be sure to include all extras to avoid removing the dev environment.
 
+## Testing
+-- Whenever a test is added it needs to be given the appropriate @pytest.mark indicating if it is fast (no db, no ai, mocks, etc), slow (needs db), or needs ai. 
+
 ## Data Rules
 - All timestamps in the database should be with timezone - we never store data in local time (though we may display it in local time)
 

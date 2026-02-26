@@ -2,6 +2,8 @@
 
 import pytest
 
+pytestmark = [pytest.mark.fast]
+
 from src.video.high_res_extractor import (
     SOI,
     EOI,

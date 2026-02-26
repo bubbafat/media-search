@@ -20,6 +20,8 @@ from src.video.high_res_extractor import SOI, EOI
 from src.video.indexing import run_video_scene_indexing
 from src.video.scene_segmenter import SceneResult
 
+pytestmark = [pytest.mark.slow]
+
 
 class _SequentialDescriptionAnalyzer(BaseVisionAnalyzer):
     """Returns descriptions from a list in order (for dedup testing)."""

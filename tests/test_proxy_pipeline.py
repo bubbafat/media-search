@@ -7,6 +7,8 @@ from sqlmodel import SQLModel
 from src.models.entities import AIModel, Asset, AssetStatus, AssetType, Library, SystemMetadata
 from src.repository.asset_repo import AssetRepository
 
+pytestmark = [pytest.mark.slow]
+
 
 def _create_tables_and_seed(engine, session_factory):
     """Create all tables and seed schema_version. Return AssetRepository."""
