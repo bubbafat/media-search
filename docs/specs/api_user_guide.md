@@ -44,7 +44,7 @@ Pagination endpoint for Library Browser. Query parameters:
 - `limit` (optional, default 50): Page size (1–200).
 - `offset` (optional, default 0): Pagination offset.
 
-Response: JSON object with `items` (array of asset objects shaped like search results) and `has_more` (boolean). Used for infinite scroll: when `has_more` is true, the client fetches the next page with `offset = items.length`.
+Response: JSON object with `items` (array of asset objects shaped like search results) and `has_more` (boolean). Each item includes `thumbnail_url` (null when status is `pending`/`processing`/`failed`/`poisoned`), `status`, and `error_message`; the UI uses these for placeholder display. Used for infinite scroll: when `has_more` is true, the client fetches the next page with `offset = items.length`.
 
 ### GET /api/libraries
 
@@ -63,7 +63,9 @@ Search endpoint used by the UI result grid. Query parameters:
 Response: JSON array of items with:
 
 - `asset_id`, `type` (`image` | `video`)
-- `thumbnail_url` (derivative URL)
+- `thumbnail_url` (derivative URL; `null` when asset `status` is `pending`, `processing`, `failed`, or `poisoned`)
+- `status` (asset status string; used by UI for placeholder logic)
+- `error_message` (str | null; last processing error; shown as tooltip on error placeholder)
 - `preview_url` (animated preview WebP URL if available)
 - `video_preview_url` (10-second head-clip MP4 URL for hover preview; `null` if not yet generated)
 - `final_rank`

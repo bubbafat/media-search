@@ -80,12 +80,17 @@ def _get_library_repo() -> LibraryRepository:
     return LibraryRepository(_get_session_factory())
 
 
+NO_THUMB_STATUSES = frozenset({"pending", "processing", "failed", "poisoned"})
+
+
 class SearchResultOut(BaseModel):
     asset_id: int
     type: Literal["image", "video"]
-    thumbnail_url: str
+    thumbnail_url: str | None = None  # null when pending, processing, failed, or poisoned
     preview_url: str | None = None
     video_preview_url: str | None = None
+    status: str | None = None
+    error_message: str | None = None
     final_rank: float
     match_ratio: float  # percentage (0.0 to 100.0)
     best_scene_ts: str | None = None  # formatted MM:SS
@@ -139,7 +144,11 @@ def api_search(
         if asset.id is None:
             continue
         shard = asset.id % 1000
-        thumb = f"/media/{asset.library_id}/thumbnails/{shard}/{asset.id}.jpg"
+        thumb = (
+            None
+            if asset.status.value in NO_THUMB_STATUSES
+            else f"/media/{asset.library_id}/thumbnails/{shard}/{asset.id}.jpg"
+        )
         preview = (
             f"/media/{asset.preview_path.lstrip('/')}"
             if asset.preview_path is not None
@@ -162,6 +171,8 @@ def api_search(
                 thumbnail_url=thumb,
                 preview_url=preview,
                 video_preview_url=video_preview,
+                status=asset.status.value,
+                error_message=asset.error_message,
                 final_rank=r.final_rank,
                 match_ratio=round(r.match_ratio * 100.0, 1),
                 best_scene_ts=best_ts,
@@ -189,9 +200,11 @@ class LibraryAssetOut(BaseModel):
 
     asset_id: int
     type: Literal["image", "video"]
-    thumbnail_url: str
+    thumbnail_url: str | None = None  # null when pending, processing, failed, or poisoned
     preview_url: str | None = None
     video_preview_url: str | None = None
+    status: str | None = None
+    error_message: str | None = None
     match_ratio: float = 100.0  # neutral value for library browse
     best_scene_ts: str | None = None
     best_scene_ts_seconds: float | None = None
@@ -240,7 +253,11 @@ def api_library_assets(
         if asset.id is None:
             continue
         shard = asset.id % 1000
-        thumb = f"/media/{asset.library_id}/thumbnails/{shard}/{asset.id}.jpg"
+        thumb = (
+            None
+            if asset.status.value in NO_THUMB_STATUSES
+            else f"/media/{asset.library_id}/thumbnails/{shard}/{asset.id}.jpg"
+        )
         preview = (
             f"/media/{asset.preview_path.lstrip('/')}"
             if asset.preview_path is not None
@@ -259,6 +276,8 @@ def api_library_assets(
                 thumbnail_url=thumb,
                 preview_url=preview,
                 video_preview_url=video_preview,
+                status=asset.status.value,
+                error_message=asset.error_message,
                 match_ratio=100.0,
                 best_scene_ts=None,
                 best_scene_ts_seconds=None,
