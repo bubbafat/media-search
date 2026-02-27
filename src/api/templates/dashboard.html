@@ -537,7 +537,8 @@
         const allowedLayouts = ['masonry', 'bento', 'list', 'filmstrip'];
         const saved = typeof localStorage !== 'undefined' && allowedLayouts.includes(localStorage.getItem('mediaSearchLayout'));
         const GRID_MIN_KEY = 'mediaSearchGridMinPx';
-        const savedGridMin = typeof localStorage !== 'undefined' ? Number(localStorage.getItem(GRID_MIN_KEY)) : NaN;
+        const savedGridMinRaw = typeof localStorage !== 'undefined' ? localStorage.getItem(GRID_MIN_KEY) : null;
+        const savedGridMin = savedGridMinRaw != null ? Number(savedGridMinRaw) : NaN;
         const initialGridMin = Number.isFinite(savedGridMin) ? Math.min(500, Math.max(100, savedGridMin)) : 200;
         const params = typeof window !== 'undefined' && window.location.search ? new URLSearchParams(window.location.search) : null;
         const tagFromUrl = params ? params.get('tag') : null;

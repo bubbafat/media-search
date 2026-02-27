@@ -1,8 +1,10 @@
 """VideoScanner: persistent FFmpeg pipe for synchronized frame extraction with PTS."""
 
+import shlex
 import re
 import subprocess
 import threading
+from collections import deque
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Iterator
@@ -10,6 +12,7 @@ from typing import Iterator
 PTS_REGEX = re.compile(r"pts_time:([\d.]+)")
 PTS_QUEUE_TIMEOUT = 10.0
 OUT_WIDTH = 480
+_STDERR_TAIL_MAX_LINES = 60
 
 
 class SyncError(Exception):
@@ -79,16 +82,76 @@ class VideoScanner:
         input_path: str | Path,
         *,
         start_pts: float | None = None,
+        hwaccel: str | None = "auto",
     ) -> None:
         self._input_path = Path(input_path)
         if not self._input_path.exists():
             raise FileNotFoundError(self._input_path)
         self._start_pts = start_pts
+        self._hwaccel = hwaccel
+        self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_MAX_LINES)
         src_width, src_height = _get_video_dimensions(self._input_path)
         self._out_height, self._frame_byte_size = _output_height_and_frame_size(
             src_width, src_height
         )
         self._out_width = OUT_WIDTH
+
+    @staticmethod
+    def _cmd_to_repro(cmd: list[str]) -> str:
+        return " ".join(shlex.quote(str(c)) for c in cmd)
+
+    def ffmpeg_cmd(self, *, output_mode: str = "pipe") -> list[str]:
+        """
+        Return the exact FFmpeg argv used by this scanner.
+
+        Args:
+            output_mode: 'pipe' (rawvideo to stdout) or 'null' (decode-only repro).
+        """
+        cmd: list[str] = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "info",
+        ]
+        if self._hwaccel is not None:
+            cmd += ["-hwaccel", str(self._hwaccel)]
+        if self._start_pts is not None:
+            cmd.extend(["-ss", str(self._start_pts)])
+        cmd.extend(
+            [
+                "-i",
+                str(self._input_path),
+                "-vf",
+                f"fps=1,scale={self._out_width}:{self._out_height},showinfo",
+            ]
+        )
+        if output_mode == "pipe":
+            cmd.extend(
+                [
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "pipe:1",
+                ]
+            )
+            return cmd
+        if output_mode == "null":
+            cmd.extend(["-an", "-f", "null", "-"])
+            return cmd
+        raise ValueError(f"unknown output_mode: {output_mode!r}")
+
+    def ffmpeg_repro_command(self) -> str:
+        """
+        Copy/paste repro command line that exercises the same decode pipeline.
+
+        Uses null output so it can be run interactively without writing large data to stdout.
+        """
+        return self._cmd_to_repro(self.ffmpeg_cmd(output_mode="null"))
+
+    def stderr_tail(self) -> str:
+        """Return the last N stderr lines observed from FFmpeg (best-effort)."""
+        return "\n".join(self._stderr_tail).strip()
 
     @property
     def frame_byte_size(self) -> int:
@@ -120,6 +183,9 @@ class VideoScanner:
                         line_str = line.decode("utf-8", errors="replace")
                     except Exception:
                         continue
+                    line_str = line_str.rstrip("\n")
+                    if line_str:
+                        self._stderr_tail.append(line_str)
                     if "showinfo" in line_str and "pts_time:" in line_str:
                         m = PTS_REGEX.search(line_str)
                         if m:
@@ -130,29 +196,7 @@ class VideoScanner:
             finally:
                 stderr_finished.set()
 
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "info",
-            "-hwaccel",
-            "auto",
-        ]
-        if self._start_pts is not None:
-            cmd.extend(["-ss", str(self._start_pts)])
-        cmd.extend(
-            [
-                "-i",
-                str(self._input_path),
-                "-vf",
-                f"fps=1,scale={self._out_width}:{self._out_height},showinfo",
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "pipe:1",
-            ]
-        )
+        cmd = self.ffmpeg_cmd(output_mode="pipe")
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

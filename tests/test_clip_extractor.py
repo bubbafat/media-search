@@ -10,6 +10,7 @@ from src.video.clip_extractor import (
     extract_clip,
     extract_head_clip_copy,
     transcode_to_720p_h264,
+    transcode_to_720p_h264_detailed,
 )
 
 pytestmark = [pytest.mark.slow]
@@ -21,8 +22,12 @@ def test_transcode_to_720p_h264_success(tmp_path):
     source = tmp_path / "in.mov"
     source.write_bytes(b"fake")
     dest = tmp_path / "out.mp4"
-    with patch("src.video.clip_extractor.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="", stderr="")):
-        assert transcode_to_720p_h264(source, dest) is True
+    with patch("src.video.clip_extractor._is_h264_videotoolbox_available", return_value=False):
+        with patch(
+            "src.video.clip_extractor.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ):
+            assert transcode_to_720p_h264(source, dest) is True
 
 
 @pytest.mark.fast
@@ -31,8 +36,37 @@ def test_transcode_to_720p_h264_failure(tmp_path):
     source = tmp_path / "in.mov"
     source.write_bytes(b"fake")
     dest = tmp_path / "out.mp4"
-    with patch("src.video.clip_extractor.subprocess.run", return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="Error")):
-        assert transcode_to_720p_h264(source, dest) is False
+    with patch("src.video.clip_extractor._is_h264_videotoolbox_available", return_value=False):
+        with patch(
+            "src.video.clip_extractor.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="Error"),
+        ):
+            assert transcode_to_720p_h264(source, dest) is False
+
+
+@pytest.mark.fast
+def test_transcode_to_720p_h264_videotoolbox_falls_back_to_linx264(tmp_path):
+    """When videotoolbox transcode fails, we retry once with libx264."""
+    source = tmp_path / "in.mov"
+    source.write_bytes(b"fake")
+    dest = tmp_path / "out.mp4"
+    with patch("src.video.clip_extractor._is_h264_videotoolbox_available", return_value=True):
+        with patch(
+            "src.video.clip_extractor.subprocess.run",
+            side_effect=[
+                subprocess.CompletedProcess([], 1, stdout="", stderr="vt failed"),
+                subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+                subprocess.CompletedProcess([], 1, stdout="", stderr="vt failed"),
+                subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            ],
+        ):
+            attempts = transcode_to_720p_h264_detailed(source, dest)
+            assert len(attempts) == 2
+            assert "h264_videotoolbox" in attempts[0].cmd
+            assert "libx264" in attempts[1].cmd
+            assert "h264_videotoolbox" in attempts[0].repro
+            assert "libx264" in attempts[1].repro
+            assert transcode_to_720p_h264(source, dest) is True
 
 
 @pytest.mark.fast

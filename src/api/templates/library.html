@@ -514,7 +514,8 @@
         const savedSort = typeof localStorage !== 'undefined' ? localStorage.getItem('mediaSearchLibrarySort') : null;
         const savedOrder = typeof localStorage !== 'undefined' ? localStorage.getItem('mediaSearchLibraryOrder') : null;
         const GRID_MIN_KEY = 'mediaSearchGridMinPx';
-        const savedGridMin = typeof localStorage !== 'undefined' ? Number(localStorage.getItem(GRID_MIN_KEY)) : NaN;
+        const savedGridMinRaw = typeof localStorage !== 'undefined' ? localStorage.getItem(GRID_MIN_KEY) : null;
+        const savedGridMin = savedGridMinRaw != null ? Number(savedGridMinRaw) : NaN;
         const initialGridMin = Number.isFinite(savedGridMin) ? Math.min(500, Math.max(100, savedGridMin)) : 200;
         const sortOptions = [
           { value: 'name', label: 'Name' },

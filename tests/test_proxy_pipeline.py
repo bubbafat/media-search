@@ -72,6 +72,7 @@ def test_claim_asset_by_status_returns_asset_with_library(engine, _session_facto
     assert claimed.id is not None
     assert claimed.status == AssetStatus.processing
     assert claimed.worker_id == "worker-1"
+    assert claimed.retry_count == 1
     assert claimed.library is not None
     assert claimed.library.slug == "proxy-lib"
     assert claimed.library.absolute_path == "/tmp/proxy-lib"
@@ -839,15 +840,17 @@ def test_proxy_worker_video_720p_pipeline(engine, _session_factory, tmp_path):
     assert asset.id is not None
     asset_id = asset.id
 
+    from src.video.clip_extractor import FFmpegAttempt
+
     def mock_extract_video_frame(source, dest, timestamp=0.0):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9")
-        return True
+        return FFmpegAttempt(cmd=["ffmpeg", "-frames:v", "1"], returncode=0, stderr="")
 
     def mock_extract_head_clip_copy(source, dest, duration=10.0):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"fake-head-clip")
-        return True
+        return FFmpegAttempt(cmd=["ffmpeg", "-c", "copy"], returncode=0, stderr="")
 
     from src.repository.system_metadata_repo import SystemMetadataRepository
     from src.repository.video_scene_repo import VideoSceneRepository
@@ -865,9 +868,19 @@ def test_proxy_worker_video_720p_pipeline(engine, _session_factory, tmp_path):
         with patch("src.core.config.get_config", return_value=config_mock):
             with patch("src.workers.video_proxy_worker.get_config", return_value=config_mock):
                 with patch("src.core.storage.get_config", return_value=config_mock):
-                    with patch("src.workers.video_proxy_worker.transcode_to_720p_h264", return_value=True):
-                        with patch("src.workers.video_proxy_worker.extract_video_frame", side_effect=mock_extract_video_frame):
-                            with patch("src.workers.video_proxy_worker.extract_head_clip_copy", side_effect=mock_extract_head_clip_copy):
+                    ok_transcode = FFmpegAttempt(cmd=["ffmpeg", "-c:v", "libx264"], returncode=0, stderr="")
+                    with patch(
+                        "src.workers.video_proxy_worker.transcode_to_720p_h264_detailed",
+                        return_value=[ok_transcode],
+                    ):
+                        with patch(
+                            "src.workers.video_proxy_worker.extract_video_frame_detailed",
+                            side_effect=mock_extract_video_frame,
+                        ):
+                            with patch(
+                                "src.workers.video_proxy_worker.extract_head_clip_copy_detailed",
+                                side_effect=mock_extract_head_clip_copy,
+                            ):
                                 with patch("src.workers.video_proxy_worker.run_video_scene_indexing"):
                                     worker = VideoProxyWorker(
                                         worker_id="vid-proxy-worker",
@@ -899,3 +912,121 @@ def test_proxy_worker_video_720p_pipeline(engine, _session_factory, tmp_path):
         assert thumb_path.exists()
         assert head_clip_path.exists()
         assert not proxy_path.exists()
+
+
+def test_video_proxy_worker_retries_then_poisons_after_threshold(engine, _session_factory, tmp_path):
+    """Retryable video-proxy errors are marked failed, then poisoned after retry_count exceeds threshold."""
+    from src.video.clip_extractor import FFmpegAttempt
+    from src.workers.video_proxy_worker import VideoProxyWorker
+
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+
+    lib_root = tmp_path / "vid-proxy-retry-lib"
+    lib_root.mkdir()
+    (lib_root / "clip.mp4").write_bytes(b"fake-video")
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="vid-proxy-retry-lib",
+                name="Vid Proxy Retry Lib",
+                absolute_path=str(lib_root),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(
+        "vid-proxy-retry-lib", "clip.mp4", AssetType.video, 1000.0, 100
+    )
+    asset = asset_repo.get_asset("vid-proxy-retry-lib", "clip.mp4")
+    assert asset is not None
+    assert asset.id is not None
+    asset_id = asset.id
+
+    from src.repository.system_metadata_repo import SystemMetadataRepository
+    from src.repository.video_scene_repo import VideoSceneRepository
+    from src.repository.worker_repo import WorkerRepository
+
+    worker_repo = WorkerRepository(_session_factory)
+    system_metadata_repo = SystemMetadataRepository(_session_factory)
+    scene_repo = VideoSceneRepository(_session_factory)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp)
+        config_mock = MagicMock()
+        config_mock.data_dir = str(data_dir)
+
+        ok_transcode = FFmpegAttempt(cmd=["ffmpeg", "-c:v", "libx264"], returncode=0, stderr="")
+        bad_frame = FFmpegAttempt(cmd=["ffmpeg", "-frames:v", "1"], returncode=1, stderr="decode error")
+
+        with patch("src.core.config.get_config", return_value=config_mock):
+            with patch("src.workers.video_proxy_worker.get_config", return_value=config_mock):
+                with patch("src.core.storage.get_config", return_value=config_mock):
+                    with patch(
+                        "src.workers.video_proxy_worker.transcode_to_720p_h264_detailed",
+                        return_value=[ok_transcode],
+                    ):
+                        with patch(
+                            "src.workers.video_proxy_worker.extract_video_frame_detailed",
+                            return_value=bad_frame,
+                        ):
+                            with patch(
+                                "src.workers.video_proxy_worker.extract_head_clip_copy_detailed"
+                            ) as _unused_head:
+                                worker = VideoProxyWorker(
+                                    worker_id="vid-proxy-worker",
+                                    repository=worker_repo,
+                                    heartbeat_interval_seconds=15.0,
+                                    asset_repo=asset_repo,
+                                    system_metadata_repo=system_metadata_repo,
+                                    scene_repo=scene_repo,
+                                    library_slug="vid-proxy-retry-lib",
+                                )
+
+                                # First attempt: pending -> failed
+                                assert worker.process_task() is True
+                                session = _session_factory()
+                                try:
+                                    row = session.execute(
+                                        text("SELECT status, retry_count FROM asset WHERE id = :id"),
+                                        {"id": asset_id},
+                                    ).fetchone()
+                                    assert row is not None
+                                    assert row[0] == "failed"
+                                    assert int(row[1]) == 1
+                                finally:
+                                    session.close()
+
+                                # Retry until poisoned (retry_count becomes 6 because claim increments first).
+                                for _ in range(10):
+                                    session = _session_factory()
+                                    try:
+                                        st = session.execute(
+                                            text("SELECT status FROM asset WHERE id = :id"),
+                                            {"id": asset_id},
+                                        ).scalar()
+                                    finally:
+                                        session.close()
+                                    if st == "poisoned":
+                                        break
+                                    assert worker.process_task() is True
+
+                                session = _session_factory()
+                                try:
+                                    row = session.execute(
+                                        text("SELECT status, retry_count, error_message FROM asset WHERE id = :id"),
+                                        {"id": asset_id},
+                                    ).fetchone()
+                                    assert row is not None
+                                    assert row[0] == "poisoned"
+                                    assert int(row[1]) > 5
+                                    assert row[2] is not None
+                                    assert "Retry limit exceeded" in row[2]
+                                finally:
+                                    session.close()

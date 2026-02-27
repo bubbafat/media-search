@@ -2,11 +2,51 @@
 
 import asyncio
 import logging
+import shlex
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
+
+_DEFAULT_STDERR_TAIL_LINES = 40
+
+
+def _cmd_to_repro(cmd: list[str]) -> str:
+    """Render a shell-safe repro command line for copy/paste."""
+    return " ".join(shlex.quote(str(c)) for c in cmd)
+
+
+def _stderr_tail(stderr: str, *, max_lines: int = _DEFAULT_STDERR_TAIL_LINES) -> str:
+    if not stderr:
+        return ""
+    lines = stderr.strip().splitlines()
+    tail = lines[-max_lines:] if len(lines) > max_lines else lines
+    return "\n".join(tail).strip()
+
+
+@dataclass(frozen=True)
+class FFmpegAttempt:
+    cmd: list[str]
+    returncode: int
+    stderr: str
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0
+
+    @property
+    def repro(self) -> str:
+        return _cmd_to_repro(self.cmd)
+
+    def stderr_tail(self, *, max_lines: int = _DEFAULT_STDERR_TAIL_LINES) -> str:
+        return _stderr_tail(self.stderr, max_lines=max_lines)
+
+
+def _run_ffmpeg(cmd: list[str]) -> FFmpegAttempt:
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return FFmpegAttempt(cmd=cmd, returncode=int(result.returncode), stderr=result.stderr or "")
 
 
 def _is_h264_videotoolbox_available() -> bool:
@@ -22,6 +62,53 @@ def _is_h264_videotoolbox_available() -> bool:
     return "h264_videotoolbox" in (result.stdout or "") if result.returncode == 0 else False
 
 
+def transcode_to_720p_h264_detailed(source: Path, dest: Path) -> list[FFmpegAttempt]:
+    """
+    Transcode to 720p H.264 MP4, returning a list of FFmpeg attempts (for diagnostics).
+
+    Behavior:
+    - On macOS, try `h264_videotoolbox` first (when available).
+    - If that fails, retry once with `libx264` (fallback).
+    - On other platforms, use `libx264` only.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    attempts: list[FFmpegAttempt] = []
+
+    def _cmd_for(encoder: str) -> list[str]:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-vf",
+            "scale=-2:720",
+            "-c:v",
+            encoder,
+            "-b:v",
+            "3M",
+            "-pix_fmt",
+            "yuv420p",
+        ]
+        if encoder == "libx264":
+            cmd += ["-preset", "veryfast"]
+        cmd.append(str(dest))
+        return cmd
+
+    use_vt = _is_h264_videotoolbox_available()
+    if use_vt:
+        attempts.append(_run_ffmpeg(_cmd_for("h264_videotoolbox")))
+        if attempts[-1].ok:
+            return attempts
+        attempts.append(_run_ffmpeg(_cmd_for("libx264")))
+        return attempts
+
+    attempts.append(_run_ffmpeg(_cmd_for("libx264")))
+    return attempts
+
+
 def transcode_to_720p_h264(source: Path, dest: Path) -> bool:
     """
     Create a temporary 720p 8-bit H.264 MP4 from a source video.
@@ -29,53 +116,16 @@ def transcode_to_720p_h264(source: Path, dest: Path) -> bool:
     Uses h264_videotoolbox on macOS when available, otherwise libx264.
     Scale: -2:720 (height 720, width auto even), -b:v 3M, -pix_fmt yuv420p.
     """
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    use_vt = _is_h264_videotoolbox_available()
-    if use_vt:
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(source),
-            "-vf",
-            "scale=-2:720",
-            "-c:v",
-            "h264_videotoolbox",
-            "-b:v",
-            "3M",
-            "-pix_fmt",
-            "yuv420p",
-            str(dest),
-        ]
-    else:
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(source),
-            "-vf",
-            "scale=-2:720",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-b:v",
-            "3M",
-            "-pix_fmt",
-            "yuv420p",
-            str(dest),
-        ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode == 0:
+    attempts = transcode_to_720p_h264_detailed(source, dest)
+    if attempts and attempts[-1].ok:
         return True
-    if result.stderr:
-        _log.warning("FFmpeg 720p transcode failed: %s", result.stderr.strip())
+    if attempts:
+        last = attempts[-1]
+        _log.warning(
+            "FFmpeg 720p transcode failed. Repro: %s\n%s",
+            last.repro,
+            last.stderr_tail(),
+        )
     return False
 
 
@@ -85,6 +135,21 @@ def extract_head_clip_copy(source: Path, dest: Path, duration: float = 10.0) -> 
 
     Uses -ss 0 -i source -t duration -c copy -movflags +faststart for speed.
     """
+    attempt = extract_head_clip_copy_detailed(source, dest, duration=duration)
+    if attempt.ok:
+        return True
+    _log.warning(
+        "FFmpeg head-clip copy failed. Repro: %s\n%s",
+        attempt.repro,
+        attempt.stderr_tail(),
+    )
+    return False
+
+
+def extract_head_clip_copy_detailed(
+    source: Path, dest: Path, duration: float = 10.0
+) -> FFmpegAttempt:
+    """Like extract_head_clip_copy(), but returns cmd+stderr for diagnostics."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg",
@@ -104,12 +169,7 @@ def extract_head_clip_copy(source: Path, dest: Path, duration: float = 10.0) -> 
         "+faststart",
         str(dest),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode == 0:
-        return True
-    if result.stderr:
-        _log.warning("FFmpeg head-clip copy failed: %s", result.stderr.strip())
-    return False
+    return _run_ffmpeg(cmd)
 
 
 def extract_video_frame(source: Path, dest: Path, timestamp: float = 0.0) -> bool:
@@ -118,6 +178,21 @@ def extract_video_frame(source: Path, dest: Path, timestamp: float = 0.0) -> boo
 
     Uses fast-seeking (-ss before -i). Reads only from source; writes only to dest.
     """
+    attempt = extract_video_frame_detailed(source, dest, timestamp=timestamp)
+    if attempt.ok:
+        return True
+    _log.warning(
+        "FFmpeg frame extraction failed. Repro: %s\n%s",
+        attempt.repro,
+        attempt.stderr_tail(),
+    )
+    return False
+
+
+def extract_video_frame_detailed(
+    source: Path, dest: Path, timestamp: float = 0.0
+) -> FFmpegAttempt:
+    """Like extract_video_frame(), but returns cmd+stderr for diagnostics."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg",
@@ -137,12 +212,7 @@ def extract_video_frame(source: Path, dest: Path, timestamp: float = 0.0) -> boo
         "scale='min(1280,iw)':-2",
         str(dest),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode == 0:
-        return True
-    if result.stderr:
-        _log.warning("FFmpeg frame extraction failed: %s", result.stderr.strip())
-    return False
+    return _run_ffmpeg(cmd)
 
 
 def extract_video_clip(

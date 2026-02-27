@@ -437,19 +437,23 @@ class AssetRepository:
             if row is None:
                 return None
             asset_id = row[0]
-            session.execute(
+            updated = session.execute(
                 text("""
                     UPDATE asset
-                    SET status = 'processing', worker_id = :worker_id,
-                        lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval
+                    SET status = 'processing',
+                        worker_id = :worker_id,
+                        lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval,
+                        retry_count = retry_count + 1
                     WHERE id = :id
+                    RETURNING retry_count
                 """),
                 {
                     "worker_id": worker_id,
                     "lease_seconds": lease_seconds,
                     "id": asset_id,
                 },
-            )
+            ).fetchone()
+            retry_count = int(updated[0]) if updated is not None and updated[0] is not None else int(row[8] or 0) + 1
             lease_expires = datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
             library = Library(
                 slug=row[10],
@@ -472,7 +476,7 @@ class AssetRepository:
                 analysis_model_id=row[7],
                 worker_id=worker_id,
                 lease_expires_at=lease_expires,
-                retry_count=row[8],
+                retry_count=retry_count,
                 error_message=row[9],
             )
             asset.library = library

@@ -285,6 +285,8 @@ def test_indexing_raises_when_no_scenes_produced(engine, _session_factory, tmp_p
     with mock_scanner as MockScanner, mock_segmenter as MockSegmenter:
         MockScanner.return_value.out_width = 480
         MockScanner.return_value.out_height = 270
+        MockScanner.return_value.ffmpeg_repro_command.return_value = "ffmpeg -hide_banner ..."
+        MockScanner.return_value.stderr_tail.return_value = ""
         MockSegmenter.return_value.iter_scenes.return_value = mock_yields
         with pytest.raises(ValueError, match="No frames produced by decoder"):
             run_video_scene_indexing(asset_id, video_path, "vid-int-zero", video_repo)
