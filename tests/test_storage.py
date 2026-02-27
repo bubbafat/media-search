@@ -64,6 +64,28 @@ def test_save_and_get_proxy_path(temp_data_dir):
         assert max(proxy_im.size) == 768
 
 
+def test_save_proxy_and_thumbnail_cascades_dimensions(temp_data_dir):
+    """save_proxy_and_thumbnail creates both files with expected max dimensions."""
+    store, _ = temp_data_dir
+    img = Image.new("RGB", (4000, 2000), color="purple")
+    store.save_proxy_and_thumbnail("lib1", 3, img)
+
+    proxy_path = store.get_proxy_path("lib1", 3)
+    thumb_path = store.get_thumbnail_path("lib1", 3)
+    assert proxy_path.exists()
+    assert thumb_path.exists()
+
+    with Image.open(proxy_path) as proxy_im:
+        assert max(proxy_im.size) == 768
+        proxy_size = proxy_im.size
+
+    with Image.open(thumb_path) as thumb_im:
+        assert max(thumb_im.size) == 320
+        # Thumbnail should not be larger than proxy in any dimension.
+        assert thumb_im.size[0] <= proxy_size[0]
+        assert thumb_im.size[1] <= proxy_size[1]
+
+
 def test_get_thumbnail_path_raises_when_missing(temp_data_dir):
     """get_thumbnail_path raises FileNotFoundError when file does not exist."""
     store, _ = temp_data_dir
@@ -101,6 +123,23 @@ def test_proxy_and_thumbnail_exist_false_when_thumbnail_missing(temp_data_dir):
     img = Image.new("RGB", (100, 100), color="red")
     store.save_proxy("lib1", 1, img)
     assert store.proxy_and_thumbnail_exist("lib1", 1) is False
+
+
+def test_small_image_not_upscaled_for_proxy_and_thumbnail(temp_data_dir):
+    """Icon-sized images are not upscaled for proxy or thumbnail."""
+    store, _ = temp_data_dir
+    img = Image.new("RGB", (32, 32), color="white")
+    store.save_proxy_and_thumbnail("lib1", 5, img)
+
+    proxy_path = store.get_proxy_path("lib1", 5)
+    thumb_path = store.get_thumbnail_path("lib1", 5)
+    assert proxy_path.exists()
+    assert thumb_path.exists()
+
+    with Image.open(proxy_path) as proxy_im:
+        assert proxy_im.size == (32, 32)
+    with Image.open(thumb_path) as thumb_im:
+        assert thumb_im.size == (32, 32)
 
 
 def test_load_source_image_exif_and_rgb(tmp_path):

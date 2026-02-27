@@ -34,6 +34,8 @@ class LocalMediaStore:
     """
 
     PROXY_EXTENSION = ".webp"
+    THUMBNAIL_SIZE: tuple[int, int] = (320, 320)
+    PROXY_SIZE: tuple[int, int] = (768, 768)
 
     def __init__(self) -> None:
         self.data_dir = Path(get_config().data_dir)
@@ -79,6 +81,23 @@ class LocalMediaStore:
             except Exception:
                 raise e
 
+    @staticmethod
+    def _fit_within_box_no_upscale(image: Image.Image, max_size: tuple[int, int]) -> Image.Image:
+        """Return a copy of image resized to fit within max_size, never upscaling.
+
+        If the image already fits within the target box (both dimensions <= max_size),
+        this returns a same-size copy. Otherwise it downsamples with aspect ratio
+        preserved so that max(width, height) == max(max_size).
+        """
+        max_w, max_h = max_size
+        if image.width <= max_w and image.height <= max_h:
+            return image.copy()
+
+        # Pillow's thumbnail() modifies in-place; operate on a copy.
+        resized = image.copy()
+        resized.thumbnail(max_size)
+        return resized
+
     def _get_shard_path(
         self,
         library_slug: str,
@@ -94,18 +113,40 @@ class LocalMediaStore:
         return directory / f"{asset_id}.jpg"
 
     def save_thumbnail(self, library_slug: str, asset_id: int, image: Image.Image) -> None:
-        """Create 320x320 thumbnail and save as JPEG quality 85."""
+        """Create thumbnail (max 320x320) and save as JPEG quality 85.
+
+        The thumbnail is never upscaled: if the input image is already smaller than
+        the target box, it is saved at its original resolution.
+        """
         path = self._get_shard_path(library_slug, asset_id, "thumbnails", create_dirs=True)
-        thumb = image.copy()
-        thumb.thumbnail((320, 320))
+        thumb = self._fit_within_box_no_upscale(image, self.THUMBNAIL_SIZE)
         thumb.save(path, "JPEG", quality=85)
 
-    def save_proxy(self, library_slug: str, asset_id: int, image: Image.Image) -> None:
-        """Create 768x768 proxy and save as WebP (quality 85)."""
+    def save_proxy(self, library_slug: str, asset_id: int, image: Image.Image) -> Image.Image:
+        """Create proxy (max 768x768) and save as WebP (quality 85).
+
+        The proxy is never upscaled: if the input image is already smaller than
+        the target box, it is saved at its original resolution.
+
+        Returns the in-memory proxy Image so callers that also need a thumbnail
+        can reuse it instead of re-downsampling the original.
+        """
         path = self._get_proxy_path(library_slug, asset_id, create_dirs=True)
-        proxy = image.copy()
-        proxy.thumbnail((768, 768))
+        proxy = self._fit_within_box_no_upscale(image, self.PROXY_SIZE)
         proxy.save(path, "WEBP", quality=85)
+        return proxy
+
+    def save_proxy_and_thumbnail(self, library_slug: str, asset_id: int, image: Image.Image) -> None:
+        """Save cascaded proxy and thumbnail derived from that proxy.
+
+        Source (full-res or pyvips preview) -> proxy (<=768x768) -> thumbnail (<=320x320).
+
+        Small images are never upscaled:
+        - If the source is smaller than the proxy target, the proxy uses source resolution.
+        - If the proxy is smaller than the thumbnail target, the thumbnail uses proxy resolution.
+        """
+        proxy = self.save_proxy(library_slug, asset_id, image)
+        self.save_thumbnail(library_slug, asset_id, proxy)
 
     def _get_proxy_path(
         self,

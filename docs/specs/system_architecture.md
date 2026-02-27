@@ -97,7 +97,12 @@ The pipeline is divided into specialized, isolated worker types to prevent hardw
 
 2. **The Image Proxy Worker (Network I/O & CPU Bound):**
    - **Role:** Pre-Processor & Cache Builder for **images**.
-   - **Action:** Claims `pending` **image** assets. It pulls the original image files (e.g. 50MB RAW) across the network *exactly once*. For standard raster formats (JPEG/PNG/etc.) it decodes directly; for RAW/DNG formats it prefers an embedded or fast-path libvips preview (long edge ≈1280px) when available to bound memory, falling back to a full-resolution RAW decode as needed. In all cases it generates a lightweight UI Thumbnail (JPEG) and a standardized WebP AI Proxy on the local SSD and updates the asset status to `proxied`.
+   - **Action:** Claims `pending` **image** assets. It pulls the original image files (e.g. 50MB RAW) across the network *exactly once*. For standard raster formats (JPEG/PNG/etc.) it decodes directly; for RAW/DNG formats it prefers an embedded or fast-path libvips preview (long edge ≈1280px) when available to bound memory, falling back to a full-resolution RAW decode as needed.
+   - **Cascade Resize Pipeline:** From the loaded image (full-res or preview), it first generates a medium-size WebP **proxy** (max 768×768) and then generates the UI **thumbnail** (max 320×320 JPEG) from that proxy image, never upscaling:
+     - If the source image is smaller than the proxy target in both dimensions, the proxy is saved at the source resolution (re-encoded only).
+     - If the proxy image is smaller than the thumbnail target in both dimensions, the thumbnail is saved at the proxy resolution.
+     - This ensures that icon-sized inputs (e.g., 32×32) remain 32×32 for both proxy and thumbnail while large images incur only one downscale from source to proxy, then a second, cheaper downscale from proxy to thumbnail.
+   - After writing both derivatives to the sharded local SSD cache, it updates the asset status to `proxied`.
 
 3. **The Video Proxy Worker (Network I/O & CPU Bound):**
    - **Role:** Pre-Processor for **videos**.
