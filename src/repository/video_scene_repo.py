@@ -99,6 +99,25 @@ class VideoSceneRepository:
                 )
             return result
 
+    def get_first_scene_rep_frame_paths(self, asset_ids: list[int]) -> dict[int, str]:
+        """
+        Return a dict mapping asset_id to the first scene's rep_frame_path (by start_ts)
+        for each asset that has at least one scene. Used for library preview images.
+        """
+        if not asset_ids:
+            return {}
+        with self._session_scope(write=False) as session:
+            rows = session.execute(
+                text("""
+                    SELECT DISTINCT ON (asset_id) asset_id, rep_frame_path
+                    FROM video_scenes
+                    WHERE asset_id = ANY(:asset_ids)
+                    ORDER BY asset_id, start_ts
+                """),
+                {"asset_ids": asset_ids},
+            ).fetchall()
+            return {int(r[0]): str(r[1] or "") for r in rows if r[1]}
+
     def get_asset_ids_with_scenes(
         self,
         library_slug: str | None = None,

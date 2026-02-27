@@ -7,8 +7,8 @@ from typer.testing import CliRunner
 from sqlalchemy import text
 from sqlmodel import SQLModel
 
+from tests.conftest import clear_app_db_caches
 from src.cli import app
-from src.core import config as config_module
 from src.models.entities import AssetStatus, AssetType, Library, SystemMetadata
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
@@ -90,7 +90,7 @@ def reindex_cli_db(postgres_container, engine, _session_factory, request):
     url = postgres_container.get_connection_url()
     prev = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = url
-    config_module._config = None
+    clear_app_db_caches()
     try:
         yield slug, "video.mp4", lib_repo, asset_repo, scene_repo
     finally:
@@ -98,7 +98,7 @@ def reindex_cli_db(postgres_container, engine, _session_factory, request):
             os.environ["DATABASE_URL"] = prev
         else:
             os.environ.pop("DATABASE_URL", None)
-        config_module._config = None
+        clear_app_db_caches()
 
 
 def test_asset_reindex_clears_scenes_and_sets_pending(reindex_cli_db):
@@ -164,7 +164,7 @@ def library_reindex_cli_db(postgres_container, engine, _session_factory, request
     url = postgres_container.get_connection_url()
     prev = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = url
-    config_module._config = None
+    clear_app_db_caches()
     try:
         yield slug, lib_repo, asset_repo, scene_repo, _session_factory
     finally:
@@ -172,7 +172,7 @@ def library_reindex_cli_db(postgres_container, engine, _session_factory, request
             os.environ["DATABASE_URL"] = prev
         else:
             os.environ.pop("DATABASE_URL", None)
-        config_module._config = None
+        clear_app_db_caches()
 
 
 def test_library_reindex_videos_clears_all_and_sets_pending(library_reindex_cli_db):

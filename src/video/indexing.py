@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from PIL import Image
-from src.video.preview import build_preview_webp
 from rapidfuzz import fuzz
 
 from src.core.config import get_config
@@ -52,11 +51,10 @@ def run_video_scene_indexing(
     on_scene_closed: Callable[[], None] | None = None,
     on_scene_saved: Callable[[Path, float, float], None] | None = None,
     check_interrupt: Callable[[], bool] | None = None,
-) -> Path | None:
+) -> None:
     """
     Run the scene detection pipeline for one video asset: resume from last max(end_ts) if any,
     persist each closed scene and active state in a single transaction, and clear state on EOF.
-    Returns the path of the generated preview.webp if built, else None.
     """
     video_path = Path(video_path)
     if not video_path.exists():
@@ -164,6 +162,3 @@ def run_video_scene_indexing(
         raise ValueError(
             "No frames produced by decoder; video may be unsupported or corrupt"
         )
-
-    preview_path = build_preview_webp(asset_id, library_slug, repo, data_dir)
-    return preview_path

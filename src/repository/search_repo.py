@@ -18,6 +18,7 @@ class SearchResultItem:
     final_rank: float
     best_scene_ts: float | None  # exact timestamp to jump to for videos
     match_ratio: float  # 1.0 for images, 0.0 to 1.0 for videos
+    best_scene_rep_frame_path: str | None  # rep frame path for best-match scene (videos only)
 
 
 class SearchRepository:
@@ -97,7 +98,8 @@ class SearchRepository:
                 a.id AS asset_id,
                 NULL::float AS best_scene_ts,
                 1.0::float AS match_ratio,
-                ts_rank_cd(to_tsvector('english', {image_search_target}), f.q) AS base_rank
+                ts_rank_cd(to_tsvector('english', {image_search_target}), f.q) AS base_rank,
+                NULL::text AS best_rep_frame_path
             FROM asset a CROSS JOIN fts_query f
             {library_join}
             WHERE a.type = 'image' AND a.visual_analysis IS NOT NULL
@@ -112,7 +114,8 @@ class SearchRepository:
                 s.start_ts,
                 s.end_ts,
                 MAX(s.end_ts) OVER (PARTITION BY s.asset_id) AS total_duration,
-                ts_rank_cd(to_tsvector('english', {video_search_target}), f.q) AS scene_rank
+                ts_rank_cd(to_tsvector('english', {video_search_target}), f.q) AS scene_rank,
+                s.rep_frame_path
             FROM video_scenes s CROSS JOIN fts_query f
             JOIN asset a ON s.asset_id = a.id
             {library_join}
@@ -128,20 +131,22 @@ class SearchRepository:
                 asset_id,
                 (ARRAY_AGG(start_ts ORDER BY scene_rank DESC))[1] AS best_scene_ts,
                 SUM(end_ts - start_ts) / NULLIF(MAX(total_duration), 0) AS match_ratio,
-                MAX(scene_rank) AS base_rank
+                MAX(scene_rank) AS base_rank,
+                (ARRAY_AGG(rep_frame_path ORDER BY scene_rank DESC))[1] AS best_rep_frame_path
             FROM video_hits
             GROUP BY asset_id
         ),
         combined AS (
-            SELECT asset_id, best_scene_ts, match_ratio, base_rank FROM image_hits
+            SELECT asset_id, best_scene_ts, match_ratio, base_rank, best_rep_frame_path FROM image_hits
             UNION ALL
-            SELECT asset_id, best_scene_ts, match_ratio, base_rank FROM video_agg
+            SELECT asset_id, best_scene_ts, match_ratio, base_rank, best_rep_frame_path FROM video_agg
         )
         SELECT
             c.asset_id,
             c.best_scene_ts,
             c.match_ratio,
-            (c.base_rank * (1.0 + COALESCE(c.match_ratio, 0) * 2.0)) AS final_rank
+            (c.base_rank * (1.0 + COALESCE(c.match_ratio, 0) * 2.0)) AS final_rank,
+            c.best_rep_frame_path
         FROM combined c
         ORDER BY final_rank DESC
         LIMIT :limit
@@ -183,7 +188,8 @@ class SearchRepository:
                 a.id AS asset_id,
                 NULL::float AS best_scene_ts,
                 1.0::float AS match_ratio,
-                1.0::float AS base_rank
+                1.0::float AS base_rank,
+                NULL::text AS best_rep_frame_path
             FROM asset a
             {library_join}
             WHERE a.type = 'image' AND a.visual_analysis IS NOT NULL
@@ -197,7 +203,8 @@ class SearchRepository:
                 s.start_ts,
                 s.end_ts,
                 MAX(s.end_ts) OVER (PARTITION BY s.asset_id) AS total_duration,
-                1.0::float AS scene_rank
+                1.0::float AS scene_rank,
+                s.rep_frame_path
             FROM video_scenes s
             JOIN asset a ON s.asset_id = a.id
             {library_join}
@@ -212,20 +219,22 @@ class SearchRepository:
                 asset_id,
                 (ARRAY_AGG(start_ts ORDER BY start_ts))[1] AS best_scene_ts,
                 SUM(end_ts - start_ts) / NULLIF(MAX(total_duration), 0) AS match_ratio,
-                1.0::float AS base_rank
+                1.0::float AS base_rank,
+                (ARRAY_AGG(rep_frame_path ORDER BY start_ts))[1] AS best_rep_frame_path
             FROM video_hits
             GROUP BY asset_id
         ),
         combined AS (
-            SELECT asset_id, best_scene_ts, match_ratio, base_rank FROM image_hits
+            SELECT asset_id, best_scene_ts, match_ratio, base_rank, best_rep_frame_path FROM image_hits
             UNION ALL
-            SELECT asset_id, best_scene_ts, match_ratio, base_rank FROM video_agg
+            SELECT asset_id, best_scene_ts, match_ratio, base_rank, best_rep_frame_path FROM video_agg
         )
         SELECT
             c.asset_id,
             c.best_scene_ts,
             c.match_ratio,
-            (c.base_rank * (1.0 + COALESCE(c.match_ratio, 0) * 2.0)) AS final_rank
+            (c.base_rank * (1.0 + COALESCE(c.match_ratio, 0) * 2.0)) AS final_rank,
+            c.best_rep_frame_path
         FROM combined c
         ORDER BY final_rank DESC
         LIMIT :limit
@@ -254,7 +263,7 @@ class SearchRepository:
             assets = session.execute(select(Asset).where(Asset.id.in_(asset_ids))).scalars().all()
             asset_map = {a.id: a for a in assets}
             for r in rows:
-                asset_id, best_ts, ratio, rank = r
+                asset_id, best_ts, ratio, rank, best_rep_path = r
                 if asset_id in asset_map:
                     results.append(
                         SearchResultItem(
@@ -262,6 +271,7 @@ class SearchRepository:
                             final_rank=float(rank),
                             best_scene_ts=float(best_ts) if best_ts is not None else None,
                             match_ratio=float(ratio) if ratio is not None else 0.0,
+                            best_scene_rep_frame_path=str(best_rep_path) if best_rep_path else None,
                         )
                     )
         return results

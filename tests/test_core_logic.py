@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from testcontainers.postgres import PostgresContainer
 
-from src.core import config as config_module
+from tests.conftest import clear_app_db_caches
 from src.core.config import get_config, reset_config
 from src.core.logging import FlightLogger, FLIGHT_LOG_CAPACITY
 from src.core.path_resolver import _reset_session_factory_for_tests, resolve_path
@@ -57,7 +57,7 @@ def path_resolver_db():
         url = postgres.get_connection_url()
         prev = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = url
-        config_module._config = None  # type: ignore[attr-defined]
+        clear_app_db_caches()
         try:
             from alembic import command
             from alembic.config import Config
@@ -81,7 +81,7 @@ def path_resolver_db():
                 os.environ["DATABASE_URL"] = prev
             else:
                 os.environ.pop("DATABASE_URL", None)
-            config_module._config = None  # type: ignore[attr-defined]
+            clear_app_db_caches()
 
 
 @pytest.mark.slow

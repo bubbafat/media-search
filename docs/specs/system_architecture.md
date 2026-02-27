@@ -51,8 +51,8 @@ By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-d
 - `tags_model_id` (FK): Records which AI model produced the *current* data.
 - `retry_count` (Integer): Incremented on every claim attempt. If > 5, mark as `poisoned`.
 - `lease_expires_at` (DateTime): Dead-man's switch for worker failure recovery.
-- `preview_path` (String, nullable): For video assets, path **relative to data_dir** to the animated preview file (e.g. `video_scenes/{library_slug}/{asset_id}/preview.webp`). **Single source of truth** for "has animated preview": a video has a preview if and only if this is NOT NULL. Set when the preview is built (indexing or repair); set to NULL when the scene index is cleared. Full path on the server is `data_dir / preview_path`. The UI/API must use this field (or a backend-derived URL) and must not infer preview location from library_slug/asset_id.
-- `video_preview_path` (String, nullable): For video assets, path **relative to data_dir** to the 10-second head-clip MP4 (e.g. `video_clips/{library_slug}/{asset_id}/head_clip.mp4`). Used for hover preview in the UI. Set when the Video Worker generates the head clip; NULL until then.
+- `preview_path` (String, nullable): **Deprecated.** Previously held the path to an animated WebP preview; the UI now uses a static scene frame as the preview image (first scene for library, best-match scene for search), derived from `video_scenes.rep_frame_path` via the API. The column remains; the Video Worker no longer sets it.
+- `video_preview_path` (String, nullable): For video assets, path **relative to data_dir** to the 10-second head-clip MP4 (e.g. `video_clips/{library_slug}/{asset_id}/head_clip.mp4`). Used for hover/tap preview playback in the UI. Set when the Video Worker generates the head clip; NULL until then.
 
 ### 2.3 `video_frames` Table
 - `id` (UUID or BigInt, PK): Primary identifier.

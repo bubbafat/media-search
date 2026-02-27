@@ -4,7 +4,7 @@ The MediaSearch web UI provides:
 
 - **Search** — A fast search box with Semantic vs OCR toggle.
 - Optional **tag filter**: open `/dashboard?tag=Disneyland` or `/dashboard/tag/Disneyland` to see all assets with that tag (no text query).
-- A responsive results grid (thumbnails; for videos, animated WebP preview or 10-second head-clip MP4 on hover).
+- A responsive results grid (thumbnails; for videos, a static preview image from the first or best-match scene frame, and 10-second head-clip on hover (desktop) or tap (mobile)).
 - **Detail modal**: Click any result to open a pop-up with the thumbnail on the left and, on the right, **description**, **tags** (as clickable chiclets that navigate to that tag’s results), and **OCR text**.
 - **Library Browser** — Select a library and browse all media with infinite scroll, same layouts and detail modal as search.
 - A collapsible System Status section showing worker health and stats.
@@ -129,8 +129,8 @@ The UI never writes to source libraries and only loads **derivatives from `data_
 
 - **Static mount**: `GET /media/...` serves files rooted at `data_dir`.
 - **Thumbnails**: `/media/{library_slug}/thumbnails/{asset_id % 1000}/{asset_id}.jpg`
-- **Animated previews** (videos): `/media/{asset.preview_path}` (when `asset.preview_path` is set).
-- **Head-clip previews** (videos): `/media/{asset.video_preview_path}` (10-second MP4 at 00:00; used for hover playback).
+- **Preview images** (videos): The API returns `preview_url` pointing to a scene representative frame (first scene for library, best-match scene for search) under `/media/...` (e.g. `/media/video_scenes/{library_slug}/{asset_id}/{start}_{end}.jpg`).
+- **Head-clip previews** (videos): `/media/{asset.video_preview_path}` (10-second MP4 at 00:00; used for hover/tap playback).
 - **Video clips** (search hit verification): `/api/asset/{asset_id}/clip?ts=...` lazy-extracts and redirects to `/media/video_clips/{library_id}/{asset_id}/clip_{ts}.mp4`.
 
 ---

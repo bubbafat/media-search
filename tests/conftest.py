@@ -9,6 +9,33 @@ from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.postgres import PostgresContainer
 
 
+def clear_app_db_caches() -> None:
+    """
+    Clear the app's config and DB-related caches. Call this in any fixture that
+    sets DATABASE_URL (e.g. to a testcontainer URL) so the app uses the new URL
+    instead of a previously cached connection.
+    """
+    from src.api.main import (
+        _get_asset_repo,
+        _get_library_repo,
+        _get_search_repo,
+        _get_session_factory,
+        _get_system_metadata_repo,
+        _get_ui_repo,
+        _get_video_scene_repo,
+    )
+    from src.core import config as config_module
+
+    config_module._config = None  # type: ignore[attr-defined]
+    _get_session_factory.cache_clear()
+    _get_system_metadata_repo.cache_clear()
+    _get_ui_repo.cache_clear()
+    _get_search_repo.cache_clear()
+    _get_asset_repo.cache_clear()
+    _get_video_scene_repo.cache_clear()
+    _get_library_repo.cache_clear()
+
+
 @pytest.fixture(scope="session")
 def postgres_container():
     """Session-scoped PostgreSQL 16 container (testcontainers)."""

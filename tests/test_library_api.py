@@ -6,10 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from src.api.main import app, _get_asset_repo, _get_library_repo
-from src.core import config as config_module
+from tests.conftest import clear_app_db_caches
+from src.api.main import app, _get_asset_repo, _get_library_repo, _get_video_scene_repo
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
+from src.repository.video_scene_repo import VideoSceneRepository
 
 pytestmark = [pytest.mark.slow]
 
@@ -25,7 +26,7 @@ def library_api_postgres():
         url = postgres.get_connection_url()
         prev = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = url
-        config_module._config = None  # type: ignore[attr-defined]
+        clear_app_db_caches()
         try:
             from alembic import command
             from alembic.config import Config
@@ -62,22 +63,45 @@ def library_api_postgres():
                     )
                 session.commit()
 
+            # Seed one video_scenes row for the video asset so preview_url comes from first scene rep frame
+            with session_factory() as session:
+                row = session.execute(
+                    text("SELECT id FROM asset WHERE library_id = 'lib1' AND type = 'video' LIMIT 1")
+                ).fetchone()
+                if row is not None:
+                    video_asset_id = row[0]
+                    session.execute(
+                        text(
+                            """
+                            INSERT INTO video_scenes (
+                                asset_id, start_ts, end_ts, description, metadata, sharpness_score, rep_frame_path, keep_reason
+                            ) VALUES (
+                                :aid, 0.0, 5.0, NULL, NULL, 1.0, 'video_scenes/lib1/' || :aid || '/0.000_5.000.jpg', 'phash'
+                            )
+                            """
+                        ),
+                        {"aid": video_asset_id},
+                    )
+                    session.commit()
+
             asset_repo = AssetRepository(session_factory)
             library_repo = LibraryRepository(session_factory)
-            yield asset_repo, library_repo
+            video_scene_repo = VideoSceneRepository(session_factory)
+            yield asset_repo, library_repo, video_scene_repo
         finally:
             if prev is not None:
                 os.environ["DATABASE_URL"] = prev
             else:
                 os.environ.pop("DATABASE_URL", None)
-            config_module._config = None  # type: ignore[attr-defined]
+            clear_app_db_caches()
 
 
 def test_library_assets_returns_items_and_has_more(library_api_postgres):
     """GET /api/library-assets returns items and has_more."""
-    asset_repo, library_repo = library_api_postgres
+    asset_repo, library_repo, video_scene_repo = library_api_postgres
     app.dependency_overrides[_get_asset_repo] = lambda: asset_repo
     app.dependency_overrides[_get_library_repo] = lambda: library_repo
+    app.dependency_overrides[_get_video_scene_repo] = lambda: video_scene_repo
     try:
         client = TestClient(app)
         res = client.get("/api/library-assets", params={"library": "lib1"})
@@ -100,16 +124,24 @@ def test_library_assets_returns_items_and_has_more(library_api_postgres):
             assert item["match_ratio"] == 100.0
             assert item["best_scene_ts"] is None
             assert item["best_scene_ts_seconds"] is None
+        # Video with a scene gets preview_url from first scene rep frame
+        video_item = next((i for i in items if i["type"] == "video"), None)
+        if video_item is not None:
+            assert video_item["preview_url"] is not None
+            assert "/media/video_scenes/lib1/" in video_item["preview_url"]
+            assert video_item["preview_url"].endswith("/0.000_5.000.jpg")
     finally:
         app.dependency_overrides.pop(_get_asset_repo, None)
         app.dependency_overrides.pop(_get_library_repo, None)
+        app.dependency_overrides.pop(_get_video_scene_repo, None)
 
 
 def test_library_assets_sort_and_order(library_api_postgres):
     """GET /api/library-assets respects sort and order."""
-    asset_repo, library_repo = library_api_postgres
+    asset_repo, library_repo, video_scene_repo = library_api_postgres
     app.dependency_overrides[_get_asset_repo] = lambda: asset_repo
     app.dependency_overrides[_get_library_repo] = lambda: library_repo
+    app.dependency_overrides[_get_video_scene_repo] = lambda: video_scene_repo
     try:
         client = TestClient(app)
         res = client.get("/api/library-assets", params={"library": "lib1", "sort": "name", "order": "asc"})
@@ -121,13 +153,15 @@ def test_library_assets_sort_and_order(library_api_postgres):
     finally:
         app.dependency_overrides.pop(_get_asset_repo, None)
         app.dependency_overrides.pop(_get_library_repo, None)
+        app.dependency_overrides.pop(_get_video_scene_repo, None)
 
 
 def test_library_assets_pagination(library_api_postgres):
     """GET /api/library-assets paginates with offset and limit."""
-    asset_repo, library_repo = library_api_postgres
+    asset_repo, library_repo, video_scene_repo = library_api_postgres
     app.dependency_overrides[_get_asset_repo] = lambda: asset_repo
     app.dependency_overrides[_get_library_repo] = lambda: library_repo
+    app.dependency_overrides[_get_video_scene_repo] = lambda: video_scene_repo
     try:
         client = TestClient(app)
         res1 = client.get("/api/library-assets", params={"library": "lib1", "limit": 2, "offset": 0})
@@ -148,6 +182,7 @@ def test_library_assets_pagination(library_api_postgres):
     finally:
         app.dependency_overrides.pop(_get_asset_repo, None)
         app.dependency_overrides.pop(_get_library_repo, None)
+        app.dependency_overrides.pop(_get_video_scene_repo, None)
 
 
 def test_library_assets_requires_library():

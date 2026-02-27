@@ -724,7 +724,6 @@ def ai_video(
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
-    repair: bool = typer.Option(False, "--repair", help="Rebuild missing video preview.webp from existing scene images without reindexing."),
 ) -> None:
     """Start the Video worker: claims pending video assets, runs scene indexing, marks completed."""
     session_factory = _get_session_factory()
@@ -797,7 +796,6 @@ def ai_video(
         verbose=verbose,
         analyzer_name=resolved_analyzer,
         system_default_model_id=system_default_model_id,
-        repair=repair,
     )
     try:
         worker.run()

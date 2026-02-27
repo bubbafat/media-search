@@ -134,18 +134,14 @@ def test_indexing_persists_scenes_and_clears_state_on_eof(engine, _session_facto
     finally:
         session.close()
 
-    # Preview is built after indexing; asset row gets preview_path (as worker would set it)
-    preview_path = tmp_path / "video_scenes" / "vid-int-full" / str(asset_id) / "preview.webp"
-    assert preview_path.exists()
-    expected_relative = f"video_scenes/vid-int-full/{asset_id}/preview.webp"
-    asset_repo.set_preview_path(asset_id, expected_relative)
+    # Scene indexing does not build preview.webp; preview image is derived from first/best scene frame in API.
     session = _session_factory()
     try:
-        row = session.execute(
-            text("SELECT preview_path FROM asset WHERE id = :aid"),
+        count = session.execute(
+            text("SELECT COUNT(*) FROM video_scenes WHERE asset_id = :aid"),
             {"aid": asset_id},
-        ).fetchone()
-        assert row is not None and row[0] == expected_relative
+        ).scalar()
+        assert count == 2
     finally:
         session.close()
 
@@ -154,7 +150,7 @@ def test_indexing_resume_continues_and_clears_state(engine, _session_factory, tm
     """Resume: pre-seed one scene and active_state; mock segmenter yields one more scene (EOF). Assert 2 scenes and no active_state."""
     asset_repo, video_repo = _create_tables_and_seed(engine, _session_factory)
     asset_id = _ensure_library_and_asset(_session_factory, "vid-int-resume")
-    # Pre-seed JPEG for the pre-inserted scene (build_preview_webp loads it)
+    # Pre-seed JPEG for the pre-inserted scene
     rep_frame_dir = tmp_path / "video_scenes" / "vid-int-resume" / str(asset_id)
     rep_frame_dir.mkdir(parents=True)
     (rep_frame_dir / "0.000_5.000.jpg").write_bytes(b"fake jpeg")

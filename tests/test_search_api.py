@@ -6,8 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from tests.conftest import clear_app_db_caches
 from src.api.main import app, _get_search_repo, _get_ui_repo
-from src.core import config as config_module
 from src.repository.search_repo import SearchRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.ui_repo import UIRepository
@@ -26,7 +26,7 @@ def search_api_postgres():
         url = postgres.get_connection_url()
         prev = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = url
-        config_module._config = None  # type: ignore[attr-defined]
+        clear_app_db_caches()
         try:
             from alembic import command
             from alembic.config import Config
@@ -98,7 +98,7 @@ def search_api_postgres():
                 os.environ["DATABASE_URL"] = prev
             else:
                 os.environ.pop("DATABASE_URL", None)
-            config_module._config = None  # type: ignore[attr-defined]
+            clear_app_db_caches()
 
 
 def test_api_search_semantic_returns_image_and_video(search_api_postgres):
@@ -125,7 +125,7 @@ def test_api_search_semantic_returns_image_and_video(search_api_postgres):
         assert by_id[101]["filename"] == "a.jpg"
 
         assert by_id[202]["type"] == "video"
-        assert by_id[202]["preview_url"].endswith("/media/video_scenes/testlib/202/preview.webp")
+        assert by_id[202]["preview_url"].endswith("/media/video_scenes/testlib/202/3.000_6.000.jpg")
         assert by_id[202]["best_scene_ts"] == "00:03"
         assert by_id[202]["best_scene_ts_seconds"] == 3.0
         assert 0.0 <= by_id[202]["match_ratio"] <= 100.0

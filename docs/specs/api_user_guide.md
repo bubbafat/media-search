@@ -66,8 +66,8 @@ Response: JSON array of items with:
 - `thumbnail_url` (derivative URL; `null` when asset `status` is `pending`, `processing`, `failed`, or `poisoned`)
 - `status` (asset status string; used by UI for placeholder logic)
 - `error_message` (str | null; last processing error; shown as tooltip on error placeholder)
-- `preview_url` (animated preview WebP URL if available)
-- `video_preview_url` (10-second head-clip MP4 URL for hover preview; `null` if not yet generated)
+- `preview_url` (preview image URL: first-scene or best-scene representative frame for videos when available; `null` otherwise)
+- `video_preview_url` (10-second head-clip MP4 URL for hover/tap preview; `null` if not yet generated)
 - `final_rank`
 - `match_ratio` (percentage)
 - `best_scene_ts` (formatted `MM:SS`)

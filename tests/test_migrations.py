@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from testcontainers.postgres import PostgresContainer
 
-from src.core import config as config_module
+from tests.conftest import clear_app_db_caches
 
 EXPECTED_TABLES = [
     "aimodel",
@@ -41,7 +41,7 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
     url = migration_postgres.get_connection_url()
     prev = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = url
-    config_module._config = None  # type: ignore[attr-defined]
+    clear_app_db_caches()
 
     try:
         from alembic import command
@@ -295,7 +295,7 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             os.environ["DATABASE_URL"] = prev
         else:
             os.environ.pop("DATABASE_URL", None)
-        config_module._config = None  # type: ignore[attr-defined]
+        clear_app_db_caches()
 
 
 @pytest.mark.migration
@@ -305,7 +305,7 @@ def test_migration_02_downgrade_base(migration_postgres, migration_engine):
     url = migration_postgres.get_connection_url()
     prev = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = url
-    config_module._config = None  # type: ignore[attr-defined]
+    clear_app_db_caches()
 
     try:
         from alembic import command
@@ -331,4 +331,4 @@ def test_migration_02_downgrade_base(migration_postgres, migration_engine):
             os.environ["DATABASE_URL"] = prev
         else:
             os.environ.pop("DATABASE_URL", None)
-        config_module._config = None  # type: ignore[attr-defined]
+        clear_app_db_caches()

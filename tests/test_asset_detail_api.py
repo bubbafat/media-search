@@ -6,8 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from tests.conftest import clear_app_db_caches
 from src.api.main import app, _get_asset_repo, _get_video_scene_repo
-from src.core import config as config_module
 from src.repository.asset_repo import AssetRepository
 from src.repository.video_scene_repo import VideoSceneRepository
 
@@ -25,7 +25,7 @@ def asset_detail_api_postgres():
         url = postgres.get_connection_url()
         prev = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = url
-        config_module._config = None  # type: ignore[attr-defined]
+        clear_app_db_caches()
         try:
             from alembic import command
             from alembic.config import Config
@@ -95,7 +95,7 @@ def asset_detail_api_postgres():
                 os.environ["DATABASE_URL"] = prev
             else:
                 os.environ.pop("DATABASE_URL", None)
-            config_module._config = None  # type: ignore[attr-defined]
+            clear_app_db_caches()
 
 
 def test_api_asset_detail_image_returns_visual_analysis(asset_detail_api_postgres):

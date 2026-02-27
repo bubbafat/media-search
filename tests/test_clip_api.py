@@ -9,8 +9,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from tests.conftest import clear_app_db_caches
 from src.api.main import app, _get_asset_repo, _get_library_repo
-from src.core import config as config_module
 from src.core.path_resolver import _reset_session_factory_for_tests
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
@@ -57,7 +57,7 @@ def clip_api_postgres(tmp_path_factory):
         url = postgres.get_connection_url()
         prev_db = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = url
-        config_module._config = None  # type: ignore[attr-defined]
+        clear_app_db_caches()
         _reset_session_factory_for_tests()
         try:
             from alembic import command
@@ -136,7 +136,7 @@ def clip_api_postgres(tmp_path_factory):
                 os.environ["DATABASE_URL"] = prev_db
             else:
                 os.environ.pop("DATABASE_URL", None)
-            config_module._config = None  # type: ignore[attr-defined]
+            clear_app_db_caches()
             _reset_session_factory_for_tests()
 
 

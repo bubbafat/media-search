@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PIL import Image
 from sqlalchemy import text
 from sqlmodel import SQLModel
 
@@ -89,6 +88,16 @@ def test_video_worker_process_task_completes_asset(engine, _session_factory):
 
     asset_repo = AssetRepository(_session_factory)
     asset_repo.upsert_asset("video-lib", "movie.mp4", AssetType.video, 0.0, 1000)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET status = 'proxied' WHERE library_id = 'video-lib' AND rel_path = 'movie.mp4'"
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
     worker_repo = WorkerRepository(_session_factory)
     system_repo = SystemMetadataRepository(_session_factory)
     scene_repo = VideoSceneRepository(_session_factory)
@@ -193,6 +202,16 @@ def test_video_worker_process_task_poisons_on_exception(engine, _session_factory
 
     asset_repo = AssetRepository(_session_factory)
     asset_repo.upsert_asset("poison-video", "bad.mp4", AssetType.video, 0.0, 100)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET status = 'proxied' WHERE library_id = 'poison-video' AND rel_path = 'bad.mp4'"
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
     worker_repo = WorkerRepository(_session_factory)
     system_repo = SystemMetadataRepository(_session_factory)
     scene_repo = VideoSceneRepository(_session_factory)
@@ -226,87 +245,3 @@ def test_video_worker_process_task_poisons_on_exception(engine, _session_factory
     finally:
         session.close()
 
-
-def test_video_worker_repair_builds_missing_preview(engine, _session_factory, tmp_path):
-    """Repair pass builds preview.webp when scene folder has scene JPEGs but no preview."""
-    _create_tables_and_seed(engine, _session_factory)
-    session = _session_factory()
-    try:
-        session.add(
-            Library(
-                slug="repair-preview-lib",
-                name="Repair Lib",
-                absolute_path=str(tmp_path),
-                is_active=True,
-                sampling_limit=100,
-            )
-        )
-        session.commit()
-    finally:
-        session.close()
-
-    asset_repo = AssetRepository(_session_factory)
-    asset_repo.upsert_asset("repair-preview-lib", "movie.mp4", AssetType.video, 0.0, 1000)
-    session = _session_factory()
-    try:
-        row = session.execute(
-            text(
-                "SELECT id FROM asset WHERE library_id = 'repair-preview-lib' AND rel_path = 'movie.mp4'"
-            )
-        ).fetchone()
-        assert row is not None
-        asset_id = row[0]
-    finally:
-        session.close()
-
-    scene_dir = tmp_path / "video_scenes" / "repair-preview-lib" / str(asset_id)
-    scene_dir.mkdir(parents=True)
-    scene_jpeg = scene_dir / "0.000_3.000.jpg"
-    Image.new("RGB", (100, 100), color="blue").save(scene_jpeg, "JPEG", quality=85)
-
-    scene_repo = VideoSceneRepository(_session_factory)
-    scene_repo.save_scene_and_update_state(
-        asset_id,
-        VideoSceneRow(
-            start_ts=0.0,
-            end_ts=3.0,
-            description=None,
-            metadata=None,
-            sharpness_score=1.0,
-            rep_frame_path=f"video_scenes/repair-preview-lib/{asset_id}/0.000_3.000.jpg",
-            keep_reason="phash",
-        ),
-        None,
-    )
-
-    preview_path = scene_dir / "preview.webp"
-    assert not preview_path.exists()
-
-    mock_config = MagicMock()
-    mock_config.data_dir = str(tmp_path)
-    worker_repo = WorkerRepository(_session_factory)
-    system_repo = SystemMetadataRepository(_session_factory)
-    worker = VideoWorker(
-        worker_id="video-repair-test",
-        repository=worker_repo,
-        heartbeat_interval_seconds=15.0,
-        asset_repo=asset_repo,
-        system_metadata_repo=system_repo,
-        scene_repo=scene_repo,
-        library_slug="repair-preview-lib",
-        repair=True,
-    )
-    with patch("src.workers.video_worker.get_config", return_value=mock_config):
-        worker._run_preview_repair_pass()
-
-    assert preview_path.exists()
-    expected_relative = f"video_scenes/repair-preview-lib/{asset_id}/preview.webp"
-    session = _session_factory()
-    try:
-        row = session.execute(
-            text("SELECT preview_path FROM asset WHERE id = :id"),
-            {"id": asset_id},
-        ).fetchone()
-        assert row is not None and row[0] == expected_relative
-    finally:
-        session.close()

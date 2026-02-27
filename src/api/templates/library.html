@@ -102,12 +102,15 @@
       <section x-show="layout === 'masonry'" class="columns-3 md:columns-4 lg:columns-5 gap-3 space-y-3">
         <template x-for="item in results" :key="item.asset_id">
           <div class="card bg-base-100 shadow hover:shadow-md transition cursor-pointer overflow-hidden break-inside-avoid" @click="openDetail(item)">
-            <figure class="relative" x-data="{ hover: false, videoReady: false }" @mouseenter="item.video_preview_url && (hover = true)" @mouseleave="hover = false; videoReady = false">
+            <figure class="relative" x-data="{ hover: false, videoReady: false, mobilePlaying: false, isMobile: false }" x-init="isMobile = typeof window !== 'undefined' && 'ontouchstart' in window"
+              @mouseenter="if (item.video_preview_url) { hover = true; $nextTick(() => { const v = $refs.previewVideo; if (v) { v.play(); if (v.readyState >= 2) videoReady = true } }) }"
+              @mouseleave="if (item.video_preview_url) { hover = false; $refs.previewVideo?.pause() }"
+              @click="if (isMobile && item.type === 'video' && item.video_preview_url) { $event.stopPropagation(); mobilePlaying = !mobilePlaying; $nextTick(() => { const v = $refs.previewVideo; if (v) mobilePlaying ? v.play() : v.pause() }) }">
               <template x-if="getDisplayUrl(item)">
                 <img
                   class="w-full aspect-square object-cover"
-                  :class="{ 'opacity-0': hover && item.video_preview_url && videoReady }"
-                  :src="(item.type === 'video' && item.preview_url) ? item.preview_url : item.thumbnail_url"
+                  :class="{ 'opacity-0': (hover || mobilePlaying) && item.video_preview_url && videoReady }"
+                  :src="item.preview_url || item.thumbnail_url"
                   loading="lazy"
                 />
               </template>
@@ -129,7 +132,8 @@
               </template>
               <template x-if="item.type === 'video' && item.video_preview_url">
                 <video
-                  x-show="hover"
+                  x-ref="previewVideo"
+                  x-show="(hover || mobilePlaying)"
                   x-cloak
                   class="absolute inset-0 w-full h-full object-cover aspect-square"
                   :class="videoReady ? 'opacity-100' : 'opacity-0'"
@@ -137,7 +141,6 @@
                   muted
                   loop
                   playsinline
-                  autoplay
                   @canplay="videoReady = true"
                 ></video>
               </template>
@@ -161,12 +164,15 @@
             :class="index === 0 ? 'md:col-span-2 md:row-span-2' : ''"
             @click="openDetail(item)"
           >
-            <figure class="relative" :class="index === 0 ? 'aspect-square' : ''" x-data="{ hover: false, videoReady: false }" @mouseenter="item.video_preview_url && (hover = true)" @mouseleave="hover = false; videoReady = false">
+            <figure class="relative" :class="index === 0 ? 'aspect-square' : ''" x-data="{ hover: false, videoReady: false, mobilePlaying: false, isMobile: false }" x-init="isMobile = typeof window !== 'undefined' && 'ontouchstart' in window"
+              @mouseenter="if (item.video_preview_url) { hover = true; $nextTick(() => { const v = $refs.previewVideo; if (v) { v.play(); if (v.readyState >= 2) videoReady = true } }) }"
+              @mouseleave="if (item.video_preview_url) { hover = false; $refs.previewVideo?.pause() }"
+              @click="if (isMobile && item.type === 'video' && item.video_preview_url) { $event.stopPropagation(); mobilePlaying = !mobilePlaying; $nextTick(() => { const v = $refs.previewVideo; if (v) mobilePlaying ? v.play() : v.pause() }) }">
               <template x-if="getDisplayUrl(item)">
                 <img
                   class="w-full aspect-square object-cover"
-                  :class="{ 'opacity-0': hover && item.video_preview_url && videoReady }"
-                  :src="(item.type === 'video' && item.preview_url) ? item.preview_url : item.thumbnail_url"
+                  :class="{ 'opacity-0': (hover || mobilePlaying) && item.video_preview_url && videoReady }"
+                  :src="item.preview_url || item.thumbnail_url"
                   loading="lazy"
                 />
               </template>
@@ -188,7 +194,8 @@
               </template>
               <template x-if="item.type === 'video' && item.video_preview_url">
                 <video
-                  x-show="hover"
+                  x-ref="previewVideo"
+                  x-show="(hover || mobilePlaying)"
                   x-cloak
                   class="absolute inset-0 w-full h-full object-cover aspect-square"
                   :class="videoReady ? 'opacity-100' : 'opacity-0'"
@@ -196,7 +203,6 @@
                   muted
                   loop
                   playsinline
-                  autoplay
                   @canplay="videoReady = true"
                 ></video>
               </template>
@@ -216,12 +222,15 @@
       <section x-show="layout === 'list'" class="flex flex-col gap-2">
         <template x-for="item in results" :key="item.asset_id">
           <div class="card bg-base-100 shadow hover:shadow-md transition cursor-pointer overflow-hidden flex flex-row gap-3 p-2 items-center" @click="openDetail(item)">
-            <figure class="relative shrink-0 w-20 h-20 md:w-24 md:h-24 rounded overflow-hidden" x-data="{ hover: false, videoReady: false }" @mouseenter="item.video_preview_url && (hover = true)" @mouseleave="hover = false; videoReady = false">
+            <figure class="relative shrink-0 w-20 h-20 md:w-24 md:h-24 rounded overflow-hidden" x-data="{ hover: false, videoReady: false, mobilePlaying: false, isMobile: false }" x-init="isMobile = typeof window !== 'undefined' && 'ontouchstart' in window"
+              @mouseenter="if (item.video_preview_url) { hover = true; $nextTick(() => { const v = $refs.previewVideo; if (v) { v.play(); if (v.readyState >= 2) videoReady = true } }) }"
+              @mouseleave="if (item.video_preview_url) { hover = false; $refs.previewVideo?.pause() }"
+              @click="if (isMobile && item.type === 'video' && item.video_preview_url) { $event.stopPropagation(); mobilePlaying = !mobilePlaying; $nextTick(() => { const v = $refs.previewVideo; if (v) mobilePlaying ? v.play() : v.pause() }) }">
               <template x-if="getDisplayUrl(item)">
                 <img
                   class="w-full h-full object-cover"
-                  :class="{ 'opacity-0': hover && item.video_preview_url && videoReady }"
-                  :src="(item.type === 'video' && item.preview_url) ? item.preview_url : item.thumbnail_url"
+                  :class="{ 'opacity-0': (hover || mobilePlaying) && item.video_preview_url && videoReady }"
+                  :src="item.preview_url || item.thumbnail_url"
                   loading="lazy"
                 />
               </template>
@@ -243,7 +252,8 @@
               </template>
               <template x-if="item.type === 'video' && item.video_preview_url">
                 <video
-                  x-show="hover"
+                  x-ref="previewVideo"
+                  x-show="(hover || mobilePlaying)"
                   x-cloak
                   class="absolute inset-0 w-full h-full object-cover rounded"
                   :class="videoReady ? 'opacity-100' : 'opacity-0'"
@@ -251,7 +261,6 @@
                   muted
                   loop
                   playsinline
-                  autoplay
                   @canplay="videoReady = true"
                 ></video>
               </template>
@@ -272,45 +281,48 @@
             <div class="flex overflow-x-auto gap-3 pb-2 snap-x snap-mandatory">
               <template x-for="item in group.items" :key="item.asset_id">
                 <div class="card bg-base-100 shadow hover:shadow-md transition cursor-pointer overflow-hidden shrink-0 w-40 snap-start" @click="openDetail(item)">
-                  <figure class="relative" x-data="{ hover: false, videoReady: false }" @mouseenter="item.video_preview_url && (hover = true)" @mouseleave="hover = false; videoReady = false">
-                    <template x-if="getDisplayUrl(item)">
-                      <img
-                        class="w-full aspect-square object-cover"
-                        :class="{ 'opacity-0': hover && item.video_preview_url && videoReady }"
-                        :src="(item.type === 'video' && item.preview_url) ? item.preview_url : item.thumbnail_url"
-                        loading="lazy"
-                      />
-                    </template>
-                    <template x-if="!getDisplayUrl(item)">
-                      <div class="w-full aspect-square flex flex-col items-center justify-center animate-pulse"
-                           :class="placeholderBg(item)"
-                           :title="showErrorPlaceholder(item) ? (item.error_message || 'Error') : undefined">
-                        <template x-if="showErrorPlaceholder(item)">
-                          <svg class="w-10 h-10 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                        </template>
-                        <template x-if="!showErrorPlaceholder(item) && item.type === 'image'">
-                          <svg class="w-10 h-10 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                        </template>
-                        <template x-if="!showErrorPlaceholder(item) && item.type === 'video'">
-                          <svg class="w-10 h-10 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
-                        </template>
-                        <span class="text-[10px] mt-1 text-base-content/70" x-text="placeholderLabel(item)"></span>
-                      </div>
-                    </template>
-                    <template x-if="item.type === 'video' && item.video_preview_url">
-                      <video
-                        x-show="hover"
-                        x-cloak
-                        class="absolute inset-0 w-full h-full object-cover aspect-square"
-                        :class="videoReady ? 'opacity-100' : 'opacity-0'"
-                        :src="item.video_preview_url"
-                        muted
-                        loop
-                        playsinline
-                        autoplay
-                        @canplay="videoReady = true"
-                      ></video>
-                    </template>
+                  <figure class="relative" x-data="{ hover: false, videoReady: false, mobilePlaying: false, isMobile: false }" x-init="isMobile = typeof window !== 'undefined' && 'ontouchstart' in window"
+                    @mouseenter="if (item.video_preview_url) { hover = true; $nextTick(() => { const v = $refs.previewVideo; if (v) { v.play(); if (v.readyState >= 2) videoReady = true } }) }"
+                    @mouseleave="if (item.video_preview_url) { hover = false; $refs.previewVideo?.pause() }"
+                    @click="if (isMobile && item.type === 'video' && item.video_preview_url) { $event.stopPropagation(); mobilePlaying = !mobilePlaying; $nextTick(() => { const v = $refs.previewVideo; if (v) mobilePlaying ? v.play() : v.pause() }) }">
+                      <template x-if="getDisplayUrl(item)">
+                        <img
+                          class="w-full aspect-square object-cover"
+                          :class="{ 'opacity-0': (hover || mobilePlaying) && item.video_preview_url && videoReady }"
+                          :src="item.preview_url || item.thumbnail_url"
+                          loading="lazy"
+                        />
+                      </template>
+                      <template x-if="!getDisplayUrl(item)">
+                        <div class="w-full aspect-square flex flex-col items-center justify-center animate-pulse"
+                             :class="placeholderBg(item)"
+                             :title="showErrorPlaceholder(item) ? (item.error_message || 'Error') : undefined">
+                          <template x-if="showErrorPlaceholder(item)">
+                            <svg class="w-10 h-10 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                          </template>
+                          <template x-if="!showErrorPlaceholder(item) && item.type === 'image'">
+                            <svg class="w-10 h-10 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                          </template>
+                          <template x-if="!showErrorPlaceholder(item) && item.type === 'video'">
+                            <svg class="w-10 h-10 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+                          </template>
+                          <span class="text-[10px] mt-1 text-base-content/70" x-text="placeholderLabel(item)"></span>
+                        </div>
+                      </template>
+                      <template x-if="item.type === 'video' && item.video_preview_url">
+                        <video
+                          x-ref="previewVideo"
+                          x-show="(hover || mobilePlaying)"
+                          x-cloak
+                          class="absolute inset-0 w-full h-full object-cover aspect-square"
+                          :class="videoReady ? 'opacity-100' : 'opacity-0'"
+                          :src="item.video_preview_url"
+                          muted
+                          loop
+                          playsinline
+                          @canplay="videoReady = true"
+                        ></video>
+                      </template>
                     <div class="badge badge-neutral badge-sm absolute top-1 left-1" x-show="item.type === 'video'">Video</div>
                     <div class="badge badge-primary badge-sm absolute top-1 right-1" x-show="item.best_scene_ts" x-text="item.best_scene_ts"></div>
                   </figure>
@@ -390,7 +402,7 @@
                 <div class="card-body p-3">
                   <div class="text-xs text-base-content/60 mb-2">Thumbnail</div>
                   <template x-if="selected && getDisplayUrl(selected)">
-                    <img class="w-full aspect-square object-cover rounded" :src="(selected?.type === 'video' && selected?.preview_url) ? selected?.preview_url : selected?.thumbnail_url" />
+                    <img class="w-full aspect-square object-cover rounded" :src="selected?.preview_url || selected?.thumbnail_url" />
                   </template>
                   <template x-if="selected && !getDisplayUrl(selected)">
                     <div class="w-full aspect-square flex flex-col items-center justify-center animate-pulse rounded"
@@ -518,8 +530,7 @@
           },
 
           getDisplayUrl(item) {
-            const url = (item?.type === 'video' && item?.preview_url) ? item.preview_url : item?.thumbnail_url;
-            return url || null;
+            return item?.preview_url || item?.thumbnail_url || null;
           },
           placeholderBg(item) {
             if (['failed','poisoned'].includes(item?.status)) return 'bg-red-50';

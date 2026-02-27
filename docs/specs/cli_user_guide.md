@@ -483,11 +483,9 @@ uv run media-search ai start --library nas-main --repair
 
 Start the Video worker. It runs until interrupted (Ctrl+C). The worker claims **pending** video assets (`.mp4`, `.mkv`, `.mov`), runs the scene-indexing pipeline (scene detection, best-frame selection, optional vision analysis on representative frames), renews the asset lease after each closed scene, and supports graceful shutdown (on SIGINT/SIGTERM the pipeline is interrupted and the asset is set back to pending so another worker can resume). Worker ID is auto-generated as `video-<hostname>-<short-uuid>` unless overridden.
 
-Progress is printed to the terminal: when a video is claimed the worker logs **Processing video:** with the full path; for each scene it logs the time range and the path to the representative frame JPEG on disk (so you can open and inspect frames); when the asset is done it logs **Completed:** with asset id, library, and path; and when a preview was built it logs **Preview:** with the absolute path to `preview.webp` (clickable in many terminals).
+Progress is printed to the terminal: when a video is claimed the worker logs **Processing video:** with the full path; for each scene it logs the time range and the path to the representative frame JPEG on disk (so you can open and inspect frames); when the asset is done it logs **Completed:** with asset id, library, and path.
 
 When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for optional per-scene description/tags (e.g. mock, moondream2).
-
-With **`--repair`**, before the main loop the worker runs a one-time pass: it finds video assets that have scene data but are missing the animated `preview.webp` file (e.g. videos indexed before the feature existed), and rebuilds the preview from existing scene JPEGs **without reindexing** the video. Combine with `--library` to repair only one library. After the pass, the worker enters the normal polling loop.
 
 | Option            | Description                                                                                                 |
 | ----------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -496,7 +494,6 @@ With **`--repair`**, before the main loop the worker runs a one-time pass: it fi
 | `--library`       | Limit to this library slug only.                                                                            |
 | `--verbose`, `-v` | Print progress for each completed asset.                                                                    |
 | `--analyzer`      | AI model to use for scene descriptions (e.g. mock, moondream2). If omitted, uses library or system default. |
-| `--repair`        | Rebuild missing video preview.webp from existing scene images without reindexing.                           |
 
 
 **Examples:**
@@ -505,7 +502,6 @@ With **`--repair`**, before the main loop the worker runs a one-time pass: it fi
 uv run media-search ai video
 uv run media-search ai video --library nas-main --verbose
 uv run media-search ai video --analyzer moondream2
-uv run media-search ai video --library nas-main --repair
 ```
 
 ---

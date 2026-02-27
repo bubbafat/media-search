@@ -5,8 +5,8 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import clear_app_db_caches
 from src.api.main import app, _get_ui_repo
-from src.core import config as config_module
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.ui_repo import UIRepository
 
@@ -24,7 +24,7 @@ def ui_api_postgres():
         url = postgres.get_connection_url()
         prev = os.environ.get("DATABASE_URL")
         os.environ["DATABASE_URL"] = url
-        config_module._config = None  # type: ignore[attr-defined]
+        clear_app_db_caches()
         try:
             from alembic import command
             from alembic.config import Config
@@ -45,7 +45,7 @@ def ui_api_postgres():
                 os.environ["DATABASE_URL"] = prev
             else:
                 os.environ.pop("DATABASE_URL", None)
-            config_module._config = None  # type: ignore[attr-defined]
+            clear_app_db_caches()
 
 
 def test_dashboard_returns_200_and_displays_schema_version(ui_api_postgres):

@@ -56,13 +56,7 @@ When a job restarts, the system:
 ### Running the pipeline (Video worker)
 The scene-indexing pipeline is driven by the **Video worker**, started via the CLI with `ai video`. The worker claims pending video assets from the database, runs the pipeline (scene detection, best-frame selection, optional AI analysis), and marks assets completed or poisoned. To support long-running videos safely, the worker **renews the asset lease** after each closed scene and supports **graceful shutdown**: on SIGINT/SIGTERM the pipeline is interrupted (per-frame check) and the asset is set back to pending so another worker can resume later.
 
-After scene indexing completes, the system writes an animated **preview.webp** (WebP) in the asset’s scene folder (`data/video_scenes/<library_slug>/<asset_id>/preview.webp`) and sets **asset.preview_path** to that path (relative to data_dir). Previews are generated with **320px as the long-side resolution** and **preserve the original video aspect ratio** (no square padding). This file can be used as a hover preview in the UI (e.g. static thumbnail by default; on hover, the animated WebP plays without audio). The **asset.preview_path** column (relative to data_dir) is the single source of truth: a video "has a preview" if and only if it is set. When the scene index is cleared (e.g. reindex-videos or asset reindex), preview_path is set to NULL. The UI/API should use this field or a backend-derived URL, and must not infer preview location from library_slug/asset_id. To rebuild existing previews from scene JPEGs (no reindex), or to create previews for videos indexed before this feature, run:
-
-```bash
-uv run media-search ai video --repair
-```
-
-Use `--library <slug>` to limit repair to one library.
+After scene indexing completes, the worker generates the **head-clip** MP4 (10 seconds from the start) for hover/tap preview in the UI. The **preview image** shown on result and library cards is a **static scene frame**: for search results it is the best-match scene’s representative frame (from `video_scenes.rep_frame_path`); for the library browser it is the first scene’s representative frame. The UI loads these via the API’s `preview_url`; on desktop, hovering over a video card plays the head-clip; on mobile, tapping the preview toggles playback.
 
 ---
 

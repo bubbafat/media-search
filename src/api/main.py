@@ -150,8 +150,8 @@ def api_search(
             else f"/media/{asset.library_id}/thumbnails/{shard}/{asset.id}.jpg"
         )
         preview = (
-            f"/media/{asset.preview_path.lstrip('/')}"
-            if asset.preview_path is not None
+            f"/media/{r.best_scene_rep_frame_path.lstrip('/')}"
+            if asset.type.value == "video" and r.best_scene_rep_frame_path
             else None
         )
         video_preview = (
@@ -232,6 +232,7 @@ def api_library_assets(
     offset: int = Query(default=0, ge=0),
     asset_repo: AssetRepository = Depends(_get_asset_repo),
     library_repo: LibraryRepository = Depends(_get_library_repo),
+    video_scene_repo: VideoSceneRepository = Depends(_get_video_scene_repo),
 ) -> LibraryAssetsOut:
     """Return paginated assets for a library. Used by Library Browser with infinite scroll."""
     assets = asset_repo.list_assets_for_library(
@@ -248,6 +249,9 @@ def api_library_assets(
     lib_map = {l.slug: l.name for l in libs}
     lib_name = lib_map.get(library, library)
 
+    video_asset_ids = [a.id for a in page if a.id is not None and a.type.value == "video"]
+    first_rep_paths = video_scene_repo.get_first_scene_rep_frame_paths(video_asset_ids)
+
     out: list[LibraryAssetOut] = []
     for asset in page:
         if asset.id is None:
@@ -259,8 +263,8 @@ def api_library_assets(
             else f"/media/{asset.library_id}/thumbnails/{shard}/{asset.id}.jpg"
         )
         preview = (
-            f"/media/{asset.preview_path.lstrip('/')}"
-            if asset.preview_path is not None
+            f"/media/{first_rep_paths[asset.id].lstrip('/')}"
+            if asset.type.value == "video" and asset.id in first_rep_paths
             else None
         )
         video_preview = (
