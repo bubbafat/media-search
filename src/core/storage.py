@@ -38,8 +38,13 @@ class LocalMediaStore:
     def __init__(self) -> None:
         self.data_dir = Path(get_config().data_dir)
 
-    def load_source_image(self, source_path: Path | str) -> Image.Image:
-        """Open image, fix EXIF orientation, return RGB. Uses Pillow first, pyvips for RAW/DNG/unsupported."""
+    def load_source_image(self, source_path: Path | str, *, use_previews: bool = True) -> Image.Image:
+        """Open image, fix EXIF orientation, return RGB.
+
+        Uses Pillow first for common formats. For RAW/DNG/unsupported formats, may use a
+        fast-path preview when use_previews is True, otherwise falls back to a full
+        pyvips decode.
+        """
         path = Path(source_path)
         try:
             img = Image.open(path)
@@ -47,8 +52,28 @@ class LocalMediaStore:
             img = ImageOps.exif_transpose(img)
             return img.convert("RGB")
         except (OSError, ValueError) as e:
-            # UnidentifiedImageError subclasses OSError; try pyvips for RAW/DNG/other
+            # UnidentifiedImageError subclasses OSError; for RAW/DNG/other formats try pyvips.
+            # Respect the use_previews flag to optionally take a lower-resolution, fast-path
+            # decode when available to reduce memory usage.
             try:
+                if use_previews:
+                    try:
+                        import pyvips  # type: ignore[import]
+
+                        # Use libvips thumbnail API which prefers embedded previews or
+                        # shrink-on-load where possible. Target a long edge of ~1280px to
+                        # keep enough detail while keeping memory bounded.
+                        thumb_vips = pyvips.Image.thumbnail(str(path), 1280)
+                        arr = thumb_vips.numpy()
+                        if arr.ndim == 2:
+                            pil_img = Image.fromarray(arr).convert("RGB")
+                        else:
+                            pil_img = Image.fromarray(arr, "RGB")
+                        return pil_img
+                    except Exception:
+                        # Fall back to full decode path below.
+                        pass
+
                 img = _load_image_via_pyvips(path)
                 return img
             except Exception:

@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -125,6 +126,35 @@ def test_load_source_image_falls_back_to_pyvips_when_pillow_fails(tmp_path):
         with patch("src.core.storage.Image") as pil_image:
             pil_image.open.side_effect = OSError("cannot identify image file")
             with patch("src.core.storage._load_image_via_pyvips", return_value=fake_rgb):
-                loaded = store.load_source_image(path)
+                loaded = store.load_source_image(path, use_previews=False)
     assert loaded is fake_rgb
+    assert loaded.mode == "RGB"
+
+
+def test_load_source_image_uses_pyvips_thumbnail_when_pillow_fails_and_previews_enabled(
+    tmp_path,
+):
+    """When Pillow cannot open the file and use_previews=True, load_source_image uses pyvips thumbnail fast-path."""
+    path = tmp_path / "photo.arw"
+    path.write_bytes(b"not-a-real-raw")
+
+    # Fake vips image that returns a small RGB array.
+    class _FakeVipsImage:
+        def numpy(self):
+            return (np.ones((8, 6, 3)) * 255).astype("uint8")
+
+    with patch("src.core.storage.get_config") as cfg:
+        cfg.return_value.data_dir = str(tmp_path)
+        store = LocalMediaStore()
+
+    # Make Pillow fail to identify the image without replacing the Image type itself.
+    with patch("src.core.storage.Image.open") as pil_open:
+        pil_open.side_effect = OSError("cannot identify image file")
+        with patch("src.core.storage._load_image_via_pyvips") as full_decode:
+            with patch("pyvips.Image.thumbnail", return_value=_FakeVipsImage()):
+                loaded = store.load_source_image(path, use_previews=True)
+
+    # Fast-path should have returned a PIL image without calling full decode.
+    full_decode.assert_not_called()
+    assert isinstance(loaded, Image.Image)
     assert loaded.mode == "RGB"

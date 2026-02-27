@@ -27,6 +27,10 @@ class Settings(BaseModel):
     database_url: str = DEFAULT_DATABASE_URL
     data_dir: str = "./data"
     export_root_path: str | None = None
+    # When True, the image proxy pipeline may use embedded or fast-path previews
+    # for RAW files (when available and large enough) instead of always performing
+    # a full-resolution RAW decode. This can significantly reduce memory usage.
+    use_raw_previews: bool = True
     library_roots: dict[str, str] = {}
     worker_id: str | None = None
     log_level: str = "INFO"
@@ -70,6 +74,8 @@ class ConfigLoader:
                 data["data_dir"] = self._env["MEDIA_SEARCH_DATA_DIR"]
             if self._env.get("EXPORT_ROOT_PATH"):
                 data["export_root_path"] = self._env["EXPORT_ROOT_PATH"]
+            if self._env.get("MEDIA_SEARCH_USE_RAW_PREVIEWS"):
+                data["use_raw_previews"] = self._env["MEDIA_SEARCH_USE_RAW_PREVIEWS"]
         settings = Settings.model_validate(data)
         if settings.worker_id is None or settings.worker_id == "":
             settings = settings.model_copy(update={"worker_id": socket.gethostname()})
@@ -95,6 +101,8 @@ class ConfigLoader:
             overrides["data_dir"] = self._env["MEDIA_SEARCH_DATA_DIR"]
         if self._env.get("EXPORT_ROOT_PATH"):
             overrides["export_root_path"] = self._env["EXPORT_ROOT_PATH"]
+        if self._env.get("MEDIA_SEARCH_USE_RAW_PREVIEWS"):
+            overrides["use_raw_previews"] = self._env["MEDIA_SEARCH_USE_RAW_PREVIEWS"]
         if overrides:
             settings = settings.model_copy(update=overrides)
         return settings

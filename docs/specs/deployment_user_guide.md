@@ -92,13 +92,14 @@ This may take several minutes (PyTorch and friends are large). Wait for it to fi
    open -e .env
    ```
 
-3. For Machine A, ensure it looks like this (localhost is correct—Postgres is on this machine). The template includes optional `MEDIA_SEARCH_DATA_DIR` and `EXPORT_ROOT_PATH` lines; for Machine A the default `./data` is fine, so you can leave `MEDIA_SEARCH_DATA_DIR` commented unless you want a different cache location. Set `EXPORT_ROOT_PATH` to the root of your export directory if you plan to use Project Bins and hard-link based export:
+3. For Machine A, ensure it looks like this (localhost is correct—Postgres is on this machine). The template includes optional `MEDIA_SEARCH_DATA_DIR`, `EXPORT_ROOT_PATH`, and `MEDIA_SEARCH_USE_RAW_PREVIEWS` lines; for Machine A the default `./data` is fine, so you can leave `MEDIA_SEARCH_DATA_DIR` commented unless you want a different cache location. Set `EXPORT_ROOT_PATH` to the root of your export directory if you plan to use Project Bins and hard-link based export. `MEDIA_SEARCH_USE_RAW_PREVIEWS` controls whether the image proxy worker prefers embedded/fast-path previews for RAW files (recommended `true` for lower memory usage; set `false` to force full RAW decoding):
 
    ```
    DATABASE_URL=postgresql+psycopg2://media_search:media_search@localhost:5432/media_search
    HF_TOKEN=
-   # MEDIA_SEARCH_DATA_DIR=  # optional; override where thumbnails, proxies, and video scenes are stored (default: ./data)
-   # EXPORT_ROOT_PATH=       # optional; root for export destinations (ideally on same physical volume as source media)
+   # MEDIA_SEARCH_DATA_DIR=      # optional; override where thumbnails, proxies, and video scenes are stored (default: ./data)
+   # EXPORT_ROOT_PATH=           # optional; root for export destinations (ideally on same physical volume as source media)
+   # MEDIA_SEARCH_USE_RAW_PREVIEWS=true  # optional; prefer embedded/fast-path previews for RAW files when available
    ```
 
    (You can leave `HF_TOKEN` empty unless you need Hugging Face model access.)  
@@ -265,12 +266,13 @@ uv sync
    open -e .env
    ```
 
-3. Put in (replace `MACHINE-A-IP` with Machine A's IP address or hostname, e.g. `192.168.1.10`). If you are running export tooling from these machines and need hard links to work, ensure `EXPORT_ROOT_PATH` points to a directory on the same physical volume as the source media:
+3. Put in (replace `MACHINE-A-IP` with Machine A's IP address or hostname, e.g. `192.168.1.10`). If you are running export tooling from these machines and need hard links to work, ensure `EXPORT_ROOT_PATH` points to a directory on the same physical volume as the source media. You can also control RAW preview usage with `MEDIA_SEARCH_USE_RAW_PREVIEWS`:
 
    ```
    DATABASE_URL=postgresql+psycopg2://media_search:media_search@MACHINE-A-IP:5432/media_search
    MEDIA_SEARCH_DATA_DIR=/Volumes/data
-   # EXPORT_ROOT_PATH=       # optional; root for export destinations (ideally on same physical volume as source media)
+   # EXPORT_ROOT_PATH=           # optional; root for export destinations (ideally on same physical volume as source media)
+   # MEDIA_SEARCH_USE_RAW_PREVIEWS=true  # optional; prefer embedded/fast-path previews for RAW files when available
    HF_TOKEN=
    ```
 
@@ -323,6 +325,8 @@ DATABASE_URL=postgresql+psycopg2://media_search:media_search@MACHINE-A-IP:5432/m
 MEDIA_SEARCH_DATA_DIR=/Volumes/data
 // optional; root for export destinations (ideally on same physical volume as source media)
 # EXPORT_ROOT_PATH=
+// optional; prefer embedded/fast-path previews for RAW files when available (set to false to force full RAW decoding)
+# MEDIA_SEARCH_USE_RAW_PREVIEWS=true
 ```
 
 **Finding Machine A's IP:** On Machine A, run `ipconfig getifaddr en0` in Terminal (or `ifconfig` and look for the IP on `en0`).

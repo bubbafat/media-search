@@ -39,7 +39,7 @@ The scanner discovers the following file types under library roots. All discover
 
 **Images (camera RAW and DNG):** Canon (`.cr2`, `.cr3`, `.crw`), Nikon (`.nef`, `.nrw`), Sony (`.arw`, `.sr2`, `.srf`), Fujifilm (`.raf`), Olympus (`.orf`), Panasonic/Lumix (`.rw2`, `.raw`), Leica (`.rwl`), and Adobe Digital Negative (`.dng`).
 
-RAW and DNG files are opened for proxy generation using libvips when Pillow cannot read them. Full support for all RAW formats depends on the system libvips being built with libraw.
+RAW and DNG files are opened for proxy generation using libvips when Pillow cannot read them. When possible, the proxy pipeline uses a libvips thumbnail/preview path (long edge ≈1280px) to keep memory usage bounded; it falls back to full-resolution RAW decode when previews are unavailable or disabled. Full support for all RAW formats depends on the system libvips being built with libraw.
 
 ---
 
@@ -413,15 +413,18 @@ With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g
 
 With `--repair`, before the main loop the worker runs a one-time check: it finds **image** assets that are supposed to have proxy and thumbnail files (status proxied, completed, etc.) but are missing them on disk (e.g. after deleting the data directory), sets their status to pending, then runs the normal loop so they are regenerated. Combine with `--library` to repair only one library.
 
+By default, RAW/DNG files may use an embedded or fast-path libvips preview (long edge ≈1280px) for proxy generation to reduce memory usage; the resulting thumbnail (320px JPEG) and proxy (768px WebP) remain standardized. Use `--ignore-previews` to force full RAW decoding instead of using previews when in-camera effects or picture styles are not desired.
+
 
 | Option            | Description                                                                                     |
 | ----------------- | ----------------------------------------------------------------------------------------------- |
-| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                   |
-| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                            |
-| `--library`       | Limit to this library slug only (optional)                                                      |
-| `--verbose`, `-v` | Print progress (each asset and N/total)                                                         |
-| `--repair`        | Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated |
-| `--once`          | Process one batch then exit; exit immediately if no work                                         |
+| `--heartbeat`       | Heartbeat interval in seconds (default: 15.0)                                                   |
+| `--worker-name`     | Force a specific worker ID; defaults to auto-generated                                            |
+| `--library`         | Limit to this library slug only (optional)                                                      |
+| `--verbose`, `-v`   | Print progress (each asset and N/total)                                                         |
+| `--repair`          | Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated |
+| `--once`            | Process one batch then exit; exit immediately if no work                                         |
+| `--ignore-previews` | Always perform full RAW decoding instead of using embedded/fast-path RAW previews               |
 
 
 **Example:**
@@ -434,6 +437,7 @@ uv run media-search proxy --library disneyland
 uv run media-search proxy --library disneyland --verbose
 uv run media-search proxy --library disneyland --repair
 uv run media-search proxy --once --library disneyland
+uv run media-search proxy --library disneyland --ignore-previews
 ```
 
 ---

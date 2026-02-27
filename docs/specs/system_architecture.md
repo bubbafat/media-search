@@ -97,7 +97,7 @@ The pipeline is divided into specialized, isolated worker types to prevent hardw
 
 2. **The Image Proxy Worker (Network I/O & CPU Bound):**
    - **Role:** Pre-Processor & Cache Builder for **images**.
-   - **Action:** Claims `pending` **image** assets. It pulls the original image files (e.g. 50MB RAW) across the network *exactly once*. It generates a lightweight UI Thumbnail (JPEG) and a standardized WebP AI Proxy on the local SSD. It updates the asset status to `proxied`.
+   - **Action:** Claims `pending` **image** assets. It pulls the original image files (e.g. 50MB RAW) across the network *exactly once*. For standard raster formats (JPEG/PNG/etc.) it decodes directly; for RAW/DNG formats it prefers an embedded or fast-path libvips preview (long edge ≈1280px) when available to bound memory, falling back to a full-resolution RAW decode as needed. In all cases it generates a lightweight UI Thumbnail (JPEG) and a standardized WebP AI Proxy on the local SSD and updates the asset status to `proxied`.
 
 3. **The Video Proxy Worker (Network I/O & CPU Bound):**
    - **Role:** Pre-Processor for **videos**.
@@ -180,6 +180,7 @@ To ensure high performance, UI responsiveness, and absolute security of the user
 Processing heavy media over a network requires separating I/O-bound tasks from GPU-bound tasks to prevent "Double-Read Penalties."
 1. **Stage 1 (Discovery):** Scanner finds a file on the NAS. Inserts DB row as `pending`.
 2. **Stage 2 (Proxy Generation):** For **images**, the Image Proxy Worker claims `pending` assets, reads the source once, and generates a small UI Thumbnail (320px JPEG) and an AI-optimized WebP Proxy (768px) on the local SSD, then sets status to `proxied`. For **videos**, the Video Proxy Worker claims `pending` assets, reads the source once into a temporary 720p H.264 file, generates thumbnail, 10-second head-clip (stream copy), and scene index (pHash, rep frames) from that temp, then deletes the temp and sets status to `proxied` and `video_preview_path`.
+   - For RAW/DNG images, the proxy stage may use an embedded or libvips thumbnail/preview when available and sufficiently large to avoid allocating a full-resolution frame in memory; advanced users can disable this behavior via configuration/CLI when they require a true RAW rendering instead of in-camera looks.
 3. **Stage 3 (AI Extraction):** The ML Worker claims `proxied` **image** assets and reads only the local SSD proxy. The Video Worker claims `proxied` **video** assets and runs vision analysis only on the already-persisted scene rep frame images (no source read). Both update the DB to `completed`.
 
 ---

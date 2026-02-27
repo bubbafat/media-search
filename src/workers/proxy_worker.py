@@ -32,6 +32,7 @@ class ImageProxyWorker(BaseWorker):
         verbose: bool = False,
         initial_pending_count: int | None = None,
         repair: bool = False,
+        use_previews: bool = True,
     ) -> None:
         super().__init__(
             worker_id,
@@ -46,6 +47,7 @@ class ImageProxyWorker(BaseWorker):
         self._initial_pending = initial_pending_count
         self._processed_count = 0
         self._repair = repair
+        self._use_previews = use_previews
 
     def _run_repair_pass(self) -> None:
         """Find image assets that should have proxy/thumbnail but are missing; set status to pending."""
@@ -98,7 +100,7 @@ class ImageProxyWorker(BaseWorker):
         assert asset.id is not None
         source_path = Path(asset.library.absolute_path) / asset.rel_path
         try:
-            image = self.storage.load_source_image(source_path)
+            image = self.storage.load_source_image(source_path, use_previews=self._use_previews)
             self.storage.save_thumbnail(asset.library.slug, asset.id, image)
             self.storage.save_proxy(asset.library.slug, asset.id, image)
             self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)

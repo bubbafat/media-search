@@ -810,6 +810,64 @@ def test_proxyable_extensions_no_duplicates_disjoint():
     assert image_set.isdisjoint(video_set), "IMAGE and VIDEO extensions must be disjoint"
 
 
+@pytest.mark.fast
+def test_cli_proxy_respects_ignore_previews_flag(monkeypatch):
+    """proxy CLI wires ignore_previews into ImageProxyWorker(use_previews) based on config."""
+    from src import cli
+
+    # Patch session factory and repositories to avoid real DB connections.
+    fake_session_factory = MagicMock(name="session_factory")
+    monkeypatch.setattr(cli, "_get_session_factory", lambda: fake_session_factory)
+
+    fake_lib_repo = MagicMock(name="LibraryRepository")
+    fake_asset_repo = MagicMock(name="AssetRepository")
+    fake_worker_repo = MagicMock(name="WorkerRepository")
+    fake_sys_repo = MagicMock(name="SystemMetadataRepository")
+    monkeypatch.setattr(cli, "LibraryRepository", fake_lib_repo)
+    monkeypatch.setattr(cli, "AssetRepository", fake_asset_repo)
+    monkeypatch.setattr(cli, "WorkerRepository", fake_worker_repo)
+    monkeypatch.setattr(cli, "SystemMetadataRepository", fake_sys_repo)
+
+    fake_asset_repo.return_value.count_pending_proxyable.return_value = 0
+
+    # Config: previews enabled by default.
+    cfg = MagicMock()
+    cfg.use_raw_previews = True
+    monkeypatch.setattr(cli, "get_config", lambda: cfg)
+
+    # Capture how ImageProxyWorker is constructed.
+    worker_mock = MagicMock(name="ImageProxyWorker")
+    monkeypatch.setattr(cli, "ImageProxyWorker", worker_mock)
+
+    # Case 1: ignore_previews=False -> use_previews=True when config allows previews.
+    cli.proxy(
+        heartbeat=15.0,
+        worker_name="worker-a",
+        library_slug=None,
+        verbose=False,
+        repair=False,
+        once=True,
+        ignore_previews=False,
+    )
+    _, kwargs1 = worker_mock.call_args
+    assert kwargs1["use_previews"] is True
+
+    worker_mock.reset_mock()
+
+    # Case 2: ignore_previews=True -> use_previews=False even when config allows previews.
+    cli.proxy(
+        heartbeat=15.0,
+        worker_name="worker-b",
+        library_slug=None,
+        verbose=False,
+        repair=False,
+        once=True,
+        ignore_previews=True,
+    )
+    _, kwargs2 = worker_mock.call_args
+    assert kwargs2["use_previews"] is False
+
+
 def test_proxy_worker_video_720p_pipeline(engine, _session_factory, tmp_path):
     """When a video is processed by VideoProxyWorker, 720p pipeline runs: thumbnail, head-clip, scene indexing; status becomes proxied."""
     asset_repo = _create_tables_and_seed(engine, _session_factory)

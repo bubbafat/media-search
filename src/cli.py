@@ -556,6 +556,11 @@ def proxy(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
     repair: bool = typer.Option(False, "--repair", help="Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
+    ignore_previews: bool = typer.Option(
+        False,
+        "--ignore-previews",
+        help="When set, always perform full RAW decoding instead of using embedded/fast-path RAW previews.",
+    ),
 ) -> None:
     """Start the image proxy worker: claims pending image assets, generates thumbnails and WebP proxies."""
     worker_id = (
@@ -566,6 +571,7 @@ def proxy(
     typer.secho(f"Starting Image Proxy Worker: {worker_id}")
 
     session_factory = _get_session_factory()
+    cfg = get_config()
     if library_slug is not None:
         lib_repo = LibraryRepository(session_factory)
         lib = lib_repo.get_by_slug(library_slug)
@@ -589,6 +595,8 @@ def proxy(
 
     initial_pending = asset_repo.count_pending_proxyable(library_slug) if verbose else None
 
+    use_previews = cfg.use_raw_previews and not ignore_previews
+
     worker = ImageProxyWorker(
         worker_id=worker_id,
         repository=worker_repo,
@@ -599,6 +607,7 @@ def proxy(
         verbose=verbose,
         initial_pending_count=initial_pending,
         repair=repair,
+        use_previews=use_previews,
     )
     try:
         worker.run(once=once)
