@@ -102,6 +102,7 @@ The pipeline is divided into specialized, isolated worker types to prevent hardw
      - If the source image is smaller than the proxy target in both dimensions, the proxy is saved at the source resolution (re-encoded only).
      - If the proxy image is smaller than the thumbnail target in both dimensions, the thumbnail is saved at the proxy resolution.
      - This ensures that icon-sized inputs (e.g., 32×32) remain 32×32 for both proxy and thumbnail while large images incur only one downscale from source to proxy, then a second, cheaper downscale from proxy to thumbnail.
+   - Internally, the proxy worker operates primarily on `pyvips.Image` instances for decode/resize/encode; `PIL.Image` is only used at explicit compatibility boundaries (e.g. EXIF fix utilities, specific libraries, or tests).
    - After writing both derivatives to the sharded local SSD cache, it updates the asset status to `proxied`.
 
 3. **The Video Proxy Worker (Network I/O & CPU Bound):**

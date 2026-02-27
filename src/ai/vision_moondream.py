@@ -12,7 +12,12 @@ def _parse_tags(tags_str: str) -> list[str]:
 
 
 class MoondreamAnalyzer(BaseVisionAnalyzer):
-    """Vision analyzer using vikhyatk/moondream2 (revision 2025-01-09)."""
+    """Vision analyzer using vikhyatk/moondream2 (revision 2025-01-09).
+
+    This class keeps Pillow as a boundary type for model inputs: callers should
+    prefer passing proxy file paths, but when an in-memory image object is used
+    it is expected to be a `PIL.Image`.
+    """
 
     def __init__(self) -> None:
         import torch

@@ -34,7 +34,11 @@ class SceneResult:
 
 
 def _frame_bytes_to_pil(frame_bytes: bytes, width: int, height: int) -> Image.Image:
-    """Convert RGB24 frame_bytes to PIL Image."""
+    """Convert RGB24 frame_bytes to PIL Image for imagehash.
+
+    This is a deliberate Pillow boundary: imagehash expects PIL.Image, and this
+    path is not part of the image proxy worker's libvips-based hot path.
+    """
     return Image.frombytes("RGB", (width, height), frame_bytes)
 
 

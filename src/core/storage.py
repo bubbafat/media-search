@@ -25,6 +25,37 @@ def _normalize_vips_image(vips_img: "pyvips.Image") -> "pyvips.Image":
     return vips_img
 
 
+def _vips_to_pil(vips_img: "pyvips.Image") -> Image.Image:
+    """
+    Convert a pyvips image to a PIL.Image for compatibility boundaries.
+    """
+    vips_img = _normalize_vips_image(vips_img)
+    arr = vips_img.numpy()
+    if arr.ndim == 2:
+        return Image.fromarray(arr).convert("RGB")
+    return Image.fromarray(arr, "RGB")
+
+
+def _pil_to_vips(img: Image.Image) -> "pyvips.Image":
+    """
+    Convert a PIL.Image to a pyvips image for internal vips pipelines.
+    """
+    import pyvips  # type: ignore[import]
+
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    arr = bytearray(img.tobytes())
+    width, height = img.size
+    vips_img = pyvips.Image.new_from_memory(
+        bytes(arr),
+        width,
+        height,
+        3,
+        "uchar",
+    )
+    return _normalize_vips_image(vips_img)
+
+
 def _load_image_via_pyvips(path: Path) -> Image.Image:
     """Open image with pyvips (e.g. RAW, DNG), return PIL Image in RGB."""
     import pyvips  # type: ignore[import]
@@ -95,10 +126,16 @@ class LocalMediaStore:
         self.data_dir = Path(get_config().data_dir)
 
     def load_source_image(self, source_path: Path | str, *, use_previews: bool = True) -> Image.Image:
-        """Open image, fix EXIF orientation, return RGB.
+        """Open image via Pillow, fix EXIF orientation, return RGB `PIL.Image`.
+
+        This API is kept for compatibility and ad-hoc tooling that truly needs an
+        in-memory `PIL.Image`. For high-throughput proxy/thumbnail generation in the
+        worker pipeline, prefer the pyvips-based file APIs such as
+        `generate_proxy_and_thumbnail_from_source`, which avoid materializing a full
+        frame in Python space.
 
         Uses Pillow first for common formats. For RAW/DNG/unsupported formats, may use a
-        fast-path preview when use_previews is True, otherwise falls back to a full
+        fast-path libvips preview when use_previews is True, otherwise falls back to a full
         pyvips decode.
         """
         path = Path(source_path)

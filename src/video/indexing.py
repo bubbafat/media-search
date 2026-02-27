@@ -72,7 +72,12 @@ def _write_rep_frame_jpeg(
     height: int,
     out_path: Path,
 ) -> None:
-    """Write RGB24 frame_bytes to a JPEG file at out_path."""
+    """Write RGB24 frame_bytes to a JPEG file at out_path.
+
+    This helper intentionally uses Pillow as a boundary for JPEG encoding in the
+    video scene pipeline; it is not on the main image proxy hot path that relies
+    on libvips/pyvips.
+    """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     img = Image.frombytes("RGB", (width, height), frame_bytes)
     img.save(out_path, "JPEG", quality=85)
