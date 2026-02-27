@@ -114,6 +114,22 @@ class Asset(SQLModel, table=True):
     library: "Library" = Relationship()
 
 
+class Project(SQLModel, table=True):
+    __tablename__ = "project"
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(nullable=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    export_path: str | None = Field(default=None)
+
+
+class ProjectAsset(SQLModel, table=True):
+    __tablename__ = "project_assets"
+
+    project_id: int = Field(foreign_key="project.id", primary_key=True)
+    asset_id: int = Field(foreign_key="asset.id", primary_key=True)
+
+
 class VideoFrame(SQLModel, table=True):
     __tablename__ = "videoframe"
 

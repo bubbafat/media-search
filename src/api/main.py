@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -17,6 +17,7 @@ from src.core.path_resolver import resolve_path
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 from src.repository.search_repo import SearchRepository
+from src.repository.project_repo import ProjectRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.ui_repo import UIRepository
 from src.repository.video_scene_repo import VideoSceneRepository
@@ -80,6 +81,10 @@ def _get_library_repo() -> LibraryRepository:
     return LibraryRepository(_get_session_factory())
 
 
+@lru_cache(maxsize=1)
+def _get_project_repo() -> ProjectRepository:
+    return ProjectRepository(_get_session_factory())
+
 NO_THUMB_STATUSES = frozenset({"pending", "processing", "failed", "poisoned"})
 
 
@@ -106,6 +111,22 @@ class AssetDetailOut(BaseModel):
     ocr_text: str | None = None
     library_slug: str = ""
     filename: str = ""
+
+
+class ProjectOut(BaseModel):
+    id: int
+    name: str
+    created_at: str
+    export_path: str | None = None
+
+
+class ProjectCreateIn(BaseModel):
+    name: str
+    export_path: str | None = None
+
+
+class ProjectAssetIn(BaseModel):
+    asset_id: int
 
 
 def _format_mmss(seconds: float) -> str:
@@ -301,6 +322,57 @@ def api_libraries(
     libs = ui_repo.list_libraries_with_status()
     return [LibraryOut(slug=lib.slug, name=lib.name, is_analyzing=lib.is_analyzing) for lib in libs]
 
+
+@app.get("/api/projects", response_model=list[ProjectOut])
+def api_projects(
+    project_repo: ProjectRepository = Depends(_get_project_repo),
+) -> list[ProjectOut]:
+    """List all projects (Project Bins) for export workflows."""
+    projects = project_repo.list_projects()
+    return [
+        ProjectOut(
+            id=p.id or 0,
+            name=p.name,
+            created_at=p.created_at.isoformat(),
+            export_path=p.export_path,
+        )
+        for p in projects
+    ]
+
+
+@app.post("/api/projects", response_model=ProjectOut, status_code=201)
+def api_create_project(
+    body: ProjectCreateIn,
+    project_repo: ProjectRepository = Depends(_get_project_repo),
+) -> ProjectOut:
+    """Create a new project (Project Bin)."""
+    if not body.name or not body.name.strip():
+        raise HTTPException(status_code=400, detail="Project name must be non-empty")
+    project = project_repo.create_project(body.name.strip(), body.export_path)
+    return ProjectOut(
+        id=project.id or 0,
+        name=project.name,
+        created_at=project.created_at.isoformat(),
+        export_path=project.export_path,
+    )
+
+
+@app.post("/api/projects/{project_id}/assets", status_code=204)
+def api_add_asset_to_project(
+    project_id: int,
+    body: ProjectAssetIn,
+    project_repo: ProjectRepository = Depends(_get_project_repo),
+    asset_repo: AssetRepository = Depends(_get_asset_repo),
+) -> Response:
+    """Add an asset to a project bin."""
+    project = project_repo.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    asset = asset_repo.get_asset_by_id(body.asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    project_repo.add_asset_to_project(project_id, body.asset_id)
+    return Response(status_code=204)
 
 @app.get("/api/asset/{asset_id}/clip")
 async def api_asset_clip(

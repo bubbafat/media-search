@@ -107,6 +107,47 @@ Lazy-loaded 10-second MP4 clip for video search-hit verification. Extracts on fi
 - On first request: runs FFmpeg to extract/transcode; 2–4 s typical.
 - Returns 302 to `/media/video_clips/{library_id}/{asset_id}/clip_{int(ts)}.mp4`.
 
+### GET /api/projects
+
+List **Project Bins** used to group assets for export workflows.
+
+Response: JSON array of objects with:
+
+- `id` (int): Project identifier.
+- `name` (str): Human-readable project name.
+- `created_at` (ISO 8601 string): Creation timestamp (UTC, timestamp with time zone in the database).
+- `export_path` (str | null): Optional export destination path (see `EXPORT_ROOT_PATH` in the deployment guide).
+
+### POST /api/projects
+
+Create a new Project Bin.
+
+Body:
+
+- `name` (str, required): Project name; must be non-empty.
+- `export_path` (str | null, optional): Export destination path. When set, this is typically a directory under `EXPORT_ROOT_PATH` on the same physical volume as the source media, so export tooling can use hard links instead of copying bytes.
+
+Response: JSON object with the same shape as `GET /api/projects` items. Returns HTTP 201 on success; returns 400 if `name` is empty.
+
+### POST /api/projects/{id}/assets
+
+Associate an asset with a Project Bin.
+
+Path parameters:
+
+- `id` (int): Project id.
+
+Body:
+
+- `asset_id` (int, required): Asset id to add to the project.
+
+Behavior:
+
+- Returns HTTP 204 on success.
+- Returns HTTP 404 if the project does not exist.
+- Returns HTTP 404 if the asset does not exist or belongs to a deleted library.
+- The association is **idempotent**: adding the same asset to the same project multiple times results in a single association row.
+
 ### GET /media/...
 
 Static file mount rooted at `data_dir`. This serves derivative media only (thumbnails, animated previews, scene JPEGs, etc.). It must never be used to expose or write to source libraries.

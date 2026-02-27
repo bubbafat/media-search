@@ -26,6 +26,7 @@ class Settings(BaseModel):
 
     database_url: str = DEFAULT_DATABASE_URL
     data_dir: str = "./data"
+    export_root_path: str | None = None
     library_roots: dict[str, str] = {}
     worker_id: str | None = None
     log_level: str = "INFO"
@@ -67,6 +68,8 @@ class ConfigLoader:
                 data["database_url"] = self._env["DATABASE_URL"]
             if self._env.get("MEDIA_SEARCH_DATA_DIR"):
                 data["data_dir"] = self._env["MEDIA_SEARCH_DATA_DIR"]
+            if self._env.get("EXPORT_ROOT_PATH"):
+                data["export_root_path"] = self._env["EXPORT_ROOT_PATH"]
         settings = Settings.model_validate(data)
         if settings.worker_id is None or settings.worker_id == "":
             settings = settings.model_copy(update={"worker_id": socket.gethostname()})
@@ -90,6 +93,8 @@ class ConfigLoader:
             overrides["database_url"] = self._env["DATABASE_URL"]
         if self._env.get("MEDIA_SEARCH_DATA_DIR"):
             overrides["data_dir"] = self._env["MEDIA_SEARCH_DATA_DIR"]
+        if self._env.get("EXPORT_ROOT_PATH"):
+            overrides["export_root_path"] = self._env["EXPORT_ROOT_PATH"]
         if overrides:
             settings = settings.model_copy(update=overrides)
         return settings

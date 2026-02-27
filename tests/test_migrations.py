@@ -12,6 +12,8 @@ EXPECTED_TABLES = [
     "aimodel",
     "asset",
     "library",
+    "project",
+    "project_assets",
     "system_metadata",
     "video_active_state",
     "video_scenes",
@@ -56,7 +58,7 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status', 'project', 'project_assets') "
                     "ORDER BY table_name"
                 )
             )
@@ -226,6 +228,27 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 assert row is not None, f"{table} must have a foreign key constraint"
         assert "video_scenes" in EXPECTED_TABLES and "video_active_state" in EXPECTED_TABLES
 
+        # Assert project and project_assets exist with FKs (migration 017)
+        with migration_engine.connect() as conn:
+            # project.created_at must be timestamptz
+            row = conn.execute(
+                text(
+                    "SELECT udt_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'project' AND column_name = 'created_at'"
+                )
+            ).fetchone()
+            assert row is not None, "project.created_at must exist"
+            assert row[0] == "timestamptz", "project.created_at must be timestamp with time zone"
+
+            # project_assets must have FKs to project and asset
+            fk_rows = conn.execute(
+                text(
+                    "SELECT constraint_name FROM information_schema.table_constraints "
+                    "WHERE table_schema = 'public' AND table_name = 'project_assets' AND constraint_type = 'FOREIGN KEY'"
+                )
+            ).fetchall()
+            assert fk_rows, "project_assets must have foreign key constraints"
+
         # Assert default AI model is moondream2 (migration 012)
         with migration_engine.connect() as conn:
             row = conn.execute(
@@ -320,7 +343,7 @@ def test_migration_02_downgrade_base(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status', 'project', 'project_assets') "
                     "ORDER BY table_name"
                 )
             )
