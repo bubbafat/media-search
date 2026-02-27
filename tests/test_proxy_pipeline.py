@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import text
@@ -809,8 +809,8 @@ def test_proxyable_extensions_no_duplicates_disjoint():
     assert image_set.isdisjoint(video_set), "IMAGE and VIDEO extensions must be disjoint"
 
 
-def test_proxy_worker_video_generates_thumbnail_only(engine, _session_factory, tmp_path):
-    """When a video is processed by VideoProxyWorker, only a thumbnail is generated; status becomes proxied."""
+def test_proxy_worker_video_720p_pipeline(engine, _session_factory, tmp_path):
+    """When a video is processed by VideoProxyWorker, 720p pipeline runs: thumbnail, head-clip, scene indexing; status becomes proxied."""
     asset_repo = _create_tables_and_seed(engine, _session_factory)
     _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
 
@@ -839,46 +839,63 @@ def test_proxy_worker_video_generates_thumbnail_only(engine, _session_factory, t
     assert asset.id is not None
     asset_id = asset.id
 
-    def mock_extract_video_frame(source: Path, dest: Path, timestamp: float = 0.0) -> bool:
+    def mock_extract_video_frame(source, dest, timestamp=0.0):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9")
         return True
 
+    def mock_extract_head_clip_copy(source, dest, duration=10.0):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"fake-head-clip")
+        return True
+
     from src.repository.system_metadata_repo import SystemMetadataRepository
+    from src.repository.video_scene_repo import VideoSceneRepository
     from src.repository.worker_repo import WorkerRepository
     from src.workers.video_proxy_worker import VideoProxyWorker
 
     worker_repo = WorkerRepository(_session_factory)
     system_metadata_repo = SystemMetadataRepository(_session_factory)
+    scene_repo = VideoSceneRepository(_session_factory)
 
     with tempfile.TemporaryDirectory() as tmp:
         data_dir = Path(tmp)
-        with patch("src.core.storage.get_config") as m:
-            m.return_value.data_dir = str(data_dir)
-            with patch("src.workers.video_proxy_worker.extract_video_frame", side_effect=mock_extract_video_frame):
-                worker = VideoProxyWorker(
-                    worker_id="vid-proxy-worker",
-                    repository=worker_repo,
-                    heartbeat_interval_seconds=15.0,
-                    asset_repo=asset_repo,
-                    system_metadata_repo=system_metadata_repo,
-                    library_slug="vid-proxy-lib",
-                )
-                result = worker.process_task()
+        config_mock = MagicMock()
+        config_mock.data_dir = str(data_dir)
+        with patch("src.core.config.get_config", return_value=config_mock):
+            with patch("src.workers.video_proxy_worker.get_config", return_value=config_mock):
+                with patch("src.core.storage.get_config", return_value=config_mock):
+                    with patch("src.workers.video_proxy_worker.transcode_to_720p_h264", return_value=True):
+                        with patch("src.workers.video_proxy_worker.extract_video_frame", side_effect=mock_extract_video_frame):
+                            with patch("src.workers.video_proxy_worker.extract_head_clip_copy", side_effect=mock_extract_head_clip_copy):
+                                with patch("src.workers.video_proxy_worker.run_video_scene_indexing"):
+                                    worker = VideoProxyWorker(
+                                        worker_id="vid-proxy-worker",
+                                        repository=worker_repo,
+                                        heartbeat_interval_seconds=15.0,
+                                        asset_repo=asset_repo,
+                                        system_metadata_repo=system_metadata_repo,
+                                        scene_repo=scene_repo,
+                                        library_slug="vid-proxy-lib",
+                                    )
+                                    result = worker.process_task()
 
         assert result is True
         session = _session_factory()
         try:
             row = session.execute(
-                text("SELECT status FROM asset WHERE id = :id"), {"id": asset_id}
+                text("SELECT status, video_preview_path FROM asset WHERE id = :id"), {"id": asset_id}
             ).fetchone()
             assert row is not None
             assert row[0] == "proxied"
+            assert row[1] == "video_clips/vid-proxy-lib/" + str(asset_id) + "/head_clip.mp4"
         finally:
             session.close()
 
         shard = asset_id % 1000
         thumb_path = data_dir / "vid-proxy-lib" / "thumbnails" / str(shard) / f"{asset_id}.jpg"
+        head_clip_path = data_dir / "video_clips" / "vid-proxy-lib" / str(asset_id) / "head_clip.mp4"
         proxy_path = data_dir / "vid-proxy-lib" / "proxies" / str(shard) / f"{asset_id}.webp"
         assert thumb_path.exists()
+        assert head_clip_path.exists()
         assert not proxy_path.exists()

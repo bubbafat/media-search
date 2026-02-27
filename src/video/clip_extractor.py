@@ -3,9 +3,113 @@
 import asyncio
 import logging
 import subprocess
+import sys
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
+
+
+def _is_h264_videotoolbox_available() -> bool:
+    """Return True if FFmpeg reports h264_videotoolbox encoder (macOS)."""
+    if sys.platform != "darwin":
+        return False
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-encoders"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return "h264_videotoolbox" in (result.stdout or "") if result.returncode == 0 else False
+
+
+def transcode_to_720p_h264(source: Path, dest: Path) -> bool:
+    """
+    Create a temporary 720p 8-bit H.264 MP4 from a source video.
+
+    Uses h264_videotoolbox on macOS when available, otherwise libx264.
+    Scale: -2:720 (height 720, width auto even), -b:v 3M, -pix_fmt yuv420p.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    use_vt = _is_h264_videotoolbox_available()
+    if use_vt:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-vf",
+            "scale=-2:720",
+            "-c:v",
+            "h264_videotoolbox",
+            "-b:v",
+            "3M",
+            "-pix_fmt",
+            "yuv420p",
+            str(dest),
+        ]
+    else:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-vf",
+            "scale=-2:720",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-b:v",
+            "3M",
+            "-pix_fmt",
+            "yuv420p",
+            str(dest),
+        ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode == 0:
+        return True
+    if result.stderr:
+        _log.warning("FFmpeg 720p transcode failed: %s", result.stderr.strip())
+    return False
+
+
+def extract_head_clip_copy(source: Path, dest: Path, duration: float = 10.0) -> bool:
+    """
+    Extract the first N seconds from an MP4 using stream copy (no re-encode).
+
+    Uses -ss 0 -i source -t duration -c copy -movflags +faststart for speed.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ss",
+        "0",
+        "-i",
+        str(source),
+        "-t",
+        str(duration),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(dest),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode == 0:
+        return True
+    if result.stderr:
+        _log.warning("FFmpeg head-clip copy failed: %s", result.stderr.strip())
+    return False
 
 
 def extract_video_frame(source: Path, dest: Path, timestamp: float = 0.0) -> bool:

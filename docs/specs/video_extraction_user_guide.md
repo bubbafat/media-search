@@ -53,10 +53,14 @@ When a job restarts, the system:
 3.  Restores the `ActiveSceneState` to "prime" the segmenter with the exact anchor and best-frame data it had before the crash.
 4.  Discards frames until `PTS >= max_end_ts`, then resumes processing seamlessly.
 
-### Running the pipeline (Video worker)
-The scene-indexing pipeline is driven by the **Video worker**, started via the CLI with `ai video`. The worker claims pending video assets from the database, runs the pipeline (scene detection, best-frame selection, optional AI analysis), and marks assets completed or poisoned. To support long-running videos safely, the worker **renews the asset lease** after each closed scene and supports **graceful shutdown**: on SIGINT/SIGTERM the pipeline is interrupted (per-frame check) and the asset is set back to pending so another worker can resume later.
+### Running the pipeline (Video Proxy Worker and Video Worker)
+Scene indexing is split into two stages. The **Video Proxy Worker** (CLI: `video-proxy`) claims **pending** video assets. It reads the source once and runs the **720p disposable pipeline**: transcodes to a temporary 720p H.264 file, extracts a thumbnail (frame at 0.0) from the temp, extracts a 10-second head-clip (stream copy) for UI preview, runs scene detection (pHash, temporal ceiling, best-frame selection) from the temp **without** vision analysis, persists scene bounds and representative frame paths to the database and disk, then deletes the temp file. It sets `video_preview_path` and updates the asset to **proxied**.
 
-After scene indexing completes, the worker generates the **head-clip** MP4 (10 seconds from the start) for hover/tap preview in the UI. The **preview image** shown on result and library cards is a **static scene frame**: for search results it is the best-match scene’s representative frame (from `video_scenes.rep_frame_path`); for the library browser it is the first scene’s representative frame. The UI loads these via the API’s `preview_url`; on desktop, hovering over a video card plays the head-clip; on mobile, tapping the preview toggles playback.
+The **Video Worker** (CLI: `ai video`) claims **proxied** video assets that already have scene data. It runs **vision analysis only** on the existing representative frame images (e.g. Moondream), updates scene descriptions and metadata in the database, and marks the asset completed. It does not re-read the source video or generate the head-clip. This keeps GPU work separate from the single source read and avoids the "double-read penalty."
+
+To support long-running videos, the Video Proxy Worker can be interrupted (SIGINT/SIGTERM); the asset is set back to pending so another worker can resume. The Video Worker supports graceful shutdown: on interrupt the asset is set back to proxied.
+
+After the pipeline completes, the **preview image** shown on result and library cards is a **static scene frame**: for search results it is the best-match scene’s representative frame (from `video_scenes.rep_frame_path`); for the library browser it is the first scene’s representative frame. The UI loads these via the API’s `preview_url`; on desktop, hovering over a video card plays the head-clip; on mobile, tapping the preview toggles playback.
 
 ---
 

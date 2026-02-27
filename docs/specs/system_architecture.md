@@ -101,13 +101,17 @@ The pipeline is divided into specialized, isolated worker types to prevent hardw
 
 3. **The Video Proxy Worker (Network I/O & CPU Bound):**
    - **Role:** Pre-Processor for **videos**.
-   - **Action:** Claims `pending` **video** assets. It pulls the original video file across the network and generates a thumbnail (frame at 0.0) on the local SSD. It updates the asset status to `proxied`. (A future phase adds a 720p disposable proxy pipeline: head-clip and scene indexing.)
+   - **Action:** Claims `pending` **video** assets. It reads the source file once and runs a **720p disposable pipeline**: transcodes to a temporary 720p H.264 file, extracts a thumbnail (frame at 0.0) from the temp, extracts a 10-second head-clip (stream copy) for UI preview, runs scene indexing (pHash, temporal ceiling, best-frame selection) from the temp with **no** vision analysis, persists scene bounds and representative frame paths, then deletes the temp file. It sets `video_preview_path` and updates the asset status to `proxied`. All derivatives (thumbnail, head-clip, scene rep frames) are produced from a single read of the source via the 720p temp.
 
 4. **The ML / AI Worker (GPU Bound):**
    - **Role:** The Intelligence Engine.
-   - **Action:** Claims `proxied` assets. It never touches the network or the user's NAS. It strictly reads the lightweight local proxies from the SSD, runs them through local LLMs/Vision Models (e.g., Moondream, CLIP), extracts tags/embeddings, and updates the asset to `completed`.
+   - **Action:** Claims `proxied` **image** assets. It never touches the network or the user's NAS. It strictly reads the lightweight local proxies from the SSD, runs them through local LLMs/Vision Models (e.g., Moondream, CLIP), extracts tags/embeddings, and updates the asset to `completed`.
 
-5. **The Garbage Collector Worker (Disk & DB Bound):**
+5. **The Video Worker (GPU Bound, vision-only):**
+   - **Role:** Vision backfill for **video** scene rep frames.
+   - **Action:** Claims `proxied` **video** assets that already have scene bounds and representative frames (persisted by the Video Proxy Worker). It runs vision analysis (e.g. Moondream) only on the existing rep frame images, updates scene descriptions and metadata, and marks the asset completed. It does **not** re-read the source video or generate the head-clip (Video Proxy Worker already set `video_preview_path`).
+
+6. **The Garbage Collector Worker (Disk & DB Bound):**
    - **Role:** The Janitor.
    - **Action:** Wakes up periodically to clean up the system. It executes chunked hard-deletions on databases for "emptied trash" libraries, and safely deletes orphaned physical proxy files from the local SSD to prevent disk bloat.
 
@@ -175,8 +179,8 @@ To ensure high performance, UI responsiveness, and absolute security of the user
 ### 7.1 The Three-Stage Processing State Machine
 Processing heavy media over a network requires separating I/O-bound tasks from GPU-bound tasks to prevent "Double-Read Penalties."
 1. **Stage 1 (Discovery):** Scanner finds a file on the NAS. Inserts DB row as `pending`.
-2. **Stage 2 (Proxy Generation):** A Proxy/Thumbnail worker claims the `pending` asset. It reads the heavy source file across the network *exactly once*. It generates a small UI Thumbnail (`320px`) and an AI-optimized Proxy (`768px`) on the local SSD. It updates the DB to `proxied`.
-3. **Stage 3 (AI Extraction):** The ML Worker claims the `proxied` asset. It reads *only* the local SSD proxy, bypassing the network entirely. It updates the DB to `completed`.
+2. **Stage 2 (Proxy Generation):** For **images**, the Image Proxy Worker claims `pending` assets, reads the source once, and generates a small UI Thumbnail (320px JPEG) and an AI-optimized WebP Proxy (768px) on the local SSD, then sets status to `proxied`. For **videos**, the Video Proxy Worker claims `pending` assets, reads the source once into a temporary 720p H.264 file, generates thumbnail, 10-second head-clip (stream copy), and scene index (pHash, rep frames) from that temp, then deletes the temp and sets status to `proxied` and `video_preview_path`.
+3. **Stage 3 (AI Extraction):** The ML Worker claims `proxied` **image** assets and reads only the local SSD proxy. The Video Worker claims `proxied` **video** assets and runs vision analysis only on the already-persisted scene rep frame images (no source read). Both update the DB to `completed`.
 
 ---
 

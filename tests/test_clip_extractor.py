@@ -2,12 +2,57 @@
 
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from src.video.clip_extractor import extract_clip
+from src.video.clip_extractor import (
+    extract_clip,
+    extract_head_clip_copy,
+    transcode_to_720p_h264,
+)
 
 pytestmark = [pytest.mark.slow]
+
+
+@pytest.mark.fast
+def test_transcode_to_720p_h264_success(tmp_path):
+    """transcode_to_720p_h264 returns True when ffmpeg succeeds."""
+    source = tmp_path / "in.mov"
+    source.write_bytes(b"fake")
+    dest = tmp_path / "out.mp4"
+    with patch("src.video.clip_extractor.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="", stderr="")):
+        assert transcode_to_720p_h264(source, dest) is True
+
+
+@pytest.mark.fast
+def test_transcode_to_720p_h264_failure(tmp_path):
+    """transcode_to_720p_h264 returns False when ffmpeg fails."""
+    source = tmp_path / "in.mov"
+    source.write_bytes(b"fake")
+    dest = tmp_path / "out.mp4"
+    with patch("src.video.clip_extractor.subprocess.run", return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="Error")):
+        assert transcode_to_720p_h264(source, dest) is False
+
+
+@pytest.mark.fast
+def test_extract_head_clip_copy_success(tmp_path):
+    """extract_head_clip_copy returns True when ffmpeg succeeds."""
+    source = tmp_path / "in.mp4"
+    source.write_bytes(b"fake")
+    dest = tmp_path / "head_clip.mp4"
+    with patch("src.video.clip_extractor.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="", stderr="")):
+        assert extract_head_clip_copy(source, dest, duration=10.0) is True
+
+
+@pytest.mark.fast
+def test_extract_head_clip_copy_failure(tmp_path):
+    """extract_head_clip_copy returns False when ffmpeg fails."""
+    source = tmp_path / "in.mp4"
+    source.write_bytes(b"fake")
+    dest = tmp_path / "head_clip.mp4"
+    with patch("src.video.clip_extractor.subprocess.run", return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="Error")):
+        assert extract_head_clip_copy(source, dest, duration=10.0) is False
 
 
 def _create_test_video(tmp_path: Path, duration: float = 5.0) -> Path:

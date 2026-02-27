@@ -1,4 +1,4 @@
-"""Video worker: claims pending video assets, runs scene indexing with lease renewal and fast-interrupts."""
+"""Video worker: claims proxied video assets, runs vision-only pass on existing scene rep frames."""
 
 import logging
 from pathlib import Path
@@ -11,8 +11,7 @@ from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
-from src.video.clip_extractor import extract_video_clip
-from src.video.indexing import run_video_scene_indexing
+from src.video.indexing import run_vision_on_scenes
 from src.workers.base import BaseWorker
 
 _log = logging.getLogger(__name__)
@@ -20,11 +19,10 @@ _log = logging.getLogger(__name__)
 
 class VideoWorker(BaseWorker):
     """
-    Worker that claims proxied video assets, runs scene indexing (pHash + temporal ceiling,
-    best-frame selection, optional vision analysis), and marks assets completed or poisoned.
-    Renews the asset lease after each closed scene and aborts cleanly on shutdown (InterruptedError).
-    When system_default_model_id is set, only claims assets whose library's effective target
-    model equals the worker's model.
+    Worker that claims proxied video assets, runs vision analysis on existing scene
+    rep frames (persisted by VideoProxyWorker from the 720p pipeline), and marks
+    assets completed. Does not re-read source video or generate head-clip (already
+    set by VideoProxyWorker). Supports lease renewal and graceful shutdown.
     """
 
     def __init__(
@@ -57,9 +55,9 @@ class VideoWorker(BaseWorker):
         self._verbose = verbose
         self._system_default_model_id = system_default_model_id
 
-    def run(self) -> None:
-        """Run the normal worker loop."""
-        super().run()
+    def run(self, once: bool = False) -> None:
+        """Run the normal worker loop. Pass once=True to exit when no work is available."""
+        super().run(once=once)
 
     def process_task(self) -> bool:
         claim_kwargs: dict = {"library_slug": self._library_slug}
@@ -77,43 +75,26 @@ class VideoWorker(BaseWorker):
             return False
         assert asset.id is not None
         assert asset.library is not None
-        source_path = Path(asset.library.absolute_path) / asset.rel_path
-
-        def _renew() -> None:
-            self.asset_repo.renew_asset_lease(asset.id, 300)
 
         def _check_interrupt() -> bool:
             return self.should_exit
 
-        def _on_scene_saved(rep_path: Path, start_ts: float, end_ts: float) -> None:
-            _log.info(
-                "Scene %.1f-%.1fs -> %s",
-                start_ts,
-                end_ts,
-                rep_path,
-            )
-
-        _log.info("Processing video: %s", source_path)
+        _log.info("Processing video (vision-only): %s", asset.rel_path)
         try:
-            run_video_scene_indexing(
+            run_vision_on_scenes(
                 asset.id,
-                source_path,
                 asset.library.slug,
                 self._scene_repo,
-                vision_analyzer=self.analyzer,
-                on_scene_closed=_renew,
-                on_scene_saved=_on_scene_saved,
+                self.analyzer,
                 check_interrupt=_check_interrupt,
             )
-            data_dir = Path(get_config().data_dir)
-            clip_path = data_dir / "video_clips" / asset.library.slug / str(asset.id) / "head_clip.mp4"
-            clip_path.parent.mkdir(parents=True, exist_ok=True)
-            if extract_video_clip(
-                source_path, clip_path, start_ts=0.0, duration=10.0, context_seconds=0
-            ):
-                self.asset_repo.set_video_preview_path(
-                    asset.id, f"video_clips/{asset.library.slug}/{asset.id}/head_clip.mp4"
-                )
+            if asset.video_preview_path is None or asset.video_preview_path == "":
+                data_dir = Path(get_config().data_dir)
+                clip_path = data_dir / "video_clips" / asset.library.slug / str(asset.id) / "head_clip.mp4"
+                if clip_path.exists():
+                    self.asset_repo.set_video_preview_path(
+                        asset.id, f"video_clips/{asset.library.slug}/{asset.id}/head_clip.mp4"
+                    )
             self.asset_repo.mark_completed(asset.id, self.db_model_id)
             _log.info(
                 "Completed: %s (%s/%s)",

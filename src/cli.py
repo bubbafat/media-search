@@ -615,7 +615,7 @@ def video_proxy(
     repair: bool = typer.Option(False, "--repair", help="Check for missing video thumbnail files and set those assets to pending."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
 ) -> None:
-    """Start the video proxy worker: claims pending video assets, generates thumbnails."""
+    """Start the video proxy worker: claims pending video assets, 720p pipeline (thumbnail, head-clip, scene indexing)."""
     worker_id = (
         worker_name
         if worker_name is not None
@@ -637,6 +637,7 @@ def video_proxy(
     asset_repo = AssetRepository(session_factory)
     worker_repo = WorkerRepository(session_factory)
     system_metadata_repo = SystemMetadataRepository(session_factory)
+    scene_repo = VideoSceneRepository(session_factory)
 
     if verbose:
         root = logging.getLogger("src.workers")
@@ -653,6 +654,7 @@ def video_proxy(
         heartbeat_interval_seconds=heartbeat,
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
+        scene_repo=scene_repo,
         library_slug=library_slug,
         verbose=verbose,
         initial_pending_count=initial_pending,
@@ -820,8 +822,9 @@ def ai_video(
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
+    once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
 ) -> None:
-    """Start the Video worker: claims pending video assets, runs scene indexing, marks completed."""
+    """Start the Video worker: claims proxied video assets, runs vision on scene rep frames, marks completed."""
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
     asset_repo = AssetRepository(session_factory)
@@ -894,7 +897,7 @@ def ai_video(
         system_default_model_id=system_default_model_id,
     )
     try:
-        worker.run()
+        worker.run(once=once)
     except KeyboardInterrupt:
         typer.secho(f"Worker {worker_id} shutting down...")
 

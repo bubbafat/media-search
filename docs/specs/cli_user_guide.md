@@ -23,7 +23,7 @@ uv run media-search --help
 | `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                 |
 | `scan`          | Run a one-shot scan for a library (no daemon)                                                             |
 | `proxy`         | Start the image proxy worker (thumbnails and WebP proxies for pending image assets)                        |
-| `video-proxy`   | Start the video proxy worker (thumbnails for pending video assets)                                         |
+| `video-proxy`   | Start the video proxy worker (720p pipeline: thumbnail, head-clip, scene indexing for pending video assets) |
 | `ai`            | Manage AI models and workers (default model, start AI worker, start video worker, list/add/remove models) |
 
 
@@ -442,22 +442,22 @@ uv run media-search proxy --once --library disneyland
 
 ### video-proxy
 
-Start the **video** proxy worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims pending **video** assets only, generates a thumbnail (frame at 0.0) on local storage, and updates their status to proxied (or poisoned on error). Worker ID is auto-generated from hostname and a short UUID unless overridden.
+Start the **video** proxy worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims pending **video** assets only and runs the **720p disposable pipeline**: transcodes the source to a temporary 720p H.264 file, extracts a thumbnail (frame at 0.0) from the temp, extracts a 10-second head-clip (stream copy) for UI preview, runs scene indexing (pHash, best-frame selection; no vision analysis), then deletes the temp file. It sets `video_preview_path` and updates status to proxied (or poisoned on error). Worker ID is auto-generated from hostname and a short UUID unless overridden.
 
 When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted.
 
 With `--once`, the worker processes one batch (one video) and then exits immediately. If no pending video asset is found, it exits without waiting. Use this for scripting (e.g. run `proxy --once` and `video-proxy --once` in parallel after a scan).
 
-With `--repair`, before the main loop the worker runs a one-time check: it finds **video** assets that are supposed to have a thumbnail but are missing it on disk, sets their status to pending, then runs the normal loop. Combine with `--library` to repair only one library.
+With `--repair`, before the main loop the worker runs a one-time check: it finds **video** assets that are supposed to have a thumbnail and head-clip but are missing one or both on disk, sets their status to pending, then runs the normal loop. Combine with `--library` to repair only one library.
 
 
 | Option            | Description                                                                 |
 | ----------------- | --------------------------------------------------------------------------- |
 | `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                               |
 | `--worker-name`   | Force a specific worker ID; defaults to auto-generated                      |
-| `--library`       | Limit to this library slug only (optional)                                  |
+| `--library`       | Limit to this library slug only (optional)                                 |
 | `--verbose`, `-v` | Print progress (each asset and N/total)                                     |
-| `--repair`        | Check for missing video thumbnails and set those assets to pending          |
+| `--repair`        | Check for missing thumbnail/head-clip and set those assets to pending     |
 | `--once`          | Process one batch then exit; exit immediately if no work                    |
 
 
@@ -546,11 +546,11 @@ uv run media-search ai start --once --library nas-main
 
 ### ai video
 
-Start the Video worker. It runs until interrupted (Ctrl+C). The worker claims **pending** video assets (`.mp4`, `.mkv`, `.mov`), runs the scene-indexing pipeline (scene detection, best-frame selection, optional vision analysis on representative frames), renews the asset lease after each closed scene, and supports graceful shutdown (on SIGINT/SIGTERM the pipeline is interrupted and the asset is set back to pending so another worker can resume). Worker ID is auto-generated as `video-<hostname>-<short-uuid>` unless overridden.
+Start the Video worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims **proxied** video assets (videos that have already been processed by the video-proxy worker: thumbnail, head-clip, and scene index with rep frames). It runs **vision analysis only** on the existing scene representative frame images (no source video read, no head-clip generation). It updates scene descriptions and metadata and marks the asset completed. Worker ID is auto-generated as `video-<hostname>-<short-uuid>` unless overridden.
 
-Progress is printed to the terminal: when a video is claimed the worker logs **Processing video:** with the full path; for each scene it logs the time range and the path to the representative frame JPEG on disk (so you can open and inspect frames); when the asset is done it logs **Completed:** with asset id, library, and path.
+Progress is printed to the terminal: when a video is claimed the worker logs **Processing video (vision-only):** with the relative path; when the asset is done it logs **Completed:** with asset id, library, and path.
 
-When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for optional per-scene description/tags (e.g. mock, moondream2).
+When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for per-scene description/tags (e.g. mock, moondream2).
 
 | Option            | Description                                                                                                 |
 | ----------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -559,6 +559,7 @@ When `--library` is provided, the command exits with code 1 if the library is no
 | `--library`       | Limit to this library slug only.                                                                            |
 | `--verbose`, `-v` | Print progress for each completed asset.                                                                    |
 | `--analyzer`      | AI model to use for scene descriptions (e.g. mock, moondream2). If omitted, uses library or system default. |
+| `--once`          | Process one batch then exit; exit immediately if no work.                                                   |
 
 
 **Examples:**
@@ -567,6 +568,7 @@ When `--library` is provided, the command exits with code 1 if the library is no
 uv run media-search ai video
 uv run media-search ai video --library nas-main --verbose
 uv run media-search ai video --analyzer moondream2
+uv run media-search ai video --once --library nas-main
 ```
 
 ---

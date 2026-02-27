@@ -23,6 +23,49 @@ if TYPE_CHECKING:
 SEMANTIC_DEDUP_RATIO = 85  # token_set_ratio above this flags semantic duplicate
 
 
+def run_vision_on_scenes(
+    asset_id: int,
+    library_slug: str,
+    repo: VideoSceneRepository,
+    vision_analyzer: "BaseVisionAnalyzer",
+    *,
+    check_interrupt: Callable[[], bool] | None = None,
+) -> None:
+    """
+    Run vision analysis on existing scene rep frames that have NULL description.
+
+    Used by VideoWorker after VideoProxyWorker has persisted scenes from the 720p pipeline.
+    Iterates scenes for the asset, loads rep_frame_path from disk, runs vision, updates description/metadata.
+    """
+    data_dir = Path(get_config().data_dir)
+    scenes = repo.list_scenes(asset_id)
+    to_process = [s for s in scenes if s.description is None]
+    last_written_description: str | None = None
+    for scene in to_process:
+        if check_interrupt is not None and check_interrupt():
+            raise InterruptedError("Vision backfill interrupted")
+        rep_path = data_dir / scene.rep_frame_path
+        if not rep_path.exists():
+            continue
+        analysis = vision_analyzer.analyze_image(rep_path)
+        description = analysis.description or ""
+        metadata: dict = {
+            "moondream": {
+                "description": analysis.description,
+                "tags": analysis.tags,
+                "ocr_text": analysis.ocr_text,
+            },
+        }
+        if (
+            last_written_description
+            and description
+            and fuzz.token_set_ratio(last_written_description, description) > SEMANTIC_DEDUP_RATIO
+        ):
+            metadata["semantic_duplicate"] = True
+        repo.update_scene_vision(scene.id, description, metadata)
+        last_written_description = description
+
+
 def _write_rep_frame_jpeg(
     frame_bytes: bytes,
     width: int,

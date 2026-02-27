@@ -1,15 +1,23 @@
-"""Video proxy worker: claims pending video assets, generates thumbnail from source, updates to proxied."""
+"""Video proxy worker: claims pending video assets, 720p pipeline (thumbnail, head-clip, scene indexing), updates to proxied."""
 
 import logging
+import tempfile
 from pathlib import Path
 
+from src.core.config import get_config
 from src.core.file_extensions import VIDEO_EXTENSIONS_LIST
 from src.core.storage import LocalMediaStore
 from src.models.entities import AssetStatus
 from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
+from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
-from src.video.clip_extractor import extract_video_frame
+from src.video.clip_extractor import (
+    extract_head_clip_copy,
+    extract_video_frame,
+    transcode_to_720p_h264,
+)
+from src.video.indexing import run_video_scene_indexing
 from src.workers.base import BaseWorker
 
 _log = logging.getLogger(__name__)
@@ -17,9 +25,9 @@ _log = logging.getLogger(__name__)
 
 class VideoProxyWorker(BaseWorker):
     """
-    Worker that claims pending video assets only, writes a thumbnail (frame at 0.0) to the
-    local sharded store, and updates status to proxied (or poisoned on error).
-    Phase 1: thumbnail only; no head-clip or scene indexing yet.
+    Worker that claims pending video assets, runs the 720p disposable pipeline:
+    transcode to temp 720p H.264 → thumbnail from temp → head-clip (stream copy) →
+    scene indexing (pHash, rep frames, no vision) → cleanup temp → set proxied.
     """
 
     def __init__(
@@ -30,6 +38,7 @@ class VideoProxyWorker(BaseWorker):
         *,
         asset_repo: AssetRepository,
         system_metadata_repo: SystemMetadataRepository,
+        scene_repo: VideoSceneRepository,
         library_slug: str | None = None,
         verbose: bool = False,
         initial_pending_count: int | None = None,
@@ -42,6 +51,7 @@ class VideoProxyWorker(BaseWorker):
             system_metadata_repo=system_metadata_repo,
         )
         self.asset_repo = asset_repo
+        self.scene_repo = scene_repo
         self.storage = LocalMediaStore()
         self._library_slug = library_slug
         self._verbose = verbose
@@ -49,8 +59,13 @@ class VideoProxyWorker(BaseWorker):
         self._processed_count = 0
         self._repair = repair
 
+    def _head_clip_path(self, library_slug: str, asset_id: int) -> Path:
+        """Path to head_clip.mp4 for this asset (under data_dir)."""
+        data_dir = Path(get_config().data_dir)
+        return data_dir / "video_clips" / library_slug / str(asset_id) / "head_clip.mp4"
+
     def _run_repair_pass(self) -> None:
-        """Find video assets that should have a thumbnail but are missing; set status to pending."""
+        """Find video assets that should have thumbnail and head-clip but are missing; set status to pending."""
         batch_size = 500
         offset = 0
         total_checked = 0
@@ -66,7 +81,12 @@ class VideoProxyWorker(BaseWorker):
             for asset_id, library_slug, type_str in batch:
                 if type_str != "video":
                     continue
+                missing = False
                 if not self.storage.thumbnail_exists(library_slug, asset_id):
+                    missing = True
+                if not self._head_clip_path(library_slug, asset_id).exists():
+                    missing = True
+                if missing:
                     self.asset_repo.update_asset_status(asset_id, AssetStatus.pending)
                     total_reset += 1
                 total_checked += 1
@@ -99,11 +119,36 @@ class VideoProxyWorker(BaseWorker):
             return False
         assert asset.id is not None
         assert asset.library is not None
+        library_slug = asset.library.slug
         source_path = Path(asset.library.absolute_path) / asset.rel_path
+        data_dir = Path(get_config().data_dir)
+        tmp_dir = data_dir / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        temp_fd = tempfile.NamedTemporaryFile(
+            suffix=".mp4", dir=str(tmp_dir), delete=False
+        )
+        temp_path = Path(temp_fd.name)
+        temp_fd.close()
         try:
-            thumb_path = self.storage.get_thumbnail_write_path(asset.library.slug, asset.id)
-            if not extract_video_frame(source_path, thumb_path, 0.0):
+            if not transcode_to_720p_h264(source_path, temp_path):
+                raise RuntimeError("720p transcode failed")
+            thumb_path = self.storage.get_thumbnail_write_path(library_slug, asset.id)
+            if not extract_video_frame(temp_path, thumb_path, 0.0):
                 raise RuntimeError("FFmpeg frame extraction failed")
+            head_clip_path = self._head_clip_path(library_slug, asset.id)
+            if not extract_head_clip_copy(temp_path, head_clip_path, duration=10.0):
+                raise RuntimeError("Head-clip copy failed")
+            run_video_scene_indexing(
+                asset.id,
+                temp_path,
+                library_slug,
+                self.scene_repo,
+                vision_analyzer=None,
+                check_interrupt=lambda: self.should_exit,
+            )
+            self.asset_repo.set_video_preview_path(
+                asset.id, f"video_clips/{library_slug}/{asset.id}/head_clip.mp4"
+            )
             self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
             self._processed_count += 1
             if self._verbose:
@@ -115,6 +160,9 @@ class VideoProxyWorker(BaseWorker):
                     self._processed_count,
                     total,
                 )
+        except InterruptedError:
+            self.asset_repo.update_asset_status(asset.id, AssetStatus.pending)
+            return False
         except Exception as e:
             _log.error(
                 "Video proxy worker failed for asset %s (%s): %s",
@@ -124,4 +172,6 @@ class VideoProxyWorker(BaseWorker):
                 exc_info=True,
             )
             self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, str(e))
+        finally:
+            temp_path.unlink(missing_ok=True)
         return True

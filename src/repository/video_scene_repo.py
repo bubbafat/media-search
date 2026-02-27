@@ -333,3 +333,25 @@ class VideoSceneRepository:
                 )
 
             return scene_id
+
+    def update_scene_vision(
+        self,
+        scene_id: int,
+        description: str,
+        metadata: dict[str, Any] | None,
+    ) -> None:
+        """Update description and metadata for a scene (vision backfill)."""
+        with self._session_scope(write=True) as session:
+            metadata_json = json.dumps(metadata) if metadata is not None else None
+            session.execute(
+                text("""
+                    UPDATE video_scenes
+                    SET description = :description, metadata = CAST(:metadata AS jsonb)
+                    WHERE id = :scene_id
+                """),
+                {
+                    "scene_id": scene_id,
+                    "description": description,
+                    "metadata": metadata_json,
+                },
+            )
