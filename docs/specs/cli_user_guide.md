@@ -14,17 +14,17 @@ uv run media-search --help
 ## Command tree
 
 
-| Group / Command | Description                                                                                               |
-| --------------- | --------------------------------------------------------------------------------------------------------- |
-| `library`       | Add, remove, restore, list libraries, force video reindex (reindex-videos)                               |
-| `trash`         | Manage soft-deleted libraries (list, empty one, empty all)                                                |
-| `repair`        | Repair database consistency (e.g. orphan-assets: remove assets whose library no longer exists)            |
-| `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)          |
-| `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                 |
-| `scan`          | Run a one-shot scan for a library (no daemon)                                                             |
-| `proxy`         | Start the image proxy worker (thumbnails and WebP proxies for pending image assets)                        |
+| Group / Command | Description                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| `library`       | Add, remove, restore, list libraries, force video reindex (reindex-videos)                                  |
+| `trash`         | Manage soft-deleted libraries (list, empty one, empty all)                                                  |
+| `repair`        | Repair database consistency (e.g. orphan-assets: remove assets whose library no longer exists)              |
+| `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)           |
+| `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                   |
+| `scan`          | Run a one-shot scan for a library (no daemon)                                                               |
+| `proxy`         | Start the image proxy worker (thumbnails and WebP proxies for pending image assets)                         |
 | `video-proxy`   | Start the video proxy worker (720p pipeline: thumbnail, head-clip, scene indexing for pending video assets) |
-| `ai`            | Manage AI models and workers (default model, start AI worker, start video worker, list/add/remove models) |
+| `ai`            | Manage AI models and workers (default model, start AI worker, start video worker, list/add/remove models)   |
 
 
 ---
@@ -124,9 +124,9 @@ uv run media-search library list --include-deleted
 Clear the video index and set all video assets in the library to **pending**. Use this after changing the scene-indexing algorithm so the Video worker will re-process all videos in the library. Exits with code 1 if the library is not found or soft-deleted. Then run `ai video --library <slug>` to re-process.
 
 
-| Argument       | Description     |
-| -------------- | --------------- |
-| `library_slug` | Library slug    |
+| Argument       | Description  |
+| -------------- | ------------ |
+| `library_slug` | Library slug |
 
 
 **Example:**
@@ -209,10 +209,10 @@ Find and remove **orphaned assets**: asset rows whose `library_id` no longer exi
 With `--dry-run`, only lists orphaned library slug(s) and how many assets each has; no rows are deleted. Without `--dry-run`, deletes dependent rows in `video_scenes`, `video_active_state`, and `videoframe`, then deletes the orphaned assets. Prompts for confirmation unless `--force` is used.
 
 
-| Option       | Description                                                          |
-| ------------ | -------------------------------------------------------------------- |
-| `--dry-run`  | Only report orphaned slugs and asset counts; do not delete          |
-| `--force`    | Skip confirmation when deleting                                      |
+| Option      | Description                                                |
+| ----------- | ---------------------------------------------------------- |
+| `--dry-run` | Only report orphaned slugs and asset counts; do not delete |
+| `--force`   | Skip confirmation when deleting                            |
 
 
 **Example:**
@@ -292,14 +292,15 @@ List video scenes for a video asset. Data comes from the `video_scenes` table (w
 Exits with code 1 if the library is not found or soft-deleted, the asset is not found, or the asset is not a video. If there are no scenes indexed, prints "No scenes indexed for this asset." and exits 0.
 
 
-| Argument       | Description                                        |
-| -------------- | -------------------------------------------------- |
-| `library_slug` | Library slug                                       |
+| Argument       | Description                                         |
+| -------------- | --------------------------------------------------- |
+| `library_slug` | Library slug                                        |
 | `rel_path`     | Relative path of the video asset within the library |
 
 
-| Option       | Description                                                                                  |
-| ------------ | -------------------------------------------------------------------------------------------- |
+
+| Option       | Description                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------- |
 | `--metadata` | Output full scene records as JSON (including per-scene metadata: moondream description/tags). |
 
 
@@ -317,9 +318,9 @@ uv run media-search asset scenes nas-main video/clip.mp4 --metadata
 Clear the video index for one video asset and set it to **pending**. Use this after changing the scene-indexing algorithm so the Video worker will re-process this asset. Exits with code 1 if the library is not found or soft-deleted, the asset is not found, or the asset is not a video. Then run `ai video` (optionally with `--library <slug>`) to re-process.
 
 
-| Argument       | Description                                        |
-| -------------- | -------------------------------------------------- |
-| `library_slug` | Library slug                                       |
+| Argument       | Description                                         |
+| -------------- | --------------------------------------------------- |
+| `library_slug` | Library slug                                        |
 | `rel_path`     | Relative path of the video asset within the library |
 
 
@@ -345,8 +346,8 @@ Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **S
 If no assets match, a yellow message is printed.
 
 
-| Argument | Description                                          |
-| -------- | ---------------------------------------------------- |
+| Argument | Description                                                   |
+| -------- | ------------------------------------------------------------- |
 | `query`  | Search query (optional). If omitted, no results are returned. |
 
 
@@ -416,14 +417,14 @@ With `--repair`, before the main loop the worker runs a one-time check: it finds
 By default, RAW/DNG files may use an embedded or fast-path libvips preview (long edge ≈1280px) for proxy generation to reduce memory usage; the resulting thumbnail (320px JPEG) and proxy (768px WebP) remain standardized. Use `--ignore-previews` to force full RAW decoding instead of using previews when in-camera effects or picture styles are not desired.
 
 
-| Option            | Description                                                                                     |
-| ----------------- | ----------------------------------------------------------------------------------------------- |
+| Option              | Description                                                                                     |
+| ------------------- | ----------------------------------------------------------------------------------------------- |
 | `--heartbeat`       | Heartbeat interval in seconds (default: 15.0)                                                   |
-| `--worker-name`     | Force a specific worker ID; defaults to auto-generated                                            |
+| `--worker-name`     | Force a specific worker ID; defaults to auto-generated                                          |
 | `--library`         | Limit to this library slug only (optional)                                                      |
 | `--verbose`, `-v`   | Print progress (each asset and N/total)                                                         |
 | `--repair`          | Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated |
-| `--once`            | Process one batch then exit; exit immediately if no work                                         |
+| `--once`            | Process one batch then exit; exit immediately if no work                                        |
 | `--ignore-previews` | Always perform full RAW decoding instead of using embedded/fast-path RAW previews               |
 
 
@@ -455,14 +456,14 @@ With `--once`, the worker processes one batch (one video) and then exits immedia
 With `--repair`, before the main loop the worker runs a one-time check: it finds **video** assets that are supposed to have a thumbnail and head-clip but are missing one or both on disk, sets their status to pending, then runs the normal loop. Combine with `--library` to repair only one library.
 
 
-| Option            | Description                                                                                                   |
-| ----------------- | ------------------------------------------------------------------------------------------------------------- |
-| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                                 |
-| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                                        |
+| Option            | Description                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                                |
+| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                                       |
 | `--library`       | Limit to this library slug only (optional)                                                                   |
 | `--verbose`, `-v` | Print per-asset progress (N/total) and detailed stage logs for each video (transcode, thumbnail, head-clip). |
-| `--repair`        | Check for missing thumbnail/head-clip and set those assets to pending                                       |
-| `--once`          | Process one batch then exit; exit immediately if no work                                                      |
+| `--repair`        | Check for missing thumbnail/head-clip and set those assets to pending                                        |
+| `--once`          | Process one batch then exit; exit immediately if no work                                                     |
 
 
 **Example:**
@@ -487,10 +488,10 @@ The `ai` group manages AI/vision models and the AI worker. Models are registered
 Set the system default AI model. The model is resolved by name and optional version; if version is omitted, the latest registered version for that name (by id) is used. Setting `mock` (or `mock-analyzer`) as default is rejected unless `MEDIASEARCH_ALLOW_MOCK_DEFAULT=1` (for tests only).
 
 
-| Argument  | Description                                      |
-| --------- | ------------------------------------------------ |
-| `name`    | Model name (e.g. moondream2, moondream3)         |
-| `version` | Optional; if omitted, latest by id for that name |
+| Argument  | Description                                                 |
+| --------- | ----------------------------------------------------------- |
+| `name`    | Model name (e.g. moondream2, moondream3, moondream-station) |
+| `version` | Optional; if omitted, latest by id for that name            |
 
 
 **Example:**
@@ -499,6 +500,7 @@ Set the system default AI model. The model is resolved by name and optional vers
 uv run media-search ai default set moondream2
 uv run media-search ai default set moondream2 2025-01-09
 uv run media-search ai default set moondream3
+uv run media-search ai default set moondream-station
 ```
 
 ---
@@ -526,18 +528,18 @@ When `--analyzer` is omitted, the worker uses the effective default: if `--libra
 With `--repair`, before the main loop the worker runs a one-time repair pass: it finds assets that are in status completed or analyzing but whose library’s effective target model differs from the model that produced their current analysis, sets their status to proxied so they are re-claimed and re-analyzed. Use with `--library` to repair only that library.
 
 
-| Option            | Description                                                                                |
-| ----------------- | ------------------------------------------------------------------------------------------ |
-| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                              |
-| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                     |
-| `--library`       | Limit to this library slug only (optional)                                                 |
-| `--verbose`, `-v` | Print progress for each completed asset                                                    |
-| `--analyzer`      | AI model to use (e.g. mock, moondream2, moondream3). If omitted, uses library or system default |
-| `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop |
-| `--once`          | Process one batch then exit; exit immediately if no work                                   |
+| Option            | Description                                                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                                                 |
+| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                                                        |
+| `--library`       | Limit to this library slug only (optional)                                                                                    |
+| `--verbose`, `-v` | Print progress for each completed asset                                                                                       |
+| `--analyzer`      | AI model to use (e.g. mock, moondream2, moondream3, moondream-station, md3p-int4). If omitted, uses library or system default |
+| `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop                                    |
+| `--once`          | Process one batch then exit; exit immediately if no work                                                                      |
 
 
-**Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile). `moondream3` uses the Moondream3 vision model (moondream/moondream3-preview) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory.
+**Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile). `moondream3` uses the Moondream3 vision model (moondream/moondream3-preview) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. `moondream-station` and `md3p-int4` (alias) send requests to a **local Moondream Station** server (e.g. for md3p-int4 on Apple Silicon). Install the client with `uv sync --extra station`; run [Moondream Station](https://docs.moondream.ai/station/) separately (e.g. `moondream-station`) and switch to md3p-int4 if desired. Set `MEDIASEARCH_MOONDREAM_STATION_ENDPOINT` to override the default endpoint ([http://localhost:2020/v1](http://localhost:2020/v1)).
 
 **Example:**
 
@@ -546,6 +548,7 @@ uv run media-search ai start
 uv run media-search ai start --library nas-main --verbose
 uv run media-search ai start --analyzer moondream2
 uv run media-search ai start --analyzer moondream3
+uv run media-search ai start --analyzer moondream-station
 uv run media-search ai start --library nas-main --repair
 uv run media-search ai start --once --library nas-main
 ```
@@ -558,16 +561,17 @@ Start the Video worker. It runs until interrupted (Ctrl+C) unless `--once` is us
 
 Progress is printed to the terminal: when a video is claimed the worker logs **Processing video (vision-only):** with the relative path; when the asset is done it logs **Completed:** with asset id, library, and path.
 
-When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for per-scene description/tags (e.g. mock, moondream2, moondream3).
+When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for per-scene description/tags (e.g. mock, moondream2, moondream3, moondream-station).
 
-| Option            | Description                                                                                                      |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0).                                                                   |
-| `--worker-name`   | Force a specific worker ID.                                                                                      |
-| `--library`       | Limit to this library slug only.                                                                                 |
-| `--verbose`, `-v` | Print progress for each completed asset.                                                                         |
-| `--analyzer`      | AI model to use for scene descriptions (e.g. mock, moondream2, moondream3). If omitted, uses library or system default. |
-| `--once`          | Process one batch then exit; exit immediately if no work.                                                   |
+
+| Option            | Description                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0).                                                                                             |
+| `--worker-name`   | Force a specific worker ID.                                                                                                                |
+| `--library`       | Limit to this library slug only.                                                                                                           |
+| `--verbose`, `-v` | Print progress for each completed asset.                                                                                                   |
+| `--analyzer`      | AI model to use for scene descriptions (e.g. mock, moondream2, moondream3, moondream-station). If omitted, uses library or system default. |
+| `--once`          | Process one batch then exit; exit immediately if no work.                                                                                  |
 
 
 **Examples:**
@@ -577,6 +581,7 @@ uv run media-search ai video
 uv run media-search ai video --library nas-main --verbose
 uv run media-search ai video --analyzer moondream2
 uv run media-search ai video --analyzer moondream3
+uv run media-search ai video --analyzer moondream-station
 uv run media-search ai video --once --library nas-main
 ```
 
@@ -720,7 +725,7 @@ uv run media-search ai video --library example-library --verbose
 
 **10. Show video details (including text if possible)**
 
-Show a video asset. Video assets do not receive `visual_analysis` from the AI worker (only image assets do). Scene-level descriptions and text are stored in the database and can be viewed with **`asset scenes <library> <rel_path>`** (summary table) or **`asset scenes ... --metadata`** (full JSON including per-scene metadata).
+Show a video asset. Video assets do not receive `visual_analysis` from the AI worker (only image assets do). Scene-level descriptions and text are stored in the database and can be viewed with `**asset scenes <library> <rel_path>`** (summary table) or `**asset scenes ... --metadata**` (full JSON including per-scene metadata).
 
 ```bash
 uv run media-search asset show example-library videos/clip.mp4

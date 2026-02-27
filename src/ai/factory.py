@@ -17,4 +17,14 @@ def get_vision_analyzer(analyzer_name: str) -> BaseVisionAnalyzer:
         from src.ai.vision_moondream3 import Moondream3Analyzer
 
         return Moondream3Analyzer()
+    if analyzer_name in ("moondream-station", "md3p-int4"):
+        try:
+            from src.ai.vision_moondream_station import MoondreamStationAnalyzer
+
+            return MoondreamStationAnalyzer()
+        except ImportError as e:
+            raise ValueError(
+                "moondream-station / md3p-int4 requires the 'moondream' client. "
+                "Install with: uv sync --extra station"
+            ) from e
     raise ValueError(f"Unknown vision analyzer: {analyzer_name}")
