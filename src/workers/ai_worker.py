@@ -103,11 +103,11 @@ class AIWorker(BaseWorker):
         if self._verbose or total_reset:
             _log.info("AI repair: set %s assets to proxied for re-analysis", total_reset)
 
-    def run(self) -> None:
+    def run(self, once: bool = False) -> None:
         """Run repair pass once if --repair, then the normal worker loop."""
         if self._repair:
             self._run_repair_pass()
-        super().run()
+        super().run(once=once)
 
     def process_task(self) -> bool:
         claim_kwargs: dict = {"library_slug": self._library_slug}
