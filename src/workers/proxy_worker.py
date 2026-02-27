@@ -100,9 +100,14 @@ class ImageProxyWorker(BaseWorker):
         assert asset.id is not None
         source_path = Path(asset.library.absolute_path) / asset.rel_path
         try:
-            image = self.storage.load_source_image(source_path, use_previews=self._use_previews)
-            # Cascade: generate proxy first, then thumbnail from the proxy image.
-            self.storage.save_proxy_and_thumbnail(asset.library.slug, asset.id, image)
+            # Cascade: generate proxy first, then thumbnail from that proxy image,
+            # using a pyvips-first pipeline with shrink-on-load where available.
+            self.storage.generate_proxy_and_thumbnail_from_source(
+                asset.library.slug,
+                asset.id,
+                source_path,
+                use_previews=self._use_previews,
+            )
             self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
             self._processed_count += 1
             if self._verbose:

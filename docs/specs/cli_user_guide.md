@@ -39,7 +39,7 @@ The scanner discovers the following file types under library roots. All discover
 
 **Images (camera RAW and DNG):** Canon (`.cr2`, `.cr3`, `.crw`), Nikon (`.nef`, `.nrw`), Sony (`.arw`, `.sr2`, `.srf`), Fujifilm (`.raf`), Olympus (`.orf`), Panasonic/Lumix (`.rw2`, `.raw`), Leica (`.rwl`), and Adobe Digital Negative (`.dng`).
 
-RAW and DNG files are opened for proxy generation using libvips when Pillow cannot read them. When possible, the proxy pipeline uses a libvips thumbnail/preview path (long edge ≈1280px) to keep memory usage bounded; it falls back to full-resolution RAW decode when previews are unavailable or disabled. Full support for all RAW formats depends on the system libvips being built with libraw.
+All raster image formats (JPEG/PNG/WebP/TIFF/BMP) are decoded and resized for proxy/thumbnail generation using **libvips via pyvips** as the primary imaging engine. For camera RAW and DNG files, the proxy pipeline also uses libvips: when possible it uses a libvips thumbnail/preview path (shrink-on-load with sequential access) to keep memory usage bounded; it falls back to a full-resolution RAW decode when previews are unavailable or explicitly disabled. Full support for all RAW formats depends on the system libvips being built with libraw.
 
 ---
 

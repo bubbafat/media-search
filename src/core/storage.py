@@ -1,29 +1,83 @@
 """Local media store: sharded thumbnails and proxies under data_dir."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PIL import Image
 from PIL import ImageOps
 
 from src.core.config import get_config
 
+if TYPE_CHECKING:
+    import pyvips  # type: ignore[import]
+
+
+def _normalize_vips_image(vips_img: "pyvips.Image") -> "pyvips.Image":
+    """
+    Ensure a pyvips image is in 8-bit sRGB for consistent output.
+    """
+    interp = getattr(vips_img, "interpretation", None)
+    if interp != "srgb" and hasattr(vips_img, "colourspace"):
+        vips_img = vips_img.colourspace("srgb")
+    fmt = getattr(vips_img, "format", None)
+    if fmt != "uchar" and hasattr(vips_img, "cast"):
+        vips_img = vips_img.cast("uchar")
+    return vips_img
+
 
 def _load_image_via_pyvips(path: Path) -> Image.Image:
     """Open image with pyvips (e.g. RAW, DNG), return PIL Image in RGB."""
-    import pyvips
+    import pyvips  # type: ignore[import]
 
-    vips_img = pyvips.Image.new_from_file(str(path))
-    # Ensure sRGB 3-band for consistency (libvips may return 16-bit or different colourspace)
-    if getattr(vips_img, "interpretation", None) != "srgb":
-        vips_img = vips_img.colourspace("srgb")
-    if getattr(vips_img, "format", None) != "uchar":
-        vips_img = vips_img.cast("uchar")
+    vips_img = pyvips.Image.new_from_file(str(path), access="sequential")
+    vips_img = _normalize_vips_image(vips_img)
     arr = vips_img.numpy()
     if arr.ndim == 2:
         pil_img = Image.fromarray(arr).convert("RGB")
     else:
         pil_img = Image.fromarray(arr, "RGB")
     return pil_img
+
+
+def _vips_thumbnail_from_file(path: Path, max_size: tuple[int, int]) -> "pyvips.Image":
+    """
+    Create a pyvips thumbnail from a file using shrink-on-load.
+
+    The result fits within max_size (no upscaling) and uses sequential access
+    to bound memory for large inputs.
+    """
+    import pyvips  # type: ignore[import]
+
+    width, height = max_size
+    thumb = pyvips.Image.thumbnail(
+        str(path),
+        width,
+        height=height,
+        size="down",  # never upscale; copy when smaller
+        access="sequential",
+    )
+    return _normalize_vips_image(thumb)
+
+
+def _vips_thumbnail_from_vips(
+    vips_img: "pyvips.Image", max_size: tuple[int, int]
+) -> "pyvips.Image":
+    """
+    Create a smaller thumbnail from an existing pyvips image, fitting within max_size.
+    """
+    width, height = max_size
+    thumb = vips_img.thumbnail_image(width, height=height, size="down")
+    return _normalize_vips_image(thumb)
+
+
+def _vips_write_jpeg(vips_img: "pyvips.Image", path: Path, quality: int = 85) -> None:
+    """Write a pyvips image as JPEG to path with the given quality."""
+    vips_img.write_to_file(str(path), Q=quality)
+
+
+def _vips_write_webp(vips_img: "pyvips.Image", path: Path, quality: int = 85) -> None:
+    """Write a pyvips image as WebP to path with the given quality."""
+    vips_img.write_to_file(str(path), Q=quality)
 
 
 class LocalMediaStore:
@@ -64,8 +118,15 @@ class LocalMediaStore:
 
                         # Use libvips thumbnail API which prefers embedded previews or
                         # shrink-on-load where possible. Target a long edge of ~1280px to
-                        # keep enough detail while keeping memory bounded.
-                        thumb_vips = pyvips.Image.thumbnail(str(path), 1280)
+                        # keep enough detail while keeping memory bounded, never upscaling.
+                        thumb_vips = pyvips.Image.thumbnail(
+                            str(path),
+                            1280,
+                            height=1280,
+                            size="down",
+                            access="sequential",
+                        )
+                        thumb_vips = _normalize_vips_image(thumb_vips)
                         arr = thumb_vips.numpy()
                         if arr.ndim == 2:
                             pil_img = Image.fromarray(arr).convert("RGB")
@@ -190,3 +251,48 @@ class LocalMediaStore:
         proxy_path = self._get_proxy_path(library_slug, asset_id)
         thumb_path = self._get_shard_path(library_slug, asset_id, "thumbnails")
         return proxy_path.exists() and thumb_path.exists()
+
+    def generate_proxy_and_thumbnail_from_source(
+        self,
+        library_slug: str,
+        asset_id: int,
+        source_path: Path | str,
+        *,
+        use_previews: bool = True,
+    ) -> None:
+        """
+        Generate proxy (WebP) and thumbnail (JPEG) for an image asset from the source path.
+
+        This is a pyvips-first pipeline:
+        - For the common case, it uses libvips shrink-on-load thumbnailing with sequential
+          access to bound memory and never upscale.
+        - On failure (or when previews are disabled), it falls back to the existing
+          Pillow/pyvips load_source_image + save_proxy_and_thumbnail path.
+        """
+        path = Path(source_path)
+
+        if use_previews:
+            try:
+                # Fast path: single read of the source into a pyvips thumbnail that fits
+                # within the proxy box, then derive the smaller thumbnail from that.
+                proxy_vips = _vips_thumbnail_from_file(path, self.PROXY_SIZE)
+
+                proxy_path = self._get_proxy_path(library_slug, asset_id, create_dirs=True)
+                thumb_path = self._get_shard_path(
+                    library_slug, asset_id, "thumbnails", create_dirs=True
+                )
+
+                _vips_write_webp(proxy_vips, proxy_path)
+
+                thumb_vips = _vips_thumbnail_from_vips(proxy_vips, self.THUMBNAIL_SIZE)
+                _vips_write_jpeg(thumb_vips, thumb_path)
+                return
+            except Exception:
+                # Fall back to the slower, but battle-tested, Pillow-based pipeline below.
+                pass
+
+        # Slow path: use the existing load_source_image semantics (Pillow first, then full
+        # pyvips decode where needed, honouring use_previews for RAW/DNG) and reuse the
+        # Pillow-based resize/encode helpers.
+        image = self.load_source_image(path, use_previews=use_previews)
+        self.save_proxy_and_thumbnail(library_slug, asset_id, image)
