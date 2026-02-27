@@ -18,6 +18,7 @@ uv run media-search --help
 | --------------- | --------------------------------------------------------------------------------------------------------- |
 | `library`       | Add, remove, restore, list libraries, force video reindex (reindex-videos)                               |
 | `trash`         | Manage soft-deleted libraries (list, empty one, empty all)                                                |
+| `repair`        | Repair database consistency (e.g. orphan-assets: remove assets whose library no longer exists)            |
 | `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)          |
 | `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                 |
 | `scan`          | Run a one-shot scan for a library (no daemon)                                                             |
@@ -194,6 +195,31 @@ With `--verbose` / `-v`, prints progress (e.g. `Emptying 1/3: slug`) before each
 uv run media-search trash empty-all
 uv run media-search trash empty-all --force
 uv run media-search trash empty-all --force --verbose
+```
+
+---
+
+## repair
+
+### repair orphan-assets
+
+Find and remove **orphaned assets**: asset rows whose `library_id` no longer exists in the `library` table. This can happen if a library was removed (e.g. manually or by a partial run) while its assets remained, leaving dead-linked results in search and the UI.
+
+With `--dry-run`, only lists orphaned library slug(s) and how many assets each has; no rows are deleted. Without `--dry-run`, deletes dependent rows in `video_scenes`, `video_active_state`, and `videoframe`, then deletes the orphaned assets. Prompts for confirmation unless `--force` is used.
+
+
+| Option       | Description                                                          |
+| ------------ | -------------------------------------------------------------------- |
+| `--dry-run`  | Only report orphaned slugs and asset counts; do not delete          |
+| `--force`    | Skip confirmation when deleting                                      |
+
+
+**Example:**
+
+```bash
+uv run media-search repair orphan-assets --dry-run
+uv run media-search repair orphan-assets
+uv run media-search repair orphan-assets --force
 ```
 
 ---

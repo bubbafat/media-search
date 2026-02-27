@@ -172,6 +172,29 @@ class LibraryRepository:
             raise ValueError(f"Library not found: '{slug}'.")
         if row[1] is None:
             raise ValueError(f"Library '{slug}' is not in trash (soft-delete it first).")
+        # Delete child rows that reference assets (avoids FK violation when deleting assets)
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text(
+                    "DELETE FROM video_scenes WHERE asset_id IN ("
+                    "SELECT id FROM asset WHERE library_id = :slug)"
+                ),
+                {"slug": slug},
+            )
+            session.execute(
+                text(
+                    "DELETE FROM video_active_state WHERE asset_id IN ("
+                    "SELECT id FROM asset WHERE library_id = :slug)"
+                ),
+                {"slug": slug},
+            )
+            session.execute(
+                text(
+                    "DELETE FROM videoframe WHERE asset_id IN ("
+                    "SELECT id FROM asset WHERE library_id = :slug)"
+                ),
+                {"slug": slug},
+            )
         chunk_size = 5000
         while True:
             with self._session_scope(write=True) as session:
@@ -193,3 +216,75 @@ class LibraryRepository:
         for lib in trashed:
             self.hard_delete(lib.slug)
         return len(trashed)
+
+    def get_orphaned_library_slugs(self) -> list[str]:
+        """Return distinct library_id values from asset that have no matching library row (orphaned assets)."""
+        with self._session_scope() as session:
+            rows = session.execute(
+                text(
+                    "SELECT DISTINCT a.library_id FROM asset a "
+                    "WHERE NOT EXISTS (SELECT 1 FROM library l WHERE l.slug = a.library_id) ORDER BY a.library_id"
+                )
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def get_orphaned_asset_count_for_library(self, library_id: str) -> int:
+        """Return number of assets with the given library_id (used for orphan reporting)."""
+        with self._session_scope() as session:
+            row = session.execute(
+                text("SELECT COUNT(*) FROM asset WHERE library_id = :library_id"),
+                {"library_id": library_id},
+            ).fetchone()
+        return row[0] if row else 0
+
+    def delete_orphaned_assets_for_library(self, library_id: str) -> int:
+        """
+        Delete all assets (and their child rows) for a library_id that has no library row.
+        Same order as hard_delete: video_scenes, video_active_state, videoframe, then asset.
+        Returns the number of assets deleted.
+        """
+        with self._session_scope() as session:
+            count_row = session.execute(
+                text("SELECT COUNT(*) FROM asset WHERE library_id = :library_id"),
+                {"library_id": library_id},
+            ).fetchone()
+            asset_count = count_row[0] if count_row else 0
+        if asset_count == 0:
+            return 0
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text(
+                    "DELETE FROM video_scenes WHERE asset_id IN ("
+                    "SELECT id FROM asset WHERE library_id = :library_id)"
+                ),
+                {"library_id": library_id},
+            )
+            session.execute(
+                text(
+                    "DELETE FROM video_active_state WHERE asset_id IN ("
+                    "SELECT id FROM asset WHERE library_id = :library_id)"
+                ),
+                {"library_id": library_id},
+            )
+            session.execute(
+                text(
+                    "DELETE FROM videoframe WHERE asset_id IN ("
+                    "SELECT id FROM asset WHERE library_id = :library_id)"
+                ),
+                {"library_id": library_id},
+            )
+        chunk_size = 5000
+        total_deleted = 0
+        while True:
+            with self._session_scope(write=True) as session:
+                result = session.execute(
+                    text(
+                        "DELETE FROM asset WHERE id IN ("
+                        "SELECT id FROM asset WHERE library_id = :library_id LIMIT :limit)"
+                    ),
+                    {"library_id": library_id, "limit": chunk_size},
+                )
+                total_deleted += result.rowcount
+                if result.rowcount == 0:
+                    break
+        return total_deleted

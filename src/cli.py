@@ -40,6 +40,8 @@ ai_app = typer.Typer(help="Manage AI models and workers.")
 app.add_typer(ai_app, name="ai")
 ai_default_app = typer.Typer(help="Get or set the system default AI model.")
 ai_app.add_typer(ai_default_app, name="default")
+repair_app = typer.Typer(help="Repair database consistency (e.g. orphaned assets).")
+app.add_typer(repair_app, name="repair")
 
 
 def _get_session_factory():
@@ -148,6 +150,39 @@ def trash_empty_all(
             typer.echo(f"Emptying {i}/{n}: {lib.slug}")
         lib_repo.hard_delete(lib.slug)
     typer.secho(f"Permanently deleted {n} library(ies).", fg=typer.colors.GREEN)
+
+
+@repair_app.command("orphan-assets")
+def repair_orphan_assets(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Only report orphaned assets; do not delete"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation when deleting"),
+) -> None:
+    """Find and remove assets whose library no longer exists (e.g. after a failed or partial trash empty)."""
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    slugs = lib_repo.get_orphaned_library_slugs()
+    if not slugs:
+        typer.echo("No orphaned assets found.")
+        return
+    if dry_run:
+        typer.secho(f"Found {len(slugs)} orphaned library slug(s) with assets:", fg=typer.colors.YELLOW)
+        for slug in slugs:
+            count = lib_repo.get_orphaned_asset_count_for_library(slug)
+            typer.echo(f"  {slug}: {count} asset(s)")
+        typer.echo("Run without --dry-run to delete these assets (and their video_scenes, video_active_state, videoframe rows).")
+        return
+    if not force:
+        total = sum(lib_repo.get_orphaned_asset_count_for_library(s) for s in slugs)
+        typer.confirm(
+            f"Permanently delete {total} orphaned asset(s) across {len(slugs)} missing library(ies)? This cannot be undone.",
+            abort=True,
+        )
+    total_deleted = 0
+    for slug in slugs:
+        n = lib_repo.delete_orphaned_assets_for_library(slug)
+        total_deleted += n
+        typer.echo(f"Removed {n} asset(s) for missing library '{slug}'.")
+    typer.secho(f"Repair complete: removed {total_deleted} orphaned asset(s).", fg=typer.colors.GREEN)
 
 
 @library_app.command("list")
