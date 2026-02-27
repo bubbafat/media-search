@@ -37,6 +37,23 @@ def test_get_vision_analyzer_moondream2_returns_moondream_analyzer():
 
 
 @pytest.mark.ai
+def test_get_vision_analyzer_moondream3_returns_moondream3_analyzer():
+    """get_vision_analyzer('moondream3') returns a Moondream3Analyzer."""
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    from src.ai.vision_moondream3 import Moondream3Analyzer
+
+    try:
+        analyzer = get_vision_analyzer("moondream3")
+    except (ImportError, OSError) as e:
+        pytest.skip(f"moondream3 model not loadable (missing deps or network): {e}")
+    assert isinstance(analyzer, Moondream3Analyzer)
+    assert isinstance(analyzer, BaseVisionAnalyzer)
+    assert analyzer.get_model_card().name == "moondream3"
+    assert analyzer.get_model_card().version == "preview"
+
+
+@pytest.mark.ai
 @pytest.mark.order(2)  # Run before other moondream2 test so warning is emitted and captured
 @pytest.mark.skipif(sys.version_info < (3, 14), reason="torch.jit.script_method deprecation only emitted on Python 3.14+")
 @pytest.mark.filterwarnings(

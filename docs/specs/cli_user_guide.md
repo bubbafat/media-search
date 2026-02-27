@@ -489,7 +489,7 @@ Set the system default AI model. The model is resolved by name and optional vers
 
 | Argument  | Description                                      |
 | --------- | ------------------------------------------------ |
-| `name`    | Model name (e.g. moondream2)                     |
+| `name`    | Model name (e.g. moondream2, moondream3)         |
 | `version` | Optional; if omitted, latest by id for that name |
 
 
@@ -498,6 +498,7 @@ Set the system default AI model. The model is resolved by name and optional vers
 ```bash
 uv run media-search ai default set moondream2
 uv run media-search ai default set moondream2 2025-01-09
+uv run media-search ai default set moondream3
 ```
 
 ---
@@ -531,12 +532,12 @@ With `--repair`, before the main loop the worker runs a one-time repair pass: it
 | `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                     |
 | `--library`       | Limit to this library slug only (optional)                                                 |
 | `--verbose`, `-v` | Print progress for each completed asset                                                    |
-| `--analyzer`      | AI model to use (e.g. mock, moondream2). If omitted, uses library or system default        |
+| `--analyzer`      | AI model to use (e.g. mock, moondream2, moondream3). If omitted, uses library or system default |
 | `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop |
 | `--once`          | Process one batch then exit; exit immediately if no work                                   |
 
 
-**Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile).
+**Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile). `moondream3` uses the Moondream3 vision model (moondream/moondream3-preview) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory.
 
 **Example:**
 
@@ -544,6 +545,7 @@ With `--repair`, before the main loop the worker runs a one-time repair pass: it
 uv run media-search ai start
 uv run media-search ai start --library nas-main --verbose
 uv run media-search ai start --analyzer moondream2
+uv run media-search ai start --analyzer moondream3
 uv run media-search ai start --library nas-main --repair
 uv run media-search ai start --once --library nas-main
 ```
@@ -556,15 +558,15 @@ Start the Video worker. It runs until interrupted (Ctrl+C) unless `--once` is us
 
 Progress is printed to the terminal: when a video is claimed the worker logs **Processing video (vision-only):** with the relative path; when the asset is done it logs **Completed:** with asset id, library, and path.
 
-When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for per-scene description/tags (e.g. mock, moondream2).
+When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for per-scene description/tags (e.g. mock, moondream2, moondream3).
 
-| Option            | Description                                                                                                 |
-| ----------------- | ----------------------------------------------------------------------------------------------------------- |
-| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0).                                                              |
-| `--worker-name`   | Force a specific worker ID.                                                                                 |
-| `--library`       | Limit to this library slug only.                                                                            |
-| `--verbose`, `-v` | Print progress for each completed asset.                                                                    |
-| `--analyzer`      | AI model to use for scene descriptions (e.g. mock, moondream2). If omitted, uses library or system default. |
+| Option            | Description                                                                                                      |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0).                                                                   |
+| `--worker-name`   | Force a specific worker ID.                                                                                      |
+| `--library`       | Limit to this library slug only.                                                                                 |
+| `--verbose`, `-v` | Print progress for each completed asset.                                                                         |
+| `--analyzer`      | AI model to use for scene descriptions (e.g. mock, moondream2, moondream3). If omitted, uses library or system default. |
 | `--once`          | Process one batch then exit; exit immediately if no work.                                                   |
 
 
@@ -574,6 +576,7 @@ When `--library` is provided, the command exits with code 1 if the library is no
 uv run media-search ai video
 uv run media-search ai video --library nas-main --verbose
 uv run media-search ai video --analyzer moondream2
+uv run media-search ai video --analyzer moondream3
 uv run media-search ai video --once --library nas-main
 ```
 

@@ -13,4 +13,8 @@ def get_vision_analyzer(analyzer_name: str) -> BaseVisionAnalyzer:
         from src.ai.vision_moondream import MoondreamAnalyzer
 
         return MoondreamAnalyzer()
+    if analyzer_name == "moondream3":
+        from src.ai.vision_moondream3 import Moondream3Analyzer
+
+        return Moondream3Analyzer()
     raise ValueError(f"Unknown vision analyzer: {analyzer_name}")

@@ -268,6 +268,17 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             assert model_row[1] == "moondream2", "default AI model must be moondream2"
             assert model_row[2] == "2025-01-09", "moondream2 version must be 2025-01-09"
 
+        # Assert moondream3 aimodel row exists (migration 018)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT id, name, version FROM aimodel WHERE name = 'moondream3' AND version = 'preview'"
+                )
+            ).fetchone()
+            assert row is not None, "aimodel row for moondream3/preview must exist"
+            assert row[1] == "moondream3", "moondream3 model name must be correct"
+            assert row[2] == "preview", "moondream3 version must be preview"
+
         # Assert video_scenes has GIN FTS index (migration 013)
         with migration_engine.connect() as conn:
             idx = conn.execute(
