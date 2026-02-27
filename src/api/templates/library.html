@@ -19,10 +19,20 @@
               <span class="btn btn-primary btn-sm">Library</span>
             </nav>
           </div>
-          <div class="text-sm text-base-content/70">
-            <span class="font-semibold">V{{ schema_version }}</span>
-            <span class="mx-2">•</span>
-            <span class="{{ 'text-success' if db_status == 'connected' else 'text-error' }}">{{ db_status | capitalize }}</span>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              class="btn btn-sm btn-secondary"
+              @click="binSidebarOpen = !binSidebarOpen"
+            >
+              <span>Bin</span>
+              <span class="badge badge-sm badge-neutral ml-2" x-text="binAssets.length"></span>
+            </button>
+            <div class="text-sm text-base-content/70">
+              <span class="font-semibold">V{{ schema_version }}</span>
+              <span class="mx-2">•</span>
+              <span class="{{ 'text-success' if db_status == 'connected' else 'text-error' }}">{{ db_status | capitalize }}</span>
+            </div>
           </div>
         </div>
 
@@ -165,6 +175,13 @@
               <div class="absolute bottom-0 left-0 right-0 h-1 bg-base-300" x-show="item.type === 'video'">
                 <div class="h-1 bg-primary" :style="`width:${Math.max(0, Math.min(item.match_ratio, 100))}%`"></div>
               </div>
+              <button
+                type="button"
+                class="btn btn-xs btn-circle btn-accent absolute bottom-2 right-2"
+                @click.stop="addToBin(item)"
+              >
+                +
+              </button>
             </figure>
             <div class="card-body p-3 gap-1">
               <div class="text-xs text-base-content/60 truncate" :title="item.library_name + ' · ' + item.filename" x-text="item.library_name + ' · ' + item.filename"></div>
@@ -233,6 +250,13 @@
               <div class="absolute bottom-0 left-0 right-0 h-1 bg-base-300" x-show="item.type === 'video'">
                 <div class="h-1 bg-primary" :style="`width:${Math.max(0, Math.min(item.match_ratio, 100))}%`"></div>
               </div>
+              <button
+                type="button"
+                class="btn btn-xs btn-circle btn-accent absolute bottom-2 right-2"
+                @click.stop="addToBin(item)"
+              >
+                +
+              </button>
             </figure>
             <div class="card-body p-3 gap-1">
               <div class="text-xs text-base-content/60 truncate" :title="item.library_name + ' · ' + item.filename" x-text="item.library_name + ' · ' + item.filename"></div>
@@ -293,6 +317,13 @@
             <div class="min-w-0 flex-1 flex flex-wrap items-center gap-2">
               <span class="font-medium truncate" :title="item.library_name + ' · ' + item.filename" x-text="item.library_name + ' · ' + item.filename"></span>
               <span class="badge badge-outline badge-sm" x-text="item.type"></span>
+              <button
+                type="button"
+                class="btn btn-xs btn-accent ml-auto"
+                @click.stop="addToBin(item)"
+              >
+                +
+              </button>
             </div>
           </div>
         </template>
