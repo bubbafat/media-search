@@ -122,6 +122,92 @@
       </div>
     </header>
 
+    <div
+      class="fixed top-16 right-0 w-full sm:w-96 max-h-[70vh] bg-base-100 shadow-lg border-l border-base-300 z-40 flex flex-col"
+      x-show="binSidebarOpen"
+      x-transition
+      x-cloak
+    >
+      <div class="p-4 border-b border-base-300 flex items-center justify-between gap-2">
+        <div>
+          <div class="font-semibold">Project Bin</div>
+          <div class="text-xs text-base-content/70" x-text="projects.length ? 'Select a project or add items' : 'Create a project on the Search page to start a bin'"></div>
+        </div>
+        <button class="btn btn-sm btn-ghost" @click="binSidebarOpen = false">Close</button>
+      </div>
+      <div class="p-3 border-b border-base-300 flex items-center gap-2">
+        <select class="select select-sm select-bordered flex-1" x-model.number="selectedProjectId">
+          <option :value="null">No project selected</option>
+          <template x-for="p in projects" :key="p.id">
+            <option :value="p.id" x-text="p.name"></option>
+          </template>
+        </select>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        <template x-if="projects.length === 0">
+          <div class="p-4 text-sm text-base-content/70">
+            No projects yet. Create a Project from the Search page to start a bin.
+          </div>
+        </template>
+        <template x-if="projects.length > 0 && binAssets.length === 0">
+          <div class="p-4 text-sm text-base-content/70">
+            No assets in this Project yet. Use the <span class="font-semibold">+</span> button on any media card to add it.
+          </div>
+        </template>
+        <ul class="menu p-2 space-y-2">
+          <template x-for="asset in binAssets" :key="asset.asset_id">
+            <li>
+              <div class="flex items=center gap-2">
+                <div class="w-12 h-12 rounded overflow-hidden bg-base-300 flex items-center justify-center">
+                  <template x-if="asset.preview_url || asset.thumbnail_url">
+                    <img class="w-full h-full object-cover" :src="asset.preview_url || asset.thumbnail_url" loading="lazy" />
+                  </template>
+                  <template x-if="!(asset.preview_url || asset.thumbnail_url)">
+                    <span class="text-xs text-base-content/60">No preview</span>
+                  </template>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-xs font-medium truncate" x-text="asset.filename"></div>
+                  <div class="text-[11px] text-base-content/60 truncate" x-text="asset.library_name"></div>
+                </div>
+              </div>
+            </li>
+          </template>
+        </ul>
+        <div class="p-4 border-t border-base-300 space-y-2" x-show="projects.length > 0">
+          <button
+            class="btn btn-sm btn-primary w-full"
+            @click="exportProject"
+            :disabled="!selectedProjectId || binAssets.length === 0"
+          >
+            Export Project
+          </button>
+          <div class="text-xs text-error" x-show="exportError" x-text="exportError"></div>
+          <div class="mt-2 space-y-1" x-show="exportPath">
+            <div class="text-xs text-base-content/60">Exported to:</div>
+            <div class="text-[11px] font-mono break-all bg-base-200 px-2 py-1 rounded" x-text="exportPath"></div>
+            <div class="flex gap-2 mt-1">
+              <a
+                class="btn btn-xs btn-ghost"
+                :href="exportPath ? 'file://' + exportPath : undefined"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Reveal in Finder
+              </a>
+              <button
+                type="button"
+                class="btn btn-xs btn-ghost"
+                @click="navigator.clipboard && exportPath ? navigator.clipboard.writeText(exportPath).catch(() => {}) : null"
+              >
+                Copy path
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <main class="grid gap-6">
       <section x-show="layout === 'masonry'" class="columns-3 md:columns-4 lg:columns-5 gap-3 space-y-3">
         <template x-for="item in results" :key="item.asset_id">
@@ -439,6 +525,17 @@
       </section>
     </main>
 
+    <div
+      class="fixed bottom-4 right-4 max-w-xs"
+      x-show="binToast"
+      x-transition
+      x-cloak
+    >
+      <div class="alert alert-success shadow-lg" :class="binPulse ? 'animate-pulse' : ''">
+        <span x-text="binToast"></span>
+      </div>
+    </div>
+
     <dialog class="modal" x-ref="detailDialog" @click.self="closeDetail()">
       <div class="modal-box max-w-3xl">
         <div class="flex items-start justify-between gap-4">
@@ -573,6 +670,14 @@
           selectedDetailError: null,
           layout: savedLayout ? localStorage.getItem('mediaSearchLayout') : 'masonry',
           gridMinPx: initialGridMin,
+          projects: [],
+          selectedProjectId: null,
+          binAssets: [],
+          binToast: '',
+          binPulse: false,
+          binSidebarOpen: false,
+          exportPath: '',
+          exportError: '',
 
           get sortLabel() {
             const opt = sortOptions.find(o => o.value === this.sortBy);
@@ -610,6 +715,16 @@
             return this.showErrorPlaceholder(item) ? 'Error' : 'Pending Proxy...';
           },
 
+          async loadProjects() {
+            try {
+              const res = await fetch('/api/projects', { headers: { 'Accept': 'application/json' } });
+              if (!res.ok) return;
+              this.projects = await res.json();
+            } catch (_) {
+              this.projects = [];
+            }
+          },
+
           groupedByLibrary() {
             const order = [];
             const bySlug = {};
@@ -628,6 +743,9 @@
             try {
               const res = await fetch('/api/libraries', { headers: { 'Accept': 'application/json' } });
               if (res.ok) this.libraries = await res.json();
+            } catch (_) {}
+            try {
+              await this.loadProjects();
             } catch (_) {}
             if (this.selectedLibrary) await this.loadFirstPage();
             this.setupSentinel();
@@ -756,6 +874,78 @@
             this.selectedDetail = null;
             this.selectedDetailError = null;
             this.$refs.detailDialog.close();
+          },
+
+          showBinToast(message) {
+            this.binToast = message;
+            this.binPulse = true;
+            setTimeout(() => {
+              this.binToast = '';
+              this.binPulse = false;
+            }, 2000);
+          },
+
+          async addToBin(item) {
+            if (!item || !item.asset_id) return;
+            if (!this.selectedProjectId) {
+              // Do not auto-create projects here; rely on dashboard for now.
+              this.exportError = 'Select or create a Project on the Search page before adding items.';
+              return;
+            }
+            try {
+              const res = await fetch(`/api/projects/${this.selectedProjectId}/assets`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ asset_id: item.asset_id }),
+              });
+              if (!res.ok) throw new Error();
+              if (!this.binAssets.find((a) => a.asset_id === item.asset_id)) {
+                this.binAssets.push({
+                  asset_id: item.asset_id,
+                  library_slug: item.library_slug,
+                  library_name: item.library_name,
+                  filename: item.filename,
+                  thumbnail_url: item.thumbnail_url,
+                  preview_url: item.preview_url,
+                  type: item.type,
+                });
+              }
+              this.showBinToast('Added to Project Bin');
+            } catch (_) {
+              this.showBinToast('Failed to add to Project');
+            }
+          },
+
+          async exportProject() {
+            if (!this.selectedProjectId) {
+              this.exportError = 'No project selected for export.';
+              return;
+            }
+            if (!this.binAssets.length) {
+              this.exportError = 'There are no assets in this Project to export.';
+              return;
+            }
+            this.exportError = '';
+            try {
+              const res = await fetch(`/api/projects/${this.selectedProjectId}/export`, {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' },
+              });
+              if (!res.ok) {
+                const body = await res.json().catch(() => null);
+                const detail = body && body.detail ? body.detail : null;
+                this.exportError = detail || 'Export failed; see logs.';
+                this.showBinToast('Export failed');
+                return;
+              }
+              const data = await res.json();
+              this.exportPath = data.export_path || '';
+              this.exportError = '';
+              this.showBinToast('Export complete');
+            } catch (_) {
+              this.exportError = 'Export failed; see logs.';
+              this.showBinToast('Export failed');
+            }
           },
         };
       }

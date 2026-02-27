@@ -1,5 +1,6 @@
 """Mission Control API: dashboard and dependencies."""
 
+import errno
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -210,6 +211,10 @@ def api_search(
     )
 
 
+class ProjectExportOut(BaseModel):
+    export_path: str
+
+
 class LibraryOut(BaseModel):
     slug: str
     name: str
@@ -373,6 +378,101 @@ def api_add_asset_to_project(
         raise HTTPException(status_code=404, detail="Asset not found")
     project_repo.add_asset_to_project(project_id, body.asset_id)
     return Response(status_code=204)
+
+
+@app.post("/api/projects/{project_id}/export", response_model=ProjectExportOut)
+def api_export_project(
+    project_id: int,
+    project_repo: ProjectRepository = Depends(_get_project_repo),
+) -> ProjectExportOut:
+    """
+    Export all assets in the project into a timestamped folder under EXPORT_ROOT_PATH using hard links.
+    """
+    cfg = get_config()
+    export_root = cfg.export_root_path
+    if not export_root:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "EXPORT_ROOT_PATH is not configured; set it to a writable directory on the "
+                "same volume as your media."
+            ),
+        )
+
+    project = project_repo.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    from datetime import datetime, timezone
+
+    try:
+        os.makedirs(export_root, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create export root directory: {exc}",
+        ) from exc
+
+    safe_name = "".join(ch.lower() if ch.isalnum() else "-" for ch in project.name).strip("-")
+    if not safe_name:
+        safe_name = f"project-{project.id or project_id}"
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    base_dir = Path(export_root)
+    export_dir = base_dir / f"{safe_name}_{timestamp}"
+
+    suffix = 1
+    while export_dir.exists():
+        suffix += 1
+        export_dir = base_dir / f"{safe_name}_{timestamp}_{suffix}"
+
+    try:
+        export_dir.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create export directory: {exc}",
+        ) from exc
+
+    src_paths = project_repo.get_project_assets(project_id)
+
+    used_names: set[str] = set()
+    for src in src_paths:
+        src_path = Path(src)
+        filename = src_path.name
+        if not filename:
+            continue
+
+        dest_name = filename
+        counter = 2
+        stem = src_path.stem
+        suffix_ext = src_path.suffix
+        while dest_name in used_names:
+            if suffix_ext:
+                dest_name = f"{stem}_{counter}{suffix_ext}"
+            else:
+                dest_name = f"{stem}_{counter}"
+            counter += 1
+        used_names.add(dest_name)
+
+        dest_path = export_dir / dest_name
+        try:
+            os.link(src_path, dest_path)
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Export root must be on the same physical volume as the source media "
+                        "for hard links (cross-device link error)."
+                    ),
+                ) from exc
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create hard link for {src_path}: {exc}",
+            ) from exc
+
+    return ProjectExportOut(export_path=str(export_dir))
 
 @app.get("/api/asset/{asset_id}/clip")
 async def api_asset_clip(
