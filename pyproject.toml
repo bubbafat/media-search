@@ -30,6 +30,7 @@ dependencies = [
     "imagehash>=4.3.0",
     "opencv-python-headless>=4.8.0",
     "rapidfuzz>=3.0.0",
+    "rawpy>=0.26.1",
 ]
 
 [project.scripts]

@@ -1,5 +1,7 @@
 """Local media store: sharded thumbnails and proxies under data_dir."""
 
+import io
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -7,9 +9,63 @@ from PIL import Image
 from PIL import ImageOps
 
 from src.core.config import get_config
+from src.core.file_extensions import RAW_EXTENSIONS
 
 if TYPE_CHECKING:
     import pyvips  # type: ignore[import]
+
+_log = logging.getLogger(__name__)
+
+# One-time warning when falling back from rawpy (optional dependency or no embedded thumb)
+_rawpy_fallback_warned = False
+
+
+def rawpy_available() -> bool:
+    """Return True if rawpy can be imported (e.g. for CLI to warn when missing)."""
+    try:
+        import rawpy  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _load_raw_preview_rawpy(path: Path) -> Image.Image | None:
+    """Load embedded thumbnail/preview from a RAW file via rawpy (LibRaw). Returns None on failure.
+
+    Uses only extract_thumb(); does not full demosaic. Converts to RGB PIL.Image for pipeline.
+    """
+    try:
+        import rawpy  # type: ignore[import]
+    except ImportError:
+        return None
+    try:
+        with rawpy.imread(str(path)) as raw:
+            thumb = raw.extract_thumb()
+        if thumb is None:
+            return None
+        data = thumb.data
+        if data is None:
+            return None
+        if isinstance(data, bytes):
+            pil_img = Image.open(io.BytesIO(data)).convert("RGB")
+            return pil_img
+        # ndarray (h, w, c)
+        import numpy as np
+        arr = data if hasattr(data, "shape") else None
+        if arr is None:
+            return None
+        if arr.ndim == 2:
+            pil_img = Image.fromarray(arr).convert("RGB")
+        else:
+            if arr.dtype != np.uint8:
+                arr = np.clip(arr, 0, 255).astype(np.uint8)
+            if arr.shape[-1] == 3:
+                pil_img = Image.fromarray(arr, "RGB")
+            else:
+                pil_img = Image.fromarray(arr).convert("RGB")
+        return pil_img
+    except Exception:
+        return None
 
 
 def _normalize_vips_image(vips_img: "pyvips.Image") -> "pyvips.Image":
@@ -136,9 +192,43 @@ class LocalMediaStore:
 
         Uses Pillow first for common formats. For RAW/DNG/unsupported formats, may use a
         fast-path libvips preview when use_previews is True, otherwise falls back to a full
-        pyvips decode.
+        pyvips decode. For RAW_EXTENSIONS we never use Pillow; we try rawpy preview then pyvips.
         """
         path = Path(source_path)
+        suffix_lower = path.suffix.lower()
+
+        # RAW-only path: never use Pillow for these extensions (avoids full-frame decode/memory blowup).
+        if suffix_lower in RAW_EXTENSIONS:
+            global _rawpy_fallback_warned
+            if use_previews:
+                img = _load_raw_preview_rawpy(path)
+                if img is not None:
+                    return img
+                if not rawpy_available() and not _rawpy_fallback_warned:
+                    _rawpy_fallback_warned = True
+                    _log.warning(
+                        "rawpy unavailable or no embedded preview for RAW; falling back to libvips. "
+                        "Memory use may be higher. Install rawpy (and LibRaw) for optimal RAW handling."
+                    )
+                try:
+                    import pyvips  # type: ignore[import]
+                    thumb_vips = pyvips.Image.thumbnail(
+                        str(path),
+                        1280,
+                        height=1280,
+                        size="down",
+                        access="sequential",
+                    )
+                    thumb_vips = _normalize_vips_image(thumb_vips)
+                    arr = thumb_vips.numpy()
+                    if arr.ndim == 2:
+                        return Image.fromarray(arr).convert("RGB")
+                    return Image.fromarray(arr, "RGB")
+                except Exception:
+                    pass
+            return _load_image_via_pyvips(path)
+
+        # Non-RAW: Pillow first, then pyvips on failure.
         try:
             img = Image.open(path)
             img.load()
@@ -307,6 +397,7 @@ class LocalMediaStore:
           Pillow/pyvips load_source_image + save_proxy_and_thumbnail path.
         """
         path = Path(source_path)
+        suffix_lower = path.suffix.lower()
 
         if use_previews:
             try:
@@ -328,7 +419,21 @@ class LocalMediaStore:
                 # Fall back to the slower, but battle-tested, Pillow-based pipeline below.
                 pass
 
-        # Slow path: use the existing load_source_image semantics (Pillow first, then full
+        # RAW with use_previews: try rawpy embedded preview before load_source_image.
+        if use_previews and suffix_lower in RAW_EXTENSIONS:
+            rawpy_img = _load_raw_preview_rawpy(path)
+            if rawpy_img is not None:
+                self.save_proxy_and_thumbnail(library_slug, asset_id, rawpy_img)
+                return
+            global _rawpy_fallback_warned
+            if not rawpy_available() and not _rawpy_fallback_warned:
+                _rawpy_fallback_warned = True
+                _log.warning(
+                    "rawpy unavailable or no embedded preview for RAW; falling back to libvips. "
+                    "Memory use may be higher. Install rawpy (and LibRaw) for optimal RAW handling."
+                )
+
+        # Slow path: use the existing load_source_image semantics (Pillow first for non-RAW, then full
         # pyvips decode where needed, honouring use_previews for RAW/DNG) and reuse the
         # Pillow-based resize/encode helpers.
         image = self.load_source_image(path, use_previews=use_previews)

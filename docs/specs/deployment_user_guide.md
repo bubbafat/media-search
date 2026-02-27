@@ -25,6 +25,7 @@ brew install python@3.11
 brew install uv
 brew install ffmpeg
 brew install vips
+brew install libraw
 brew install --cask docker
 ```
 
@@ -92,7 +93,7 @@ This may take several minutes (PyTorch and friends are large). Wait for it to fi
    open -e .env
    ```
 
-3. For Machine A, ensure it looks like this (localhost is correct—Postgres is on this machine). The template includes optional `MEDIA_SEARCH_DATA_DIR`, `EXPORT_ROOT_PATH`, and `MEDIA_SEARCH_USE_RAW_PREVIEWS` lines; for Machine A the default `./data` is fine, so you can leave `MEDIA_SEARCH_DATA_DIR` commented unless you want a different cache location. Set `EXPORT_ROOT_PATH` to the root of your export directory if you plan to use Project Bins and hard-link based export. `MEDIA_SEARCH_USE_RAW_PREVIEWS` controls whether the image proxy worker prefers embedded/fast-path previews for RAW files (recommended `true` for lower memory usage; set `false` to force full RAW decoding):
+3. For Machine A, ensure it looks like this (localhost is correct—Postgres is on this machine). The template includes optional `MEDIA_SEARCH_DATA_DIR`, `EXPORT_ROOT_PATH`, and `MEDIA_SEARCH_USE_RAW_PREVIEWS` lines; for Machine A the default `./data` is fine, so you can leave `MEDIA_SEARCH_DATA_DIR` commented unless you want a different cache location. Set `EXPORT_ROOT_PATH` to the root of your export directory if you plan to use Project Bins and hard-link based export. `MEDIA_SEARCH_USE_RAW_PREVIEWS` controls whether the image proxy worker prefers embedded/fast-path previews for RAW files (recommended `true` for lower memory usage; set `false` to force full RAW decoding). The image proxy worker uses **rawpy** (and the system **LibRaw** library) for optimal RAW preview extraction; if rawpy/LibRaw is not installed, the worker will warn at startup and fall back to libvips for RAW (higher memory use).
 
    ```
    DATABASE_URL=postgresql+psycopg2://media_search:media_search@localhost:5432/media_search

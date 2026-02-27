@@ -173,7 +173,7 @@ def test_load_source_image_falls_back_to_pyvips_when_pillow_fails(tmp_path):
 def test_load_source_image_uses_pyvips_thumbnail_when_pillow_fails_and_previews_enabled(
     tmp_path,
 ):
-    """When Pillow cannot open the file and use_previews=True, load_source_image uses pyvips thumbnail fast-path."""
+    """When use_previews=True and path is RAW, we try rawpy then pyvips thumbnail; Pillow is never used."""
     path = tmp_path / "photo.arw"
     path.write_bytes(b"not-a-real-raw")
 
@@ -186,14 +186,64 @@ def test_load_source_image_uses_pyvips_thumbnail_when_pillow_fails_and_previews_
         cfg.return_value.data_dir = str(tmp_path)
         store = LocalMediaStore()
 
-    # Make Pillow fail to identify the image without replacing the Image type itself.
-    with patch("src.core.storage.Image.open") as pil_open:
-        pil_open.side_effect = OSError("cannot identify image file")
+    # RAW path: rawpy returns None (no embedded thumb), then we use pyvips thumbnail.
+    with patch("src.core.storage._load_raw_preview_rawpy", return_value=None):
         with patch("src.core.storage._load_image_via_pyvips") as full_decode:
             with patch("pyvips.Image.thumbnail", return_value=_FakeVipsImage()):
                 loaded = store.load_source_image(path, use_previews=True)
 
-    # Fast-path should have returned a PIL image without calling full decode.
     full_decode.assert_not_called()
     assert isinstance(loaded, Image.Image)
     assert loaded.mode == "RGB"
+
+
+def test_load_source_image_raw_extension_never_calls_pillow(tmp_path):
+    """For RAW extensions with use_previews=True, Pillow.open is never called; rawpy or pyvips used."""
+    path = tmp_path / "photo.cr2"
+    path.write_bytes(b"not-a-real-cr2")
+    small_rgb = Image.new("RGB", (100, 100), color="blue")
+
+    with patch("src.core.storage.get_config") as cfg:
+        cfg.return_value.data_dir = str(tmp_path)
+        store = LocalMediaStore()
+    with patch("src.core.storage._load_raw_preview_rawpy", return_value=small_rgb):
+        with patch("src.core.storage.Image") as pil_image:
+            loaded = store.load_source_image(path, use_previews=True)
+    assert loaded is small_rgb
+    pil_image.open.assert_not_called()
+
+
+def test_load_source_image_raw_use_previews_false_uses_full_pyvips(tmp_path):
+    """For RAW extension with use_previews=False, we use full pyvips decode only; no rawpy preview."""
+    path = tmp_path / "photo.nef"
+    path.write_bytes(b"not-a-real-nef")
+    fake_rgb = Image.new("RGB", (10, 10), color="red")
+
+    with patch("src.core.storage.get_config") as cfg:
+        cfg.return_value.data_dir = str(tmp_path)
+        store = LocalMediaStore()
+    with patch("src.core.storage._load_raw_preview_rawpy") as rawpy_load:
+        with patch("src.core.storage._load_image_via_pyvips", return_value=fake_rgb):
+            loaded = store.load_source_image(path, use_previews=False)
+    rawpy_load.assert_not_called()
+    assert loaded is fake_rgb
+
+
+def test_generate_proxy_and_thumbnail_raw_uses_rawpy_when_pyvips_fails(tmp_path):
+    """For RAW with use_previews, when pyvips thumbnail fails, rawpy preview is used and load_source_image not called."""
+    path = tmp_path / "photo.dng"
+    path.write_bytes(b"not-a-real-dng")
+    small_rgb = Image.new("RGB", (200, 200), color="green")
+
+    with patch("src.core.storage.get_config") as cfg:
+        cfg.return_value.data_dir = str(tmp_path)
+        store = LocalMediaStore()
+    with patch("src.core.storage._vips_thumbnail_from_file", side_effect=RuntimeError("vips fail")):
+        with patch("src.core.storage._load_raw_preview_rawpy", return_value=small_rgb):
+            with patch.object(store, "load_source_image") as load_src:
+                store.generate_proxy_and_thumbnail_from_source(
+                    "lib1", 1, path, use_previews=True
+                )
+    load_src.assert_not_called()
+    assert store.get_proxy_path("lib1", 1).exists()
+    assert store.get_thumbnail_path("lib1", 1).exists()

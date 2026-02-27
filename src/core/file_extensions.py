@@ -14,6 +14,19 @@ _PANASONIC_RAW = {".rw2", ".raw"}
 _LEICA_RAW = {".rwl"}
 _UNIVERSAL_IMAGE = {".dng", ".tif", ".tiff"}
 
+# RAW-only extensions (camera RAW + DNG); exclude .tif/.tiff so large raster TIFFs
+# stay on Pillow/pyvips. Used by storage to never pass these to Pillow.
+RAW_EXTENSIONS = (
+    _CANON_RAW
+    | _NIKON_RAW
+    | _SONY_RAW
+    | _FUJI_RAW
+    | _OLYMPUS_RAW
+    | _PANASONIC_RAW
+    | _LEICA_RAW
+    | {".dng"}
+)
+
 IMAGE_EXTENSIONS = (
     _COMMON_IMAGE
     | _CANON_RAW

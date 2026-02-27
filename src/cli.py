@@ -14,6 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from src.core.config import get_config
+from src.core.storage import rawpy_available
 from src.models.entities import AssetStatus, AssetType, ScanStatus, WorkerState
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
@@ -596,6 +597,14 @@ def proxy(
     initial_pending = asset_repo.count_pending_proxyable(library_slug) if verbose else None
 
     use_previews = cfg.use_raw_previews and not ignore_previews
+
+    if use_previews and not rawpy_available():
+        typer.secho(
+            "Warning: rawpy is not available. RAW files will use libvips fallback (higher memory use). "
+            "Install rawpy and LibRaw for optimal RAW handling.",
+            err=True,
+            fg=typer.colors.YELLOW,
+        )
 
     worker = ImageProxyWorker(
         worker_id=worker_id,
