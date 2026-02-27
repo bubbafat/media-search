@@ -55,7 +55,7 @@ class MoondreamAnalyzer(BaseVisionAnalyzer):
             image = image.convert("RGB")
 
         encoded = self.model.encode_image(image)
-        desc = self.model.caption(encoded, length="normal")["caption"]
+        desc = self.model.caption(encoded, length="short")["caption"]
         tags_str = self.model.query(
             encoded, "Provide a comma-separated list of single-word tags for this image."
         )["answer"]

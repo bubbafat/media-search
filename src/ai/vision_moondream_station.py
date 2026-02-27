@@ -49,18 +49,20 @@ class MoondreamStationAnalyzer(BaseVisionAnalyzer):
         if image.mode != "RGB":
             image = image.convert("RGB")
 
-        caption_out = self._model.caption(image, length="normal")
+        caption_out = self._model.caption(image, length="short")
         desc = caption_out["caption"] if isinstance(caption_out["caption"], str) else "".join(caption_out["caption"])
 
         tags_out = self._model.query(
             image,
             "Provide a comma-separated list of single-word tags for this image.",
+            reasoning=False,
         )
         tags_str = tags_out["answer"] if isinstance(tags_out["answer"], str) else "".join(tags_out["answer"])
 
         ocr_out = self._model.query(
             image,
             "Extract all readable text. If there is no text, reply 'None'.",
+            reasoning=False,
         )
         ocr_raw = ocr_out["answer"] if isinstance(ocr_out["answer"], str) else "".join(ocr_out["answer"])
 
