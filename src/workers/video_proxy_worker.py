@@ -1,23 +1,25 @@
-"""Proxy worker: claims pending image assets, generates thumbnails and WebP proxies on local SSD, updates to proxied."""
+"""Video proxy worker: claims pending video assets, generates thumbnail from source, updates to proxied."""
 
 import logging
 from pathlib import Path
 
-from src.core.file_extensions import IMAGE_EXTENSIONS_LIST
+from src.core.file_extensions import VIDEO_EXTENSIONS_LIST
 from src.core.storage import LocalMediaStore
 from src.models.entities import AssetStatus
 from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
+from src.video.clip_extractor import extract_video_frame
 from src.workers.base import BaseWorker
 
 _log = logging.getLogger(__name__)
 
 
-class ImageProxyWorker(BaseWorker):
+class VideoProxyWorker(BaseWorker):
     """
-    Worker that claims pending image assets only, writes thumbnails (JPEG) and proxies (WebP)
-    to the local sharded store, and updates status to proxied (or poisoned on error).
+    Worker that claims pending video assets only, writes a thumbnail (frame at 0.0) to the
+    local sharded store, and updates status to proxied (or poisoned on error).
+    Phase 1: thumbnail only; no head-clip or scene indexing yet.
     """
 
     def __init__(
@@ -48,7 +50,7 @@ class ImageProxyWorker(BaseWorker):
         self._repair = repair
 
     def _run_repair_pass(self) -> None:
-        """Find image assets that should have proxy/thumbnail but are missing; set status to pending."""
+        """Find video assets that should have a thumbnail but are missing; set status to pending."""
         batch_size = 500
         offset = 0
         total_checked = 0
@@ -62,9 +64,9 @@ class ImageProxyWorker(BaseWorker):
             if not batch:
                 break
             for asset_id, library_slug, type_str in batch:
-                if type_str != "image":
+                if type_str != "video":
                     continue
-                if not self.storage.proxy_and_thumbnail_exist(library_slug, asset_id):
+                if not self.storage.thumbnail_exists(library_slug, asset_id):
                     self.asset_repo.update_asset_status(asset_id, AssetStatus.pending)
                     total_reset += 1
                 total_checked += 1
@@ -73,7 +75,7 @@ class ImageProxyWorker(BaseWorker):
                 break
         if self._verbose or total_reset:
             _log.info(
-                "Repair: checked %s images, reset %s to pending",
+                "Repair: checked %s videos, reset %s to pending",
                 total_checked,
                 total_reset,
             )
@@ -90,23 +92,24 @@ class ImageProxyWorker(BaseWorker):
         asset = self.asset_repo.claim_asset_by_status(
             self.worker_id,
             AssetStatus.pending,
-            IMAGE_EXTENSIONS_LIST,
+            VIDEO_EXTENSIONS_LIST,
             library_slug=self._library_slug,
         )
         if asset is None:
             return False
         assert asset.id is not None
+        assert asset.library is not None
         source_path = Path(asset.library.absolute_path) / asset.rel_path
         try:
-            image = self.storage.load_source_image(source_path)
-            self.storage.save_thumbnail(asset.library.slug, asset.id, image)
-            self.storage.save_proxy(asset.library.slug, asset.id, image)
+            thumb_path = self.storage.get_thumbnail_write_path(asset.library.slug, asset.id)
+            if not extract_video_frame(source_path, thumb_path, 0.0):
+                raise RuntimeError("FFmpeg frame extraction failed")
             self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
             self._processed_count += 1
             if self._verbose:
                 total = self._initial_pending if self._initial_pending is not None else "?"
                 _log.info(
-                    "Proxied asset %s (%s) %s/%s",
+                    "Proxied video %s (%s) %s/%s",
                     asset.id,
                     asset.rel_path,
                     self._processed_count,
@@ -114,7 +117,7 @@ class ImageProxyWorker(BaseWorker):
                 )
         except Exception as e:
             _log.error(
-                "Image proxy worker failed for asset %s (%s): %s",
+                "Video proxy worker failed for asset %s (%s): %s",
                 asset.id,
                 source_path,
                 e,
@@ -122,7 +125,3 @@ class ImageProxyWorker(BaseWorker):
             )
             self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, str(e))
         return True
-
-
-# Backward compatibility: old name referred to the combined image+video worker.
-ProxyWorker = ImageProxyWorker

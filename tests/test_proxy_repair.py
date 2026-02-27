@@ -16,7 +16,7 @@ from src.models.entities import AssetStatus, AssetType, Library, SystemMetadata
 from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
-from src.workers.proxy_worker import ProxyWorker
+from src.workers.proxy_worker import ImageProxyWorker
 
 pytestmark = [pytest.mark.slow]
 
@@ -73,7 +73,7 @@ def test_repair_sets_pending_when_proxy_or_thumbnail_missing(engine, _session_fa
         data_dir = Path(tmp)
         with patch("src.core.storage.get_config") as m:
             m.return_value.data_dir = str(data_dir)
-            worker = ProxyWorker(
+            worker = ImageProxyWorker(
                 worker_id="repair-worker",
                 repository=worker_repo,
                 heartbeat_interval_seconds=15.0,
@@ -139,7 +139,7 @@ def test_repair_leaves_status_when_both_files_exist(engine, _session_factory):
             store.save_thumbnail("repair-ok-lib", asset_id, img)
             store.save_proxy("repair-ok-lib", asset_id, img)
 
-            worker = ProxyWorker(
+            worker = ImageProxyWorker(
                 worker_id="repair-worker",
                 repository=worker_repo,
                 heartbeat_interval_seconds=15.0,
@@ -218,7 +218,7 @@ def test_repair_respects_library_slug(engine, _session_factory):
             store.save_proxy("repair-respect-b", id_b, img)
             # repair-respect-a has no files; repair-respect-b has both
 
-            worker = ProxyWorker(
+            worker = ImageProxyWorker(
                 worker_id="repair-worker",
                 repository=worker_repo,
                 heartbeat_interval_seconds=15.0,
@@ -244,7 +244,7 @@ def test_repair_respects_library_slug(engine, _session_factory):
 
 
 def test_cli_proxy_repair_passes_repair_true(engine, _session_factory):
-    """proxy --repair invokes ProxyWorker with repair=True."""
+    """proxy --repair invokes ImageProxyWorker with repair=True."""
     _create_tables_and_repos(engine, _session_factory)
     session = _session_factory()
     try:
@@ -262,7 +262,7 @@ def test_cli_proxy_repair_passes_repair_true(engine, _session_factory):
         session.close()
 
     with patch("src.cli._get_session_factory", return_value=_session_factory):
-        with patch("src.cli.ProxyWorker") as MockProxyWorker:
+        with patch("src.cli.ImageProxyWorker") as MockProxyWorker:
             MockProxyWorker.return_value.run.side_effect = None
             runner = CliRunner()
             result = runner.invoke(

@@ -25,7 +25,8 @@ from src.repository.system_metadata_repo import (
 from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.ai_worker import AIWorker
-from src.workers.proxy_worker import ProxyWorker
+from src.workers.proxy_worker import ImageProxyWorker
+from src.workers.video_proxy_worker import VideoProxyWorker
 from src.workers.video_worker import VideoWorker
 from src.workers.scanner import ScannerWorker
 
@@ -554,14 +555,15 @@ def proxy(
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
     repair: bool = typer.Option(False, "--repair", help="Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated."),
+    once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
 ) -> None:
-    """Start the proxy worker: claims pending assets, generates thumbnails and proxies."""
+    """Start the image proxy worker: claims pending image assets, generates thumbnails and WebP proxies."""
     worker_id = (
         worker_name
         if worker_name is not None
         else f"proxy-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
     )
-    typer.secho(f"Starting Proxy Worker: {worker_id}")
+    typer.secho(f"Starting Image Proxy Worker: {worker_id}")
 
     session_factory = _get_session_factory()
     if library_slug is not None:
@@ -587,7 +589,7 @@ def proxy(
 
     initial_pending = asset_repo.count_pending_proxyable(library_slug) if verbose else None
 
-    worker = ProxyWorker(
+    worker = ImageProxyWorker(
         worker_id=worker_id,
         repository=worker_repo,
         heartbeat_interval_seconds=heartbeat,
@@ -599,7 +601,65 @@ def proxy(
         repair=repair,
     )
     try:
-        worker.run()
+        worker.run(once=once)
+    except KeyboardInterrupt:
+        typer.secho(f"Worker {worker_id} shutting down...")
+
+
+@app.command("video-proxy")
+def video_proxy(
+    heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
+    worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
+    library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
+    repair: bool = typer.Option(False, "--repair", help="Check for missing video thumbnail files and set those assets to pending."),
+    once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
+) -> None:
+    """Start the video proxy worker: claims pending video assets, generates thumbnails."""
+    worker_id = (
+        worker_name
+        if worker_name is not None
+        else f"video-proxy-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+    )
+    typer.secho(f"Starting Video Proxy Worker: {worker_id}")
+
+    session_factory = _get_session_factory()
+    if library_slug is not None:
+        lib_repo = LibraryRepository(session_factory)
+        lib = lib_repo.get_by_slug(library_slug)
+        if lib is None:
+            typer.echo(
+                f"Library not found or deleted: '{library_slug}'. Use 'library list' to see valid slugs.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+
+    if verbose:
+        root = logging.getLogger("src.workers")
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.INFO)
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+
+    initial_pending = asset_repo.count_pending_proxyable(library_slug) if verbose else None
+
+    worker = VideoProxyWorker(
+        worker_id=worker_id,
+        repository=worker_repo,
+        heartbeat_interval_seconds=heartbeat,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_metadata_repo,
+        library_slug=library_slug,
+        verbose=verbose,
+        initial_pending_count=initial_pending,
+        repair=repair,
+    )
+    try:
+        worker.run(once=once)
     except KeyboardInterrupt:
         typer.secho(f"Worker {worker_id} shutting down...")
 
@@ -673,6 +733,7 @@ def ai_start(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
     repair: bool = typer.Option(False, "--repair", help="Before the main loop, set assets that need re-analysis (effective model changed) to proxied."),
+    once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
 ) -> None:
     """Start the AI worker: claims proxied assets, runs vision analysis, marks completed."""
     session_factory = _get_session_factory()
@@ -747,7 +808,7 @@ def ai_start(
         library_repo=lib_repo if repair else None,
     )
     try:
-        worker.run()
+        worker.run(once=once)
     except KeyboardInterrupt:
         typer.secho(f"Worker {worker_id} shutting down...")
 

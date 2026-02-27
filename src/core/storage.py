@@ -30,7 +30,10 @@ class LocalMediaStore:
     """
     Stores thumbnails and proxies under data_dir, sharded by library_slug and asset_id.
     Directory layout: data_dir / library_slug / category / (asset_id % 1000) / {asset_id}.jpg
+    (proxies use .webp instead of .jpg).
     """
+
+    PROXY_EXTENSION = ".webp"
 
     def __init__(self) -> None:
         self.data_dir = Path(get_config().data_dir)
@@ -73,11 +76,25 @@ class LocalMediaStore:
         thumb.save(path, "JPEG", quality=85)
 
     def save_proxy(self, library_slug: str, asset_id: int, image: Image.Image) -> None:
-        """Create 768x768 proxy and save as JPEG quality 85."""
-        path = self._get_shard_path(library_slug, asset_id, "proxies", create_dirs=True)
+        """Create 768x768 proxy and save as WebP (quality 85)."""
+        path = self._get_proxy_path(library_slug, asset_id, create_dirs=True)
         proxy = image.copy()
         proxy.thumbnail((768, 768))
-        proxy.save(path, "JPEG", quality=85)
+        proxy.save(path, "WEBP", quality=85)
+
+    def _get_proxy_path(
+        self,
+        library_slug: str,
+        asset_id: int,
+        *,
+        create_dirs: bool = False,
+    ) -> Path:
+        """Return path for proxy file (WebP). Used by save_proxy, get_proxy_path, proxy_and_thumbnail_exist."""
+        shard = asset_id % 1000
+        directory = self.data_dir / library_slug / "proxies" / str(shard)
+        if create_dirs:
+            directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"{asset_id}{self.PROXY_EXTENSION}"
 
     def get_thumbnail_write_path(self, library_slug: str, asset_id: int) -> Path:
         """Return path for writing a thumbnail; creates parent dirs. Used for video thumbnails."""
@@ -96,14 +113,14 @@ class LocalMediaStore:
         return path.exists()
 
     def get_proxy_path(self, library_slug: str, asset_id: int) -> Path:
-        """Return path to proxy; raise FileNotFoundError if it does not exist."""
-        path = self._get_shard_path(library_slug, asset_id, "proxies")
+        """Return path to proxy (WebP); raise FileNotFoundError if it does not exist."""
+        path = self._get_proxy_path(library_slug, asset_id)
         if not path.exists():
             raise FileNotFoundError(path)
         return path
 
     def proxy_and_thumbnail_exist(self, library_slug: str, asset_id: int) -> bool:
-        """Return True if both proxy and thumbnail files exist. Used by proxy --repair."""
-        proxy_path = self._get_shard_path(library_slug, asset_id, "proxies")
+        """Return True if both proxy (WebP) and thumbnail files exist. Used by proxy --repair."""
+        proxy_path = self._get_proxy_path(library_slug, asset_id)
         thumb_path = self._get_shard_path(library_slug, asset_id, "thumbnails")
         return proxy_path.exists() and thumb_path.exists()

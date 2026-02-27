@@ -810,7 +810,7 @@ def test_proxyable_extensions_no_duplicates_disjoint():
 
 
 def test_proxy_worker_video_generates_thumbnail_only(engine, _session_factory, tmp_path):
-    """When a video is proxied, a thumbnail is generated (no proxy); status becomes proxied."""
+    """When a video is processed by VideoProxyWorker, only a thumbnail is generated; status becomes proxied."""
     asset_repo = _create_tables_and_seed(engine, _session_factory)
     _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
 
@@ -846,7 +846,7 @@ def test_proxy_worker_video_generates_thumbnail_only(engine, _session_factory, t
 
     from src.repository.system_metadata_repo import SystemMetadataRepository
     from src.repository.worker_repo import WorkerRepository
-    from src.workers.proxy_worker import ProxyWorker
+    from src.workers.video_proxy_worker import VideoProxyWorker
 
     worker_repo = WorkerRepository(_session_factory)
     system_metadata_repo = SystemMetadataRepository(_session_factory)
@@ -855,8 +855,8 @@ def test_proxy_worker_video_generates_thumbnail_only(engine, _session_factory, t
         data_dir = Path(tmp)
         with patch("src.core.storage.get_config") as m:
             m.return_value.data_dir = str(data_dir)
-            with patch("src.workers.proxy_worker.extract_video_frame", side_effect=mock_extract_video_frame):
-                worker = ProxyWorker(
+            with patch("src.workers.video_proxy_worker.extract_video_frame", side_effect=mock_extract_video_frame):
+                worker = VideoProxyWorker(
                     worker_id="vid-proxy-worker",
                     repository=worker_repo,
                     heartbeat_interval_seconds=15.0,
@@ -879,6 +879,6 @@ def test_proxy_worker_video_generates_thumbnail_only(engine, _session_factory, t
 
         shard = asset_id % 1000
         thumb_path = data_dir / "vid-proxy-lib" / "thumbnails" / str(shard) / f"{asset_id}.jpg"
-        proxy_path = data_dir / "vid-proxy-lib" / "proxies" / str(shard) / f"{asset_id}.jpg"
+        proxy_path = data_dir / "vid-proxy-lib" / "proxies" / str(shard) / f"{asset_id}.webp"
         assert thumb_path.exists()
         assert not proxy_path.exists()

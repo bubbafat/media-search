@@ -33,11 +33,11 @@ def test_get_shard_path_structure(temp_data_dir):
 
 
 def test_get_shard_path_shard_modulo(temp_data_dir):
-    """Shard is asset_id % 1000."""
+    """Shard is asset_id % 1000 (thumbnails use _get_shard_path; proxies use _get_proxy_path)."""
     store, data_dir = temp_data_dir
-    p1 = store._get_shard_path("lib", 1005, "proxies", create_dirs=True)
+    p1 = store._get_proxy_path("lib", 1005, create_dirs=True)
     assert "5" in str(p1.parent)
-    p2 = store._get_shard_path("lib", 2000, "proxies", create_dirs=True)
+    p2 = store._get_proxy_path("lib", 2000, create_dirs=True)
     assert str(p2.parent).endswith("0")
 
 
@@ -52,13 +52,13 @@ def test_save_and_get_thumbnail_path(temp_data_dir):
 
 
 def test_save_and_get_proxy_path(temp_data_dir):
-    """save_proxy creates file; get_proxy_path returns it; proxy max dimension is 768."""
+    """save_proxy creates WebP file; get_proxy_path returns it; proxy max dimension is 768."""
     store, _ = temp_data_dir
     img = Image.new("RGB", (2000, 2000), color="blue")
     store.save_proxy("lib1", 2, img)
     path = store.get_proxy_path("lib1", 2)
     assert path.exists()
-    assert path.suffix == ".jpg"
+    assert path.suffix == ".webp"
     with Image.open(path) as proxy_im:
         assert max(proxy_im.size) == 768
 

@@ -127,10 +127,11 @@ class BaseWorker(ABC):
         signal.signal(signal.SIGINT, _handler)
         signal.signal(signal.SIGTERM, _handler)
 
-    def run(self) -> None:
+    def run(self, once: bool = False) -> None:
         """
         Main entry: pre-flight compatibility check, register worker, start heartbeat thread, run loop.
         Loop checks DB for command (pause/resume/shutdown), calls handle_signal, then process_task when not paused.
+        When once=True, exit immediately when process_task() returns False (no work available).
         On exit, sets state to offline.
         """
         self._install_signal_handlers()
@@ -166,6 +167,8 @@ class BaseWorker(ABC):
                     idle_period_started = False
                     time.sleep(0.1)
                 else:
+                    if once:
+                        break
                     if not idle_period_started:
                         _log.info(
                             "No work, entering polling mode (checking every %ss)",

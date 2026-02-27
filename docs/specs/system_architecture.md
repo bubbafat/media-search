@@ -95,15 +95,19 @@ The pipeline is divided into specialized, isolated worker types to prevent hardw
 1. **The Scanner Worker (I/O & DB Bound):** - **Role:** The Discovery Engine. 
    - **Action:** Rapidly traverses the user's read-only network storage (NAS). It does *not* open or read media files. It only reads filesystem metadata (`os.stat`) to detect new or modified files and inserts them into the database with a `pending` status.
 
-2. **The Proxy Worker (Network I/O & CPU Bound):**
-   - **Role:** The Pre-Processor & Cache Builder.
-   - **Action:** Claims `pending` assets (images and videos). It pulls the massive original media files (e.g., a 50GB video or 50MB RAW photo) across the network *exactly once*. For images, it generates a lightweight UI Thumbnail and a standardized, high-quality AI Proxy on the local SSD. For videos, it generates a thumbnail only (no proxy). It updates the asset status to `proxied`.
+2. **The Image Proxy Worker (Network I/O & CPU Bound):**
+   - **Role:** Pre-Processor & Cache Builder for **images**.
+   - **Action:** Claims `pending` **image** assets. It pulls the original image files (e.g. 50MB RAW) across the network *exactly once*. It generates a lightweight UI Thumbnail (JPEG) and a standardized WebP AI Proxy on the local SSD. It updates the asset status to `proxied`.
 
-3. **The ML / AI Worker (GPU Bound):**
+3. **The Video Proxy Worker (Network I/O & CPU Bound):**
+   - **Role:** Pre-Processor for **videos**.
+   - **Action:** Claims `pending` **video** assets. It pulls the original video file across the network and generates a thumbnail (frame at 0.0) on the local SSD. It updates the asset status to `proxied`. (A future phase adds a 720p disposable proxy pipeline: head-clip and scene indexing.)
+
+4. **The ML / AI Worker (GPU Bound):**
    - **Role:** The Intelligence Engine.
    - **Action:** Claims `proxied` assets. It never touches the network or the user's NAS. It strictly reads the lightweight local proxies from the SSD, runs them through local LLMs/Vision Models (e.g., Moondream, CLIP), extracts tags/embeddings, and updates the asset to `completed`.
 
-4. **The Garbage Collector Worker (Disk & DB Bound):**
+5. **The Garbage Collector Worker (Disk & DB Bound):**
    - **Role:** The Janitor.
    - **Action:** Wakes up periodically to clean up the system. It executes chunked hard-deletions on databases for "emptied trash" libraries, and safely deletes orphaned physical proxy files from the local SSD to prevent disk bloat.
 

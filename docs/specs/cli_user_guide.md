@@ -22,7 +22,8 @@ uv run media-search --help
 | `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)          |
 | `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                 |
 | `scan`          | Run a one-shot scan for a library (no daemon)                                                             |
-| `proxy`         | Start the proxy worker (thumbnails and proxies for pending assets)                                        |
+| `proxy`         | Start the image proxy worker (thumbnails and WebP proxies for pending image assets)                        |
+| `video-proxy`   | Start the video proxy worker (thumbnails for pending video assets)                                         |
 | `ai`            | Manage AI models and workers (default model, start AI worker, start video worker, list/add/remove models) |
 
 
@@ -402,22 +403,25 @@ uv run media-search scan nas-main --verbose
 
 ### proxy
 
-Start the proxy worker. It runs until interrupted (Ctrl+C). The worker claims pending assets, generates thumbnails and proxy images on local storage, and updates their status to proxied (or poisoned on error). Worker ID is auto-generated from hostname and a short UUID unless overridden.
+Start the **image** proxy worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims pending **image** assets only, generates thumbnails (JPEG) and WebP proxy images on local storage, and updates their status to proxied (or poisoned on error). Worker ID is auto-generated from hostname and a short UUID unless overridden.
 
 When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted (same message as `scan`).
 
-With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g. `Proxied asset 123 (photo.jpg) 5/200`). The path shown is the relative path within the library (rel_path only), so you can copy-paste it into commands like `asset show <library_slug> <rel_path>`. The total is the number of pending **image** (proxyable) assets at start, so videos and other non-proxyable assets are not included in the denominator. When there is no work, the worker logs that it is entering polling mode and at what interval (e.g. every 5s), and logs "Checking for work..." each time it wakes to poll, so you can see it is waiting rather than stuck.
+With `--once`, the worker processes one batch (one asset) and then exits immediately. If no pending image asset is found, it exits without waiting. Use this for scripting or running image and video proxy workers in parallel (e.g. `proxy --once --library slug &` and `video-proxy --once --library slug &`).
 
-With `--repair`, before the main loop the worker runs a one-time check: it finds assets that are supposed to have proxy and thumbnail files (status proxied, completed, etc.) but are missing them on disk (e.g. after deleting the data directory), sets their status to pending, then runs the normal loop so they are regenerated. Combine with `--library` to repair only one library.
+With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g. `Proxied asset 123 (photo.jpg) 5/200`). The path shown is the relative path within the library (rel_path only), so you can copy-paste it into commands like `asset show <library_slug> <rel_path>`. The total is the number of pending proxyable assets at start (image + video count combined for display). When there is no work, the worker logs that it is entering polling mode and at what interval (e.g. every 5s), and logs "Checking for work..." each time it wakes to poll, so you can see it is waiting rather than stuck.
+
+With `--repair`, before the main loop the worker runs a one-time check: it finds **image** assets that are supposed to have proxy and thumbnail files (status proxied, completed, etc.) but are missing them on disk (e.g. after deleting the data directory), sets their status to pending, then runs the normal loop so they are regenerated. Combine with `--library` to repair only one library.
 
 
 | Option            | Description                                                                                     |
 | ----------------- | ----------------------------------------------------------------------------------------------- |
 | `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                   |
-| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                          |
+| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                            |
 | `--library`       | Limit to this library slug only (optional)                                                      |
 | `--verbose`, `-v` | Print progress (each asset and N/total)                                                         |
 | `--repair`        | Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated |
+| `--once`          | Process one batch then exit; exit immediately if no work                                         |
 
 
 **Example:**
@@ -429,6 +433,39 @@ uv run media-search proxy --worker-name my-proxy-1
 uv run media-search proxy --library disneyland
 uv run media-search proxy --library disneyland --verbose
 uv run media-search proxy --library disneyland --repair
+uv run media-search proxy --once --library disneyland
+```
+
+---
+
+## video-proxy
+
+### video-proxy
+
+Start the **video** proxy worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims pending **video** assets only, generates a thumbnail (frame at 0.0) on local storage, and updates their status to proxied (or poisoned on error). Worker ID is auto-generated from hostname and a short UUID unless overridden.
+
+When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted.
+
+With `--once`, the worker processes one batch (one video) and then exits immediately. If no pending video asset is found, it exits without waiting. Use this for scripting (e.g. run `proxy --once` and `video-proxy --once` in parallel after a scan).
+
+With `--repair`, before the main loop the worker runs a one-time check: it finds **video** assets that are supposed to have a thumbnail but are missing it on disk, sets their status to pending, then runs the normal loop. Combine with `--library` to repair only one library.
+
+
+| Option            | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                               |
+| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                      |
+| `--library`       | Limit to this library slug only (optional)                                  |
+| `--verbose`, `-v` | Print progress (each asset and N/total)                                     |
+| `--repair`        | Check for missing video thumbnails and set those assets to pending          |
+| `--once`          | Process one batch then exit; exit immediately if no work                    |
+
+
+**Example:**
+
+```bash
+uv run media-search video-proxy
+uv run media-search video-proxy --library disneyland --once
 ```
 
 ---
@@ -490,6 +527,7 @@ With `--repair`, before the main loop the worker runs a one-time repair pass: it
 | `--verbose`, `-v` | Print progress for each completed asset                                                    |
 | `--analyzer`      | AI model to use (e.g. mock, moondream2). If omitted, uses library or system default        |
 | `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop |
+| `--once`          | Process one batch then exit; exit immediately if no work                                   |
 
 
 **Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile).
@@ -501,6 +539,7 @@ uv run media-search ai start
 uv run media-search ai start --library nas-main --verbose
 uv run media-search ai start --analyzer moondream2
 uv run media-search ai start --library nas-main --repair
+uv run media-search ai start --once --library nas-main
 ```
 
 ---
