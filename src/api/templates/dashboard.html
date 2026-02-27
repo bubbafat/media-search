@@ -87,6 +87,20 @@
                 <button class="btn join-item btn-sm" :class="layout === 'list' ? 'btn-primary' : 'btn-ghost'" @click="setLayout('list')">List</button>
                 <button class="btn join-item btn-sm" :class="layout === 'filmstrip' ? 'btn-primary' : 'btn-ghost'" @click="setLayout('filmstrip')">Filmstrip</button>
               </div>
+              <div class="flex items-center gap-2" x-show="results.length > 0 && layout === 'bento'" x-cloak>
+                <span class="text-xs text-base-content/60">Grid</span>
+                <input
+                  type="range"
+                  min="100"
+                  max="500"
+                  step="10"
+                  class="range range-xs w-40"
+                  x-model.number="gridMinPx"
+                  @input="persistGridMinPx()"
+                  aria-label="Grid size"
+                />
+                <span class="text-xs font-mono text-base-content/60 w-12 text-right" x-text="gridMinPx + 'px'"></span>
+              </div>
               <template x-for="slug in libraryFilters" :key="slug">
                 <span class="badge badge-outline gap-1">
                   <span x-text="libraryName(slug)"></span>
@@ -132,8 +146,8 @@
                 />
               </template>
               <template x-if="!getDisplayUrl(item)">
-                <div class="w-full aspect-square flex flex-col items-center justify-center animate-pulse"
-                     :class="placeholderBg(item)"
+                <div class="w-full aspect-square flex flex-col items-center justify-center"
+                     :class="placeholderClasses(item)"
                      :title="showErrorPlaceholder(item) ? (item.error_message || 'Error') : undefined">
                   <template x-if="showErrorPlaceholder(item)">
                     <svg class="w-12 h-12 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -158,6 +172,8 @@
                   muted
                   loop
                   playsinline
+                  autoplay
+                  preload="metadata"
                   @canplay="videoReady = true"
                 ></video>
               </template>
@@ -177,11 +193,15 @@
         </template>
       </section>
 
-      <section x-show="layout === 'bento'" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      <section
+        x-show="layout === 'bento'"
+        class="grid gap-3"
+        :style="`grid-template-columns: repeat(auto-fill, minmax(${gridMinPx}px, 1fr))`"
+      >
         <template x-for="(item, index) in results" :key="item.asset_id">
           <div
             class="card bg-base-100 shadow hover:shadow-md transition cursor-pointer overflow-hidden"
-            :class="index === 0 ? 'md:col-span-2 md:row-span-2' : ''"
+            :class="index === 0 ? 'sm:col-span-2 sm:row-span-2' : ''"
             @click="openDetail(item)"
           >
             <figure class="relative" :class="index === 0 ? 'aspect-square' : ''" x-data="{ hover: false, videoReady: false, mobilePlaying: false, isMobile: false }" x-init="isMobile = typeof window !== 'undefined' && 'ontouchstart' in window"
@@ -197,8 +217,8 @@
                 />
               </template>
               <template x-if="!getDisplayUrl(item)">
-                <div class="w-full aspect-square flex flex-col items-center justify-center animate-pulse"
-                     :class="placeholderBg(item)"
+                <div class="w-full aspect-square flex flex-col items-center justify-center"
+                     :class="placeholderClasses(item)"
                      :title="showErrorPlaceholder(item) ? (item.error_message || 'Error') : undefined">
                   <template x-if="showErrorPlaceholder(item)">
                     <svg class="w-12 h-12 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -223,6 +243,8 @@
                   muted
                   loop
                   playsinline
+                  autoplay
+                  preload="metadata"
                   @canplay="videoReady = true"
                 ></video>
               </template>
@@ -258,8 +280,8 @@
                 />
               </template>
               <template x-if="!getDisplayUrl(item)">
-                <div class="w-full h-full flex flex-col items-center justify-center animate-pulse"
-                     :class="placeholderBg(item)"
+                <div class="w-full h-full flex flex-col items-center justify-center"
+                     :class="placeholderClasses(item)"
                      :title="showErrorPlaceholder(item) ? (item.error_message || 'Error') : undefined">
                   <template x-if="showErrorPlaceholder(item)">
                     <svg class="w-8 h-8 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -284,6 +306,8 @@
                   muted
                   loop
                   playsinline
+                  autoplay
+                  preload="metadata"
                   @canplay="videoReady = true"
                 ></video>
               </template>
@@ -319,8 +343,8 @@
                         />
                       </template>
                       <template x-if="!getDisplayUrl(item)">
-                        <div class="w-full aspect-square flex flex-col items-center justify-center animate-pulse"
-                             :class="placeholderBg(item)"
+                        <div class="w-full aspect-square flex flex-col items-center justify-center"
+                             :class="placeholderClasses(item)"
                              :title="showErrorPlaceholder(item) ? (item.error_message || 'Error') : undefined">
                           <template x-if="showErrorPlaceholder(item)">
                             <svg class="w-10 h-10 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -345,6 +369,8 @@
                           muted
                           loop
                           playsinline
+                          autoplay
+                          preload="metadata"
                           @canplay="videoReady = true"
                         ></video>
                       </template>
@@ -510,6 +536,9 @@
       function mediaSearchDashboard(initialTag, initialLibraries, initialTypes) {
         const allowedLayouts = ['masonry', 'bento', 'list', 'filmstrip'];
         const saved = typeof localStorage !== 'undefined' && allowedLayouts.includes(localStorage.getItem('mediaSearchLayout'));
+        const GRID_MIN_KEY = 'mediaSearchGridMinPx';
+        const savedGridMin = typeof localStorage !== 'undefined' ? Number(localStorage.getItem(GRID_MIN_KEY)) : NaN;
+        const initialGridMin = Number.isFinite(savedGridMin) ? Math.min(500, Math.max(100, savedGridMin)) : 200;
         const params = typeof window !== 'undefined' && window.location.search ? new URLSearchParams(window.location.search) : null;
         const tagFromUrl = params ? params.get('tag') : null;
         const librariesFromUrl = params && params.getAll ? params.getAll('library') : [];
@@ -528,6 +557,7 @@
           selectedDetail: null,
           selectedDetailError: null,
           layout: saved ? localStorage.getItem('mediaSearchLayout') : 'masonry',
+          gridMinPx: initialGridMin,
 
           get someLibrariesAnalyzing() {
             const inScope = this.libraryFilters.length
@@ -563,6 +593,11 @@
             this.layout = layout;
             try { localStorage.setItem('mediaSearchLayout', layout); } catch (_) {}
           },
+          persistGridMinPx() {
+            const v = Math.min(500, Math.max(100, Number(this.gridMinPx)));
+            this.gridMinPx = v;
+            try { localStorage.setItem(GRID_MIN_KEY, String(v)); } catch (_) {}
+          },
 
           getDisplayUrl(item) {
             return item?.preview_url || item?.thumbnail_url || null;
@@ -570,6 +605,11 @@
           placeholderBg(item) {
             if (['failed','poisoned'].includes(item?.status)) return 'bg-red-50';
             return item?.type === 'video' ? 'bg-slate-200' : 'bg-blue-50';
+          },
+          placeholderClasses(item) {
+            const bg = this.placeholderBg(item);
+            const pulse = this.showErrorPlaceholder(item) ? '' : 'animate-pulse';
+            return `${bg} ${pulse}`.trim();
           },
           showErrorPlaceholder(item) {
             return ['failed','poisoned'].includes(item?.status);

@@ -59,6 +59,11 @@ def test_dashboard_returns_200_and_displays_schema_version(ui_api_postgres):
         assert "MediaSearch" in body
         assert "V1" in body or "V" in body
         assert "connected" in body.lower() or "Connected" in body
+        # Phase 3 UI: bento grid size slider + preview video polish
+        assert "mediaSearchGridMinPx" in body
+        assert "grid-template-columns: repeat(auto-fill, minmax(${gridMinPx}px, 1fr))" in body
+        assert 'x-ref="previewVideo"' in body
+        assert 'preload="metadata"' in body
     finally:
         app.dependency_overrides.pop(_get_ui_repo, None)
 
@@ -74,5 +79,10 @@ def test_library_returns_200_and_displays_library_browser(ui_api_postgres):
         assert "MediaSearch" in body
         assert "Library" in body
         assert "library" in body.lower()
+        # Phase 3 UI: bento grid size slider + preview video polish
+        assert "mediaSearchGridMinPx" in body
+        assert "grid-template-columns: repeat(auto-fill, minmax(${gridMinPx}px, 1fr))" in body
+        assert 'x-ref="previewVideo"' in body
+        assert 'preload="metadata"' in body
     finally:
         app.dependency_overrides.pop(_get_ui_repo, None)

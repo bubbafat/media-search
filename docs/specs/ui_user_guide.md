@@ -62,6 +62,10 @@ When results are shown, you can switch how they are displayed:
 
 The chosen layout is persisted in browser storage and restored on the next visit.
 
+### Grid size slider (Bento layout)
+
+When using **Bento**, a **Grid** slider appears. It controls the minimum tile size (100–500px) used by the responsive grid layout and is persisted in browser storage (`localStorage` key `mediaSearchGridMinPx`).
+
 ### Media placeholders
 
 When a file is discovered but not yet proxied (e.g. `status` is `pending` or `processing`), the UI shows a distinct placeholder instead of a broken image box. This gives immediate visual feedback on library composition (images vs videos) while the system works in the background.
@@ -70,7 +74,7 @@ When a file is discovered but not yet proxied (e.g. `status` is `pending` or `pr
 - **Video placeholder** — Slate background (`bg-slate-200`), film-strip icon, "Pending Proxy..." label. The **Video** badge remains visible on the placeholder.
 - **Error placeholder** — Red-tinted background (`bg-red-50`), error icon, "Error" label. For assets with `status` `failed` or `poisoned`, a tooltip shows the `error_message`.
 
-Placeholders use `animate-pulse` to indicate background processing. The UI relies on the API returning `thumbnail_url: null` when the asset has not yet been proxied or has errored.
+Placeholders use `animate-pulse` to indicate background processing for pending/progressing assets. Error placeholders are intentionally non-pulsing to communicate that processing has stopped. The UI relies on the API returning `thumbnail_url: null` when the asset has not yet been proxied or has errored.
 
 ### Indexing and analysis states
 
