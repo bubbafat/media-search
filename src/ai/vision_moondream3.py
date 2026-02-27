@@ -22,22 +22,38 @@ class Moondream3Analyzer(BaseVisionAnalyzer):
     def __init__(self) -> None:
         import torch
         from PIL import Image
-        from transformers import AutoModelForCausalLM
 
         self._Image = Image
         # FlexAttention (used by Moondream3) only supports CUDA, CPU, HPU; not MPS.
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
-        self.model = AutoModelForCausalLM.from_pretrained(
-            "moondream/moondream3-preview",
-            trust_remote_code=True,
-            device_map={"": self.device},
-            dtype=dtype,
-        )
+
+        # Moondream's vision.py has an MPS workaround that moves tensors to MPS after
+        # CPU ops. When our model runs on CPU, this causes mixed CPU/MPS tensors and
+        # "Passed CPU tensor to MPS op". Hide MPS before loading so vision uses the
+        # standard adaptive_avg_pool2d path.
+        if self.device == "cpu" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            _orig = torch.backends.mps.is_available
+            torch.backends.mps.is_available = lambda: False
+        else:
+            _orig = None
+
+        from transformers import AutoModelForCausalLM
+
         try:
-            self.model.compile()
-        except Exception:
-            pass  # fallback to eager mode (e.g. MPS or CPU compile may fail)
+            dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
+            self.model = AutoModelForCausalLM.from_pretrained(
+                "moondream/moondream3-preview",
+                trust_remote_code=True,
+                device_map={"": self.device},
+                dtype=dtype,
+            )
+            try:
+                self.model.compile()
+            except Exception:
+                pass  # fallback to eager mode (e.g. MPS or CPU compile may fail)
+        finally:
+            if _orig is not None:
+                torch.backends.mps.is_available = _orig
 
     def get_model_card(self) -> ModelCard:
         return ModelCard(name="moondream3", version="preview")
