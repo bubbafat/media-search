@@ -451,14 +451,14 @@ With `--once`, the worker processes one batch (one video) and then exits immedia
 With `--repair`, before the main loop the worker runs a one-time check: it finds **video** assets that are supposed to have a thumbnail and head-clip but are missing one or both on disk, sets their status to pending, then runs the normal loop. Combine with `--library` to repair only one library.
 
 
-| Option            | Description                                                                 |
-| ----------------- | --------------------------------------------------------------------------- |
-| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                               |
-| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                      |
-| `--library`       | Limit to this library slug only (optional)                                 |
-| `--verbose`, `-v` | Print progress (each asset and N/total)                                     |
-| `--repair`        | Check for missing thumbnail/head-clip and set those assets to pending     |
-| `--once`          | Process one batch then exit; exit immediately if no work                    |
+| Option            | Description                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                                 |
+| `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                                        |
+| `--library`       | Limit to this library slug only (optional)                                                                   |
+| `--verbose`, `-v` | Print per-asset progress (N/total) and detailed stage logs for each video (transcode, thumbnail, head-clip). |
+| `--repair`        | Check for missing thumbnail/head-clip and set those assets to pending                                       |
+| `--once`          | Process one batch then exit; exit immediately if no work                                                      |
 
 
 **Example:**
@@ -467,6 +467,8 @@ With `--repair`, before the main loop the worker runs a one-time check: it finds
 uv run media-search video-proxy
 uv run media-search video-proxy --library disneyland --once
 ```
+
+When processing long videos, the worker now reports approximate **720p transcode progress** in the logs when the source duration can be probed (e.g. `[asset 4571] 23% complete (720p transcode)`). These updates are emitted regardless of `--verbose` so you can see that work is progressing, even for a single asset. The same progress and stage information is also exposed via the worker heartbeat stats for future use in the web UI.
 
 ---
 

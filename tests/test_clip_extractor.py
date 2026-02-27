@@ -9,6 +9,8 @@ import pytest
 from src.video.clip_extractor import (
     extract_clip,
     extract_head_clip_copy,
+    probe_video_duration,
+    run_ffmpeg_with_progress,
     transcode_to_720p_h264,
     transcode_to_720p_h264_detailed,
 )
@@ -110,6 +112,61 @@ def _create_test_video(tmp_path: Path, duration: float = 5.0) -> Path:
     assert r.returncode == 0, r.stderr.decode()
     assert video_path.exists()
     return video_path
+
+
+@pytest.mark.slow
+def test_probe_video_duration_returns_positive_value(tmp_path):
+    """probe_video_duration returns a positive duration for a real test video."""
+    source = _create_test_video(tmp_path, duration=3.0)
+    duration = probe_video_duration(source)
+    assert duration is not None
+    assert duration > 0
+
+
+@pytest.mark.slow
+def test_run_ffmpeg_with_progress_reports_progress(tmp_path):
+    """run_ffmpeg_with_progress calls on_progress from 0->100% for a short transcode."""
+    source = _create_test_video(tmp_path, duration=2.0)
+    dest = tmp_path / "out.mp4"
+    total_duration = probe_video_duration(source)
+    assert total_duration is not None
+
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source),
+        "-vf",
+        "scale=-2:720",
+        "-c:v",
+        "libx264",
+        "-b:v",
+        "1M",
+        "-pix_fmt",
+        "yuv420p",
+        "-progress",
+        "pipe:2",
+        "-nostats",
+        str(dest),
+    ]
+
+    progresses: list[float] = []
+
+    def _on_progress(p: float) -> None:
+        progresses.append(p)
+
+    attempt = run_ffmpeg_with_progress(
+        cmd,
+        total_duration=total_duration,
+        on_progress=_on_progress,
+    )
+    assert attempt.ok
+    assert dest.exists()
+    assert progresses, "Expected at least one progress callback"
+    assert progresses[-1] <= 1.0
 
 
 @pytest.mark.asyncio

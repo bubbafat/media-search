@@ -16,6 +16,7 @@ from src.video.clip_extractor import (
     FFmpegAttempt,
     extract_head_clip_copy_detailed,
     extract_video_frame_detailed,
+    probe_video_duration,
     transcode_to_720p_h264_detailed,
 )
 from src.video.indexing import run_video_scene_indexing
@@ -88,6 +89,10 @@ class VideoProxyWorker(BaseWorker):
         self._initial_pending = initial_pending_count
         self._processed_count = 0
         self._repair = repair
+        self._current_asset_id: int | None = None
+        self._current_asset_rel_path: str | None = None
+        self._current_stage: str | None = None
+        self._current_stage_progress: float | None = None
 
     def _head_clip_path(self, library_slug: str, asset_id: int) -> Path:
         """Path to head_clip.mp4 for this asset (under data_dir)."""
@@ -138,6 +143,19 @@ class VideoProxyWorker(BaseWorker):
                 self._initial_pending = self.asset_repo.count_pending_proxyable(self._library_slug)
         super().run(once=once)
 
+    def get_heartbeat_stats(self) -> dict[str, object] | None:
+        """Include current asset, stage, and progress for observability."""
+        if self._current_asset_id is None:
+            return None
+        stats: dict[str, object] = {
+            "current_asset_id": self._current_asset_id,
+            "current_asset_rel_path": self._current_asset_rel_path or "",
+            "current_stage": self._current_stage or "",
+        }
+        if self._current_stage_progress is not None:
+            stats["current_stage_progress"] = self._current_stage_progress
+        return stats
+
     def process_task(self) -> bool:
         asset = self.asset_repo.claim_asset_by_status(
             self.worker_id,
@@ -156,6 +174,15 @@ class VideoProxyWorker(BaseWorker):
             return False
         assert asset.id is not None
         assert asset.library is not None
+        self._current_asset_id = asset.id
+        self._current_asset_rel_path = asset.rel_path
+        self._current_stage = "claimed"
+        self._current_stage_progress = None
+        _log.info(
+            "Starting video proxy pipeline for asset %s (%s)",
+            asset.id,
+            asset.rel_path,
+        )
         library_slug = asset.library.slug
         source_path = Path(asset.library.absolute_path) / asset.rel_path
         data_dir = Path(get_config().data_dir)
@@ -172,17 +199,60 @@ class VideoProxyWorker(BaseWorker):
                     f"Retry limit exceeded (retry_count={asset.retry_count} > {_MAX_RETRY_COUNT_BEFORE_POISON})"
                 )
 
-            transcode_attempts = transcode_to_720p_h264_detailed(source_path, temp_path)
+            self._current_stage = "transcode"
+            self._current_stage_progress = 0.0
+            _log.info(
+                "Starting 720p transcode for asset %s (%s)",
+                asset.id,
+                source_path,
+            )
+            duration = probe_video_duration(source_path)
+
+            last_reported_percent: float | None = None
+
+            def _on_progress(p: float) -> None:
+                # p is in [0.0, 1.0]
+                nonlocal last_reported_percent
+                self._current_stage_progress = p
+                if last_reported_percent is None or (p - last_reported_percent) >= 0.05:
+                    last_reported_percent = p
+                    pct = int(p * 100)
+                    _log.info(
+                        "[asset %s] %s%% complete (720p transcode)",
+                        asset.id,
+                        pct,
+                    )
+
+            transcode_attempts = transcode_to_720p_h264_detailed(
+                source_path,
+                temp_path,
+                duration=duration,
+                on_progress=_on_progress if duration is not None else None,
+            )
             if not transcode_attempts or not transcode_attempts[-1].ok:
                 raise _PermanentVideoProxyError(
                     _format_ffmpeg_attempts("720p transcode failed", transcode_attempts)
                 )
+            self._current_stage = "thumbnail"
+            self._current_stage_progress = None
+            _log.info(
+                "Extracting thumbnail at t=0.0s for asset %s (%s)",
+                asset.id,
+                temp_path,
+            )
             thumb_path = self.storage.get_thumbnail_write_path(library_slug, asset.id)
             frame_attempt = extract_video_frame_detailed(temp_path, thumb_path, 0.0)
             if not frame_attempt.ok:
                 raise _RetryableVideoProxyError(
                     _format_ffmpeg_attempt("FFmpeg frame extraction failed", frame_attempt)
                 )
+            self._current_stage = "head_clip"
+            self._current_stage_progress = None
+            _log.info(
+                "Extracting 10s head clip for asset %s (%s)",
+                asset.id,
+                temp_path,
+            )
             head_clip_path = self._head_clip_path(library_slug, asset.id)
             head_attempt = extract_head_clip_copy_detailed(
                 temp_path, head_clip_path, duration=10.0
@@ -191,6 +261,13 @@ class VideoProxyWorker(BaseWorker):
                 raise _RetryableVideoProxyError(
                     _format_ffmpeg_attempt("Head-clip copy failed", head_attempt)
                 )
+            self._current_stage = "scene_indexing"
+            self._current_stage_progress = None
+            _log.info(
+                "Running scene indexing for asset %s (%s)",
+                asset.id,
+                temp_path,
+            )
             run_video_scene_indexing(
                 asset.id,
                 temp_path,
@@ -204,6 +281,8 @@ class VideoProxyWorker(BaseWorker):
             )
             self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
             self._processed_count += 1
+            self._current_stage = "completed"
+            self._current_stage_progress = 1.0
             if self._verbose:
                 total = self._initial_pending if self._initial_pending is not None else "?"
                 _log.info(
@@ -255,4 +334,8 @@ class VideoProxyWorker(BaseWorker):
                 self.asset_repo.update_asset_status(asset.id, AssetStatus.failed, msg)
         finally:
             temp_path.unlink(missing_ok=True)
+            self._current_asset_id = None
+            self._current_asset_rel_path = None
+            self._current_stage = None
+            self._current_stage_progress = None
         return True

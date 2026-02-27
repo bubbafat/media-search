@@ -7,6 +7,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 _log = logging.getLogger(__name__)
 
@@ -49,6 +50,99 @@ def _run_ffmpeg(cmd: list[str]) -> FFmpegAttempt:
     return FFmpegAttempt(cmd=cmd, returncode=int(result.returncode), stderr=result.stderr or "")
 
 
+def run_ffmpeg_with_progress(
+    cmd: list[str],
+    *,
+    total_duration: float | None = None,
+    on_progress: Callable[[float], None] | None = None,
+) -> FFmpegAttempt:
+    """
+    Run FFmpeg while streaming stderr and optionally reporting progress via -progress pipe:2 output.
+
+    Expects the command to include FFmpeg's `-progress pipe:2` option when on_progress is used.
+    """
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stderr_lines: list[str] = []
+    last_percent: float | None = None
+
+    try:
+        assert process.stderr is not None
+        for line in process.stderr:
+            stderr_lines.append(line)
+            if (
+                on_progress is not None
+                and total_duration is not None
+                and "out_time_ms=" in line
+            ):
+                try:
+                    _, value = line.strip().split("=", 1)
+                    out_time_ms = float(value)
+                except ValueError:
+                    continue
+                if total_duration <= 0:
+                    continue
+                seconds = out_time_ms / 1_000_000.0
+                percent = max(0.0, min(1.0, seconds / total_duration))
+                if last_percent is None or percent - last_percent >= 0.01:
+                    last_percent = percent
+                    on_progress(percent)
+        process.wait()
+    finally:
+        if process.stderr is not None:
+            process.stderr.close()
+    stderr = "".join(stderr_lines).strip()
+    return FFmpegAttempt(
+        cmd=cmd,
+        returncode=int(process.returncode),
+        stderr=stderr,
+    )
+
+
+def probe_video_duration(source: Path) -> float | None:
+    """
+    Return video duration in seconds using ffprobe, or None on failure.
+    """
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(source),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        if result.stderr:
+            _log.warning(
+                "ffprobe duration probe failed for %s: %s",
+                source,
+                result.stderr.strip(),
+            )
+        return None
+    stdout = (result.stdout or "").strip()
+    if not stdout:
+        return None
+    try:
+        duration = float(stdout)
+    except ValueError:
+        _log.warning(
+            "ffprobe returned non-numeric duration for %s: %r",
+            source,
+            stdout,
+        )
+        return None
+    if duration <= 0:
+        return None
+    return duration
+
+
 def _is_h264_videotoolbox_available() -> bool:
     """Return True if FFmpeg reports h264_videotoolbox encoder (macOS)."""
     if sys.platform != "darwin":
@@ -62,7 +156,13 @@ def _is_h264_videotoolbox_available() -> bool:
     return "h264_videotoolbox" in (result.stdout or "") if result.returncode == 0 else False
 
 
-def transcode_to_720p_h264_detailed(source: Path, dest: Path) -> list[FFmpegAttempt]:
+def transcode_to_720p_h264_detailed(
+    source: Path,
+    dest: Path,
+    *,
+    duration: float | None = None,
+    on_progress: Callable[[float], None] | None = None,
+) -> list[FFmpegAttempt]:
     """
     Transcode to 720p H.264 MP4, returning a list of FFmpeg attempts (for diagnostics).
 
@@ -97,15 +197,41 @@ def transcode_to_720p_h264_detailed(source: Path, dest: Path) -> list[FFmpegAtte
         cmd.append(str(dest))
         return cmd
 
+    def _run_cmd(encoder: str) -> FFmpegAttempt:
+        cmd = _cmd_for(encoder)
+        if on_progress is not None and duration is not None:
+            cmd = cmd[:-1] + ["-progress", "pipe:2", "-nostats", cmd[-1]]
+            return run_ffmpeg_with_progress(
+                cmd,
+                total_duration=duration,
+                on_progress=on_progress,
+            )
+        return _run_ffmpeg(cmd)
+
     use_vt = _is_h264_videotoolbox_available()
     if use_vt:
-        attempts.append(_run_ffmpeg(_cmd_for("h264_videotoolbox")))
+        _log.info(
+            "FFmpeg 720p transcode: attempting h264_videotoolbox for %s",
+            source,
+        )
+        attempts.append(_run_cmd("h264_videotoolbox"))
         if attempts[-1].ok:
+            _log.info(
+                "FFmpeg 720p transcode succeeded with h264_videotoolbox for %s",
+                source,
+            )
+            if on_progress is not None and duration is not None:
+                on_progress(1.0)
             return attempts
-        attempts.append(_run_ffmpeg(_cmd_for("libx264")))
+        _log.info(
+            "FFmpeg 720p transcode with h264_videotoolbox failed for %s, falling back to libx264",
+            source,
+        )
+        attempts.append(_run_cmd("libx264"))
         return attempts
 
-    attempts.append(_run_ffmpeg(_cmd_for("libx264")))
+    _log.info("FFmpeg 720p transcode: using libx264 for %s", source)
+    attempts.append(_run_cmd("libx264"))
     return attempts
 
 
