@@ -25,14 +25,9 @@ class Moondream3Analyzer(BaseVisionAnalyzer):
         from transformers import AutoModelForCausalLM
 
         self._Image = Image
-        self.device = (
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps"
-            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
-            else "cpu"
-        )
-        dtype = torch.float16 if self.device == "mps" else torch.bfloat16
+        # FlexAttention (used by Moondream3) only supports CUDA, CPU, HPU; not MPS.
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
         self.model = AutoModelForCausalLM.from_pretrained(
             "moondream/moondream3-preview",
             trust_remote_code=True,
