@@ -3,7 +3,7 @@
 import io
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from PIL import Image
 from PIL import ImageOps
@@ -157,14 +157,31 @@ def _vips_thumbnail_from_vips(
     return _normalize_vips_image(thumb)
 
 
+def _atomic_write(dest_path: Path, write_fn: Callable[[Path], None]) -> None:
+    """Write to tmp path then atomically rename. Clean up tmp on failure."""
+    tmp_path = dest_path.with_suffix(dest_path.suffix + ".tmp")
+    try:
+        write_fn(tmp_path)
+        tmp_path.replace(dest_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+
 def _vips_write_jpeg(vips_img: "pyvips.Image", path: Path, quality: int = 85) -> None:
-    """Write a pyvips image as JPEG to path with the given quality."""
-    vips_img.write_to_file(str(path), Q=quality)
+    """Write a pyvips image as JPEG to path with the given quality (atomic)."""
+    def _do_write(p: Path) -> None:
+        vips_img.write_to_file(str(p), Q=quality)
+
+    _atomic_write(path, _do_write)
 
 
 def _vips_write_webp(vips_img: "pyvips.Image", path: Path, quality: int = 85) -> None:
-    """Write a pyvips image as WebP to path with the given quality."""
-    vips_img.write_to_file(str(path), Q=quality)
+    """Write a pyvips image as WebP to path with the given quality (atomic)."""
+    def _do_write(p: Path) -> None:
+        vips_img.write_to_file(str(p), Q=quality)
+
+    _atomic_write(path, _do_write)
 
 
 class LocalMediaStore:
@@ -308,7 +325,11 @@ class LocalMediaStore:
         """
         path = self._get_shard_path(library_slug, asset_id, "thumbnails", create_dirs=True)
         thumb = self._fit_within_box_no_upscale(image, self.THUMBNAIL_SIZE)
-        thumb.save(path, "JPEG", quality=85)
+
+        def _do_write(p: Path) -> None:
+            thumb.save(p, "JPEG", quality=85)
+
+        _atomic_write(path, _do_write)
 
     def save_proxy(self, library_slug: str, asset_id: int, image: Image.Image) -> Image.Image:
         """Create proxy (max 768x768) and save as WebP (quality 85).
@@ -321,7 +342,11 @@ class LocalMediaStore:
         """
         path = self._get_proxy_path(library_slug, asset_id, create_dirs=True)
         proxy = self._fit_within_box_no_upscale(image, self.PROXY_SIZE)
-        proxy.save(path, "WEBP", quality=85)
+
+        def _do_write(p: Path) -> None:
+            proxy.save(p, "WEBP", quality=85)
+
+        _atomic_write(path, _do_write)
         return proxy
 
     def save_proxy_and_thumbnail(self, library_slug: str, asset_id: int, image: Image.Image) -> None:

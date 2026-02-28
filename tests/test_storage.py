@@ -52,6 +52,40 @@ def test_save_and_get_thumbnail_path(temp_data_dir):
     assert path.suffix == ".jpg"
 
 
+def test_atomic_write_no_tmp_remains_after_success(temp_data_dir):
+    """save_proxy and save_thumbnail use atomic writes; no .tmp files remain."""
+    store, data_dir = temp_data_dir
+    img = Image.new("RGB", (100, 100), color="red")
+    store.save_proxy("lib1", 1, img)
+    store.save_thumbnail("lib1", 1, img)
+    proxy_path = store.get_proxy_path("lib1", 1)
+    thumb_path = store.get_thumbnail_path("lib1", 1)
+    assert proxy_path.exists()
+    assert thumb_path.exists()
+    assert not proxy_path.with_suffix(proxy_path.suffix + ".tmp").exists()
+    assert not thumb_path.with_suffix(thumb_path.suffix + ".tmp").exists()
+
+
+def test_atomic_write_removes_tmp_on_failure(temp_data_dir):
+    """When write_fn raises, _atomic_write removes the .tmp file in finally."""
+    from src.core.storage import _atomic_write
+
+    store, data_dir = temp_data_dir
+    dest_path = data_dir / "lib1" / "thumbnails" / "0" / "1.jpg"
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write_then_fail(tmp_path: Path) -> None:
+        tmp_path.write_bytes(b"partial")
+        raise OSError("simulated write failure")
+
+    with pytest.raises(OSError, match="simulated write failure"):
+        _atomic_write(dest_path, write_then_fail)
+
+    tmp_path = dest_path.with_suffix(dest_path.suffix + ".tmp")
+    assert not tmp_path.exists()
+    assert not dest_path.exists()
+
+
 def test_save_and_get_proxy_path(temp_data_dir):
     """save_proxy creates WebP file; get_proxy_path returns it; proxy max dimension is 768."""
     store, _ = temp_data_dir

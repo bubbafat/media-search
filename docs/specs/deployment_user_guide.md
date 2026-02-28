@@ -98,7 +98,7 @@ This may take several minutes (PyTorch and friends are large). Wait for it to fi
    ```
    DATABASE_URL=postgresql+psycopg2://media_search:media_search@localhost:5432/media_search
    HF_TOKEN=
-   # MEDIA_SEARCH_DATA_DIR=      # optional; override where thumbnails, proxies, and video scenes are stored (default: ./data)
+   # MEDIA_SEARCH_DATA_DIR=      # optional; override where thumbnails, proxies, and video scenes are stored (default: ./data). Must not be . or /—the API refuses to mount these for security.
    # EXPORT_ROOT_PATH=           # optional; root for export destinations (ideally on same physical volume as source media)
    # MEDIA_SEARCH_USE_RAW_PREVIEWS=true  # optional; prefer embedded/fast-path previews for RAW files when available
    ```

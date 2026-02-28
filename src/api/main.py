@@ -55,9 +55,15 @@ _static_dir = Path(__file__).resolve().parent.parent.parent / "static"
 if _static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
+_data_dir = Path(get_config().data_dir).resolve()
+if _data_dir == Path("/") or _data_dir == Path.cwd().resolve():
+    raise RuntimeError(
+        "Unsafe data_dir configuration. Cannot mount root or current working directory."
+    )
+
 app.mount(
     "/media",
-    StaticFiles(directory=str(Path(get_config().data_dir)), check_dir=False),
+    StaticFiles(directory=str(_data_dir), check_dir=False),
     name="media",
 )
 
