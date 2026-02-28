@@ -3,6 +3,7 @@
 import io
 import logging
 import shutil
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -162,8 +163,14 @@ def _vips_thumbnail_from_vips(
 
 
 def _atomic_write(dest_path: Path, write_fn: Callable[[Path], None]) -> None:
-    """Write to tmp path then atomically rename. Clean up tmp on failure."""
-    tmp_path = dest_path.with_suffix(dest_path.suffix + ".tmp")
+    """Write to a unique tmp path then atomically rename. Clean up tmp on failure.
+
+    Uses a unique tmp filename per attempt to avoid collisions when multiple workers
+    write to the same dest_path (e.g. after lease expiry and re-claim).
+    """
+    tmp_path = dest_path.with_name(
+        f"{dest_path.stem}.{uuid.uuid4().hex}{dest_path.suffix}.tmp"
+    )
     try:
         write_fn(tmp_path)
         tmp_path.replace(dest_path)

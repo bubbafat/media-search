@@ -1,6 +1,7 @@
 """Tests for LocalMediaStore (shard path, save/load thumbnail and proxy)."""
 
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from unittest.mock import patch
 
@@ -86,8 +87,8 @@ def test_atomic_write_no_tmp_remains_after_success(temp_data_dir):
     thumb_path = store.get_thumbnail_path("lib1", 1)
     assert proxy_path.exists()
     assert thumb_path.exists()
-    assert not proxy_path.with_suffix(proxy_path.suffix + ".tmp").exists()
-    assert not thumb_path.with_suffix(thumb_path.suffix + ".tmp").exists()
+    assert not list(proxy_path.parent.glob("*.tmp"))
+    assert not list(thumb_path.parent.glob("*.tmp"))
 
 
 def test_atomic_write_removes_tmp_on_failure(temp_data_dir):
@@ -105,9 +106,35 @@ def test_atomic_write_removes_tmp_on_failure(temp_data_dir):
     with pytest.raises(OSError, match="simulated write failure"):
         _atomic_write(dest_path, write_then_fail)
 
-    tmp_path = dest_path.with_suffix(dest_path.suffix + ".tmp")
-    assert not tmp_path.exists()
+    assert not list(dest_path.parent.glob("*.tmp"))
     assert not dest_path.exists()
+
+
+def test_atomic_write_unique_tmp_avoids_collision_when_concurrent(temp_data_dir):
+    """Two writers to the same dest_path use unique tmp files; no corruption."""
+    from src.core.storage import _atomic_write
+
+    store, data_dir = temp_data_dir
+    dest_path = data_dir / "lib1" / "thumbnails" / "0" / "99.jpg"
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write_img(color: str) -> None:
+        img = Image.new("RGB", (10, 10), color=color)
+
+        def _do_write(p: Path) -> None:
+            img.save(p, "JPEG", quality=85)
+
+        _atomic_write(dest_path, _do_write)
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        futures = [ex.submit(write_img, "red"), ex.submit(write_img, "blue")]
+        for f in as_completed(futures):
+            f.result()
+
+    assert dest_path.exists()
+    with Image.open(dest_path) as im:
+        assert im.size == (10, 10)
+    assert not list(dest_path.parent.glob("*.tmp"))
 
 
 def test_save_and_get_proxy_path(temp_data_dir):
