@@ -19,6 +19,7 @@ uv run media-search --help
 | `library`       | Add, remove, restore, list libraries, force video reindex (reindex-videos)                                  |
 | `trash`         | Manage soft-deleted libraries (list, empty one, empty all)                                                  |
 | `repair`        | Repair database consistency (e.g. orphan-assets: remove assets whose library no longer exists)              |
+| `maintenance`   | System maintenance and housekeeping (run: prune stale workers, reclaim leases, cleanup temp files; cleanup-data-dir: remove orphaned files)   |
 | `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)           |
 | `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                   |
 | `scan`          | Run a one-shot scan for a library (no daemon)                                                               |
@@ -224,6 +225,52 @@ uv run media-search repair orphan-assets --dry-run
 uv run media-search repair orphan-assets
 uv run media-search repair orphan-assets --force
 ```
+
+---
+
+## maintenance
+
+### maintenance run
+
+Run all maintenance tasks: prune stale workers (worker_status rows older than 24h), reclaim expired leases (assets stuck in `processing` with expired lease_expires_at reset to `pending` or `poisoned`), and delete temp files in `data_dir/tmp` older than 4 hours.
+
+Useful for cron jobs or periodic housekeeping. Requires a running PostgreSQL instance and applied migrations.
+
+
+| Option       | Description                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `--dry-run`  | Show what would be done without making changes. Prints stale worker count, stale lease count, temp file count and reclaimable size. |
+
+
+**Example:**
+
+```bash
+uv run media-search maintenance run
+uv run media-search maintenance run --dry-run
+```
+
+Output reports counts: `Pruned N workers, Reclaimed M assets, Deleted K temp files.` With `--dry-run`, prints a preview and exits without applying changes.
+
+---
+
+### maintenance cleanup-data-dir
+
+Remove orphaned files in `data_dir` (no corresponding DB entry). Skips trashed libraries; only deletes files older than 15 minutes.
+
+
+| Option       | Description                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `--dry-run`  | Show count and size of orphaned files that would be removed without deleting them.             |
+
+
+**Example:**
+
+```bash
+uv run media-search maintenance cleanup-data-dir
+uv run media-search maintenance cleanup-data-dir --dry-run
+```
+
+Output reports: `Deleted N orphaned files from data directory.` With `--dry-run`, prints a preview and exits without applying changes.
 
 ---
 

@@ -126,6 +126,7 @@ The pipeline is divided into specialized, isolated worker types to prevent hardw
 6. **The Garbage Collector Worker (Disk & DB Bound):**
    - **Role:** The Janitor.
    - **Action:** Wakes up periodically to clean up the system. It executes chunked hard-deletions on databases for "emptied trash" libraries, and safely deletes orphaned physical proxy files from the local SSD to prevent disk bloat.
+   - **MaintenanceService:** A central `MaintenanceService` (`src/core/maintenance.py`) consolidates janitor tasks: prune stale workers (worker_status rows older than 24h), reclaim expired leases (assets stuck in `processing`), and cleanup `data_dir/tmp` files older than 4h. A future GC worker implementation can invoke `MaintenanceService.run_all()` in addition to trash-empty and orphan cleanup.
 
 ### 3.3 BaseWorker Framework & Lifecycle (Implementation) ###
 Every worker must implement a non-blocking `run_loop` that manages its own lifecycle.

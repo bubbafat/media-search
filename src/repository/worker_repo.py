@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from src.models.entities import WorkerCommand, WorkerState
@@ -102,6 +102,26 @@ class WorkerRepository:
             row = session.get(WorkerStatusEntity, worker_id)
             if row is not None:
                 session.delete(row)
+
+    def count_stale_workers(self, max_age_hours: int = 24) -> int:
+        """Count worker_status rows with last_seen_at older than max_age_hours. Read-only."""
+        cutoff = _utcnow() - timedelta(hours=max_age_hours)
+        with self._session_scope(write=False) as session:
+            result = session.scalar(
+                select(func.count()).select_from(WorkerStatusEntity).where(
+                    WorkerStatusEntity.last_seen_at < cutoff
+                )
+            )
+            return result or 0
+
+    def prune_stale_workers(self, max_age_hours: int = 24) -> int:
+        """Delete worker_status rows with last_seen_at older than max_age_hours. Returns count deleted."""
+        cutoff = _utcnow() - timedelta(hours=max_age_hours)
+        with self._session_scope(write=True) as session:
+            result = session.execute(
+                delete(WorkerStatusEntity).where(WorkerStatusEntity.last_seen_at < cutoff)
+            )
+            return result.rowcount or 0
 
     def get_active_local_worker_count(self, hostname: str, exclude_worker_id: str) -> int:
         """Count workers on the same host that are active (not offline, seen in last 60s)."""

@@ -172,6 +172,20 @@ class VideoSceneRepository:
             rows = session.execute(text(q), params).fetchall()
         return [(int(r[0]), str(r[1])) for r in rows]
 
+    def get_all_rep_frame_paths_excluding_trash(self) -> list[str]:
+        """Return rep_frame_path for all scenes in non-deleted libraries."""
+        with self._session_scope(write=False) as session:
+            rows = session.execute(
+                text("""
+                    SELECT vs.rep_frame_path
+                    FROM video_scenes vs
+                    JOIN asset a ON a.id = vs.asset_id
+                    JOIN library l ON l.slug = a.library_id AND l.deleted_at IS NULL
+                    WHERE vs.rep_frame_path IS NOT NULL AND vs.rep_frame_path != ''
+                """),
+            ).fetchall()
+        return [str(r[0]) for r in rows if r[0]]
+
     def get_max_end_ts(self, asset_id: int) -> float | None:
         """Return max(end_ts) for the asset from video_scenes, or None if no rows."""
         with self._session_scope(write=False) as session:

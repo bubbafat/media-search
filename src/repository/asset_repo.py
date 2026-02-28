@@ -660,6 +660,19 @@ class AssetRepository:
                 {"path": path, "asset_id": asset_id},
             )
 
+    def get_all_video_preview_paths_excluding_trash(self) -> list[str]:
+        """Return video_preview_path for all assets in non-deleted libraries where path is not null."""
+        with self._session_scope(write=False) as session:
+            rows = session.execute(
+                text("""
+                    SELECT a.video_preview_path
+                    FROM asset a
+                    JOIN library l ON l.slug = a.library_id AND l.deleted_at IS NULL
+                    WHERE a.video_preview_path IS NOT NULL
+                """),
+            ).fetchall()
+        return [str(r[0]) for r in rows if r[0]]
+
     def renew_asset_lease(self, asset_id: int, lease_seconds: int = 300) -> None:
         """Bump the lease_expires_at for an asset currently being processed."""
         with self._session_scope(write=True) as session:
@@ -671,6 +684,36 @@ class AssetRepository:
                 """),
                 {"lease_seconds": lease_seconds, "id": asset_id},
             )
+
+    def count_stale_leases(self) -> int:
+        """Count assets stuck in processing with expired leases. Read-only."""
+        with self._session_scope(write=False) as session:
+            val = session.execute(
+                text("""
+                    SELECT COUNT(*) FROM asset
+                    WHERE status = 'processing'
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at < (NOW() AT TIME ZONE 'UTC')
+                """)
+            ).scalar()
+        return int(val) if val is not None else 0
+
+    def reclaim_stale_leases(self) -> int:
+        """Reset assets stuck in processing with expired leases. Returns count updated."""
+        with self._session_scope(write=True) as session:
+            result = session.execute(
+                text("""
+                    UPDATE asset
+                    SET status = (CASE WHEN retry_count > 5 THEN 'poisoned' ELSE 'pending' END)::assetstatus,
+                        worker_id = NULL, lease_expires_at = NULL,
+                        retry_count = CASE WHEN retry_count > 5 THEN retry_count + 1 ELSE retry_count END,
+                        error_message = CASE WHEN retry_count > 5 THEN 'Lease expired (reclaimed)' ELSE error_message END
+                    WHERE status = 'processing'
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at < (NOW() AT TIME ZONE 'UTC')
+                """)
+            )
+            return result.rowcount or 0
 
     def mark_completed(self, asset_id: int, analysis_model_id: int) -> None:
         """Set asset to completed, set analysis_model_id, clear worker_id, lease_expires_at, reset retry_count."""

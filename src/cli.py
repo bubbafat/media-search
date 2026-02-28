@@ -14,6 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from src.core.config import get_config
+from src.core.maintenance import MaintenanceService
 from src.core.storage import rawpy_available
 from src.models.entities import AssetStatus, AssetType, ScanStatus, WorkerState
 from src.repository.asset_repo import AssetRepository
@@ -44,6 +45,8 @@ ai_default_app = typer.Typer(help="Get or set the system default AI model.")
 ai_app.add_typer(ai_default_app, name="default")
 repair_app = typer.Typer(help="Repair database consistency (e.g. orphaned assets).")
 app.add_typer(repair_app, name="repair")
+maintenance_app = typer.Typer(help="System maintenance and housekeeping.")
+app.add_typer(maintenance_app, name="maintenance")
 
 
 def _get_session_factory():
@@ -980,6 +983,91 @@ def ai_remove(
     except ValueError as e:
         typer.secho(str(e), fg=typer.colors.RED)
         raise typer.Exit(1)
+
+
+def _format_bytes(n: int) -> str:
+    """Format bytes as human-readable string (KB, MB, GB)."""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    if n < 1024 * 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    return f"{n / (1024 * 1024 * 1024):.1f} GB"
+
+
+@maintenance_app.command("run")
+def maintenance_run(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be done without making changes",
+    ),
+) -> None:
+    """Run all maintenance tasks: prune stale workers, reclaim expired leases, cleanup temp files."""
+    session_factory = _get_session_factory()
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    library_repo = LibraryRepository(session_factory)
+    video_scene_repo = VideoSceneRepository(session_factory)
+    cfg = get_config()
+    service = MaintenanceService(
+        asset_repo,
+        worker_repo,
+        cfg.data_dir,
+        library_repo=library_repo,
+        video_scene_repo=video_scene_repo,
+    )
+    if dry_run:
+        stale_workers = worker_repo.count_stale_workers(24)
+        stale_leases = asset_repo.count_stale_leases()
+        temp_count, temp_bytes = service.preview_temp_cleanup()
+        typer.echo("Dry run: what would be done:")
+        typer.echo(f"  Stale workers: {stale_workers}")
+        typer.echo(f"  Stale leases: {stale_leases}")
+        typer.echo(
+            f"  Temp files: {temp_count} files, {_format_bytes(temp_bytes)} reclaimable"
+        )
+        typer.echo("Run without --dry-run to apply changes.")
+        return
+    pruned = service.prune_stale_workers()
+    reclaimed = service.reclaim_stale_leases()
+    deleted = service.cleanup_temp_dir()
+    typer.echo(
+        f"Pruned {pruned} workers, Reclaimed {reclaimed} assets, Deleted {deleted} temp files."
+    )
+
+
+@maintenance_app.command("cleanup-data-dir")
+def maintenance_cleanup_data_dir(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show orphaned files that would be deleted without removing them",
+    ),
+) -> None:
+    """Remove orphaned files in data_dir (no DB entry). Skips trashed libraries; only deletes files older than 15 min."""
+    session_factory = _get_session_factory()
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    library_repo = LibraryRepository(session_factory)
+    video_scene_repo = VideoSceneRepository(session_factory)
+    cfg = get_config()
+    service = MaintenanceService(
+        asset_repo,
+        worker_repo,
+        cfg.data_dir,
+        library_repo=library_repo,
+        video_scene_repo=video_scene_repo,
+    )
+    if dry_run:
+        file_count, total_bytes = service.preview_data_dir_cleanup()
+        typer.echo("Dry run: orphaned files that would be deleted:")
+        typer.echo(f"  {file_count} files, {_format_bytes(total_bytes)} reclaimable")
+        typer.echo("Run without --dry-run to apply changes.")
+        return
+    deleted = service.cleanup_data_dir()
+    typer.echo(f"Deleted {deleted} orphaned files from data directory.")
 
 
 def main() -> None:
