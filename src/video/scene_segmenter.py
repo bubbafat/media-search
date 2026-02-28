@@ -185,49 +185,50 @@ class SceneSegmenter:
             skip_count = SKIP_FRAMES_BEST
             has_eligible_best = False
 
-        for frame_bytes, pts in self._scanner.iter_frames():
-            if check_interrupt and check_interrupt():
-                raise InterruptedError("Pipeline interrupted by worker shutdown.")
-            seen_any_frame = True
-            last_pts = pts
-            last_frame_bytes = frame_bytes
-            last_frame_sharpness = _sharpness(frame_bytes, self._width, self._height)
-            if discard_until is not None:
-                if pts < discard_until:
-                    continue
-                discard_until = None
-            pil_img = _frame_bytes_to_pil(frame_bytes, self._width, self._height)
-            frame_phash = imagehash.phash(pil_img, hash_size=PHASH_HASH_SIZE)
+        try:
+            for frame_bytes, pts in self._scanner.iter_frames():
+                if check_interrupt and check_interrupt():
+                    raise InterruptedError("Pipeline interrupted by worker shutdown.")
+                seen_any_frame = True
+                last_pts = pts
+                last_frame_bytes = frame_bytes
+                last_frame_sharpness = _sharpness(frame_bytes, self._width, self._height)
+                if discard_until is not None:
+                    if pts < discard_until:
+                        continue
+                    discard_until = None
+                pil_img = _frame_bytes_to_pil(frame_bytes, self._width, self._height)
+                frame_phash = imagehash.phash(pil_img, hash_size=PHASH_HASH_SIZE)
 
-            if anchor_phash is None:
-                anchor_phash = frame_phash
-                scene_start_pts = pts
-                skip_count = SKIP_FRAMES_BEST
-                current_best_pts = pts
-                current_best_sharpness = -1.0
-                current_best_frame_bytes = b""
-                has_eligible_best = False
-
-            reason = _trigger_keep_reason(anchor_phash, scene_start_pts, frame_phash, pts)
-            if reason is not None:
-                yield from close_scene(pts, reason, frame_phash, pts)
-                anchor_phash = frame_phash
-                scene_start_pts = pts
-                skip_count = SKIP_FRAMES_BEST
-                current_best_pts = pts
-                current_best_sharpness = -1.0
-                current_best_frame_bytes = b""
-                has_eligible_best = False
-
-            if skip_count > 0:
-                skip_count -= 1
-            else:
-                shp = _sharpness(frame_bytes, self._width, self._height)
-                if shp > current_best_sharpness:
-                    current_best_sharpness = shp
+                if anchor_phash is None:
+                    anchor_phash = frame_phash
+                    scene_start_pts = pts
+                    skip_count = SKIP_FRAMES_BEST
                     current_best_pts = pts
-                    current_best_frame_bytes = frame_bytes
-                    has_eligible_best = True
+                    current_best_sharpness = -1.0
+                    current_best_frame_bytes = b""
+                    has_eligible_best = False
 
-        if seen_any_frame:
-            yield from close_scene(last_pts, SceneKeepReason.forced, None, last_pts)
+                reason = _trigger_keep_reason(anchor_phash, scene_start_pts, frame_phash, pts)
+                if reason is not None:
+                    yield from close_scene(pts, reason, frame_phash, pts)
+                    anchor_phash = frame_phash
+                    scene_start_pts = pts
+                    skip_count = SKIP_FRAMES_BEST
+                    current_best_pts = pts
+                    current_best_sharpness = -1.0
+                    current_best_frame_bytes = b""
+                    has_eligible_best = False
+
+                if skip_count > 0:
+                    skip_count -= 1
+                else:
+                    shp = _sharpness(frame_bytes, self._width, self._height)
+                    if shp > current_best_sharpness:
+                        current_best_sharpness = shp
+                        current_best_pts = pts
+                        current_best_frame_bytes = frame_bytes
+                        has_eligible_best = True
+        finally:
+            if seen_any_frame:
+                yield from close_scene(last_pts, SceneKeepReason.forced, None, last_pts)

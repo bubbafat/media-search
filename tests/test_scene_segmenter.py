@@ -17,7 +17,7 @@ from src.video.scene_segmenter import (
     _sharpness,
     _trigger_keep_reason,
 )
-from src.video.video_scanner import VideoScanner
+from src.video.video_scanner import SyncError, VideoScanner
 
 pytestmark = [pytest.mark.fast]
 
@@ -218,3 +218,31 @@ def test_scene_segmenter_short_video_forced_yields_one_scene_using_last_frame(tm
     assert scene.best_pts == 1.0
     assert scene.scene_start_pts == 0.0
     assert scene.scene_end_pts == 1.0
+
+
+def test_scene_segmenter_abrupt_eof_yields_final_scene(tmp_path):
+    """When iter_frames raises SyncError mid-stream, iter_scenes yields the final scene first, then SyncError propagates."""
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(tmp_path / "v.mp4")
+    w, h = scanner.out_width, scanner.out_height
+
+    def frames_then_sync_error():
+        yield (_make_frame_bytes(w, h), 0.0)
+        yield (_make_frame_bytes(w, h), 1.0)
+        yield (_make_frame_bytes(w, h), 2.0)
+        raise SyncError("no PTS from stderr within timeout")
+
+    with patch.object(scanner, "iter_frames", return_value=frames_then_sync_error()):
+        segmenter = SceneSegmenter(scanner)
+        gen = segmenter.iter_scenes()
+        results = [next(gen)]
+        with pytest.raises(SyncError, match="no PTS from stderr"):
+            next(gen)
+
+    assert len(results) == 1
+    scene, next_state = results[0]
+    assert scene is not None
+    assert scene.keep_reason is SceneKeepReason.forced
+    assert scene.scene_end_pts == 2.0
+    assert next_state is None
