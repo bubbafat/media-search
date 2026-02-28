@@ -880,6 +880,28 @@ class AssetRepository:
             )
             return result.rowcount or 0
 
+    def reset_poisoned_assets(self, library_slug: str | None = None) -> int:
+        """Reset poisoned assets to pending (retry_count=0, error_message=NULL).
+        When library_slug is provided, only update assets in that library.
+        Returns the count of assets updated."""
+        with self._session_scope(write=True) as session:
+            extra = " AND library_id = :library_slug" if library_slug else ""
+            params: dict = {}
+            if library_slug:
+                params["library_slug"] = library_slug
+            result = session.execute(
+                text(
+                    f"""
+                    UPDATE asset
+                    SET status = 'pending', retry_count = 0, error_message = NULL
+                    WHERE status = 'poisoned'
+                    {extra}
+                """
+                ),
+                params,
+            )
+            return result.rowcount or 0
+
     def mark_completed(self, asset_id: int, analysis_model_id: int) -> None:
         """Set asset to completed, set analysis_model_id, clear worker_id, lease_expires_at, reset retry_count."""
         with self._session_scope(write=True) as session:

@@ -297,6 +297,180 @@ def test_reclaim_stale_leases_poisons_when_retry_count_exceeds_5(engine, _sessio
         session.close()
 
 
+def test_reset_poisoned_assets_global(engine, _session_factory):
+    """reset_poisoned_assets with library_slug=None resets all poisoned assets to pending."""
+    asset_repo, worker_repo = _create_tables_and_repos(engine, _session_factory)
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="reset-poison-lib",
+                name="Reset Poison Lib",
+                absolute_path="/tmp/reset-poison",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("reset-poison-lib", "a.jpg", AssetType.image, 1000.0, 5000)
+    asset_repo.upsert_asset("reset-poison-lib", "b.jpg", AssetType.image, 1001.0, 5001)
+
+    session = _session_factory()
+    try:
+        session.execute(
+            text("""
+                UPDATE asset
+                SET status = 'poisoned', retry_count = 3, error_message = 'Something broke'
+                WHERE library_id = 'reset-poison-lib'
+            """),
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    updated = asset_repo.reset_poisoned_assets(library_slug=None)
+    assert updated >= 2
+
+    session = _session_factory()
+    try:
+        rows = session.execute(
+            text(
+                "SELECT status, retry_count, error_message FROM asset WHERE library_id = 'reset-poison-lib'"
+            ),
+        ).fetchall()
+        assert len(rows) == 2
+        for row in rows:
+            assert row[0] == "pending"
+            assert row[1] == 0
+            assert row[2] is None
+    finally:
+        session.close()
+
+
+def test_reset_poisoned_assets_filtered_by_library(engine, _session_factory):
+    """reset_poisoned_assets with library_slug only resets assets in that library."""
+    asset_repo, worker_repo = _create_tables_and_repos(engine, _session_factory)
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="reset-lib-a",
+                name="Reset Lib A",
+                absolute_path="/tmp/reset-a",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.add(
+            Library(
+                slug="reset-lib-b",
+                name="Reset Lib B",
+                absolute_path="/tmp/reset-b",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("reset-lib-a", "a.jpg", AssetType.image, 1000.0, 5000)
+    asset_repo.upsert_asset("reset-lib-b", "b.jpg", AssetType.image, 1001.0, 5001)
+
+    session = _session_factory()
+    try:
+        session.execute(
+            text("""
+                UPDATE asset
+                SET status = 'poisoned', retry_count = 1, error_message = 'err'
+                WHERE library_id IN ('reset-lib-a', 'reset-lib-b')
+            """),
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    updated = asset_repo.reset_poisoned_assets(library_slug="reset-lib-a")
+    assert updated == 1
+
+    session = _session_factory()
+    try:
+        row_a = session.execute(
+            text("SELECT status, retry_count, error_message FROM asset WHERE library_id = 'reset-lib-a'"),
+        ).fetchone()
+        row_b = session.execute(
+            text("SELECT status, retry_count, error_message FROM asset WHERE library_id = 'reset-lib-b'"),
+        ).fetchone()
+        assert row_a[0] == "pending"
+        assert row_a[1] == 0
+        assert row_a[2] is None
+        assert row_b[0] == "poisoned"
+        assert row_b[1] == 1
+        assert row_b[2] == "err"
+    finally:
+        session.close()
+
+
+def test_maintenance_retry_poisoned_cli(engine, _session_factory, tmp_path):
+    """maintenance retry-poisoned rescues poisoned assets and prints count."""
+    asset_repo, worker_repo, library_repo, video_scene_repo = _create_tables_and_all_repos(
+        engine, _session_factory
+    )
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="retry-cli-lib",
+                name="Retry CLI Lib",
+                absolute_path="/tmp/retry-cli",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("retry-cli-lib", "a.jpg", AssetType.image, 1000.0, 5000)
+    asset_repo.upsert_asset("retry-cli-lib", "b.jpg", AssetType.image, 1001.0, 5001)
+
+    session = _session_factory()
+    try:
+        session.execute(
+            text("""
+                UPDATE asset
+                SET status = 'poisoned', retry_count = 2, error_message = 'failed'
+                WHERE library_id = 'retry-cli-lib'
+            """),
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["maintenance", "retry-poisoned", "--library", "retry-cli-lib"],
+        env={**os.environ, "MEDIA_SEARCH_DATA_DIR": str(tmp_path)},
+    )
+    assert result.exit_code == 0
+    assert "Rescued 2 asset(s) back into the pipeline." in result.stdout
+
+    result2 = runner.invoke(
+        app,
+        ["maintenance", "retry-poisoned", "--library", "retry-cli-lib"],
+        env={**os.environ, "MEDIA_SEARCH_DATA_DIR": str(tmp_path)},
+    )
+    assert result2.exit_code == 0
+    assert "No poisoned assets to rescue." in result2.stdout
+
+
 def test_cleanup_temp_dir_removes_old_files(tmp_path):
     """cleanup_temp_dir deletes files older than max_age_seconds."""
     tmp_dir = tmp_path / "tmp"

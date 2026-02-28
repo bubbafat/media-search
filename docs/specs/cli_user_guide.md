@@ -19,7 +19,7 @@ uv run media-search --help
 | `library`       | Add, remove, restore, list libraries, force video reindex (reindex-videos)                                  |
 | `trash`         | Manage soft-deleted libraries (list, empty one, empty all)                                                  |
 | `repair`        | Repair database consistency (e.g. orphan-assets: remove assets whose library no longer exists)              |
-| `maintenance`   | System maintenance and housekeeping (run: prune stale workers, reclaim leases, cleanup temp files, reap assets with missing source files; cleanup-data-dir: remove orphaned files)   |
+| `maintenance`   | System maintenance and housekeeping (run: prune stale workers, reclaim leases, cleanup temp files, reap assets with missing source files; retry-poisoned: rescue poisoned assets; cleanup-data-dir: remove orphaned files)   |
 | `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)           |
 | `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                   |
 | `scan`          | Run a one-shot scan for a library (no daemon)                                                               |
@@ -276,6 +276,27 @@ uv run media-search maintenance cleanup-data-dir --dry-run
 ```
 
 Output reports: `Deleted N orphaned files from data directory.` With `--dry-run`, prints a preview and exits without applying changes.
+
+---
+
+### maintenance retry-poisoned
+
+Reset poisoned assets to `pending` so they re-enter the pipeline. Use this after fixing environment issues (e.g. reconnected drive, fixed AI model) that caused assets to be marked poisoned.
+
+
+| Option       | Description                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `--library`  | Optional. Limit to this library slug only. Omit to rescue all poisoned assets.                 |
+
+
+**Example:**
+
+```bash
+uv run media-search maintenance retry-poisoned
+uv run media-search maintenance retry-poisoned --library nas-main
+```
+
+Output reports: `Rescued N asset(s) back into the pipeline.` If no poisoned assets exist: `No poisoned assets to rescue.`
 
 ---
 

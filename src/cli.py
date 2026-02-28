@@ -1045,6 +1045,24 @@ def _format_bytes(n: int) -> str:
     return f"{n / (1024 * 1024 * 1024):.1f} GB"
 
 
+@maintenance_app.command("retry-poisoned")
+def maintenance_retry_poisoned(
+    library_slug: str | None = typer.Option(
+        None,
+        "--library",
+        help="Limit to this library slug. Omit to rescue poisoned assets in all libraries.",
+    ),
+) -> None:
+    """Reset poisoned assets to pending so they re-enter the pipeline after fixing environment issues."""
+    session_factory = _get_session_factory()
+    asset_repo = AssetRepository(session_factory)
+    count = asset_repo.reset_poisoned_assets(library_slug=library_slug)
+    if count:
+        typer.echo(f"Rescued {count} asset(s) back into the pipeline.")
+    else:
+        typer.echo("No poisoned assets to rescue.")
+
+
 @maintenance_app.command("run")
 def maintenance_run(
     dry_run: bool = typer.Option(
