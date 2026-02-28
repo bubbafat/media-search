@@ -91,10 +91,10 @@ def test_video_worker_process_task_completes_asset(engine, _session_factory):
     session = _session_factory()
     try:
         session.execute(
-            text(
-                "UPDATE asset SET status = 'proxied' WHERE library_id = 'video-lib' AND rel_path = 'movie.mp4'"
+                text(
+                    "UPDATE asset SET status = 'analyzed_light' WHERE library_id = 'video-lib' AND rel_path = 'movie.mp4'"
+                )
             )
-        )
         session.commit()
     finally:
         session.close()
@@ -206,10 +206,10 @@ def test_video_worker_process_task_poisons_on_exception(engine, _session_factory
     session = _session_factory()
     try:
         session.execute(
-            text(
-                "UPDATE asset SET status = 'proxied' WHERE library_id = 'poison-video' AND rel_path = 'bad.mp4'"
+                text(
+                    "UPDATE asset SET status = 'analyzed_light' WHERE library_id = 'poison-video' AND rel_path = 'bad.mp4'"
+                )
             )
-        )
         session.commit()
     finally:
         session.close()
