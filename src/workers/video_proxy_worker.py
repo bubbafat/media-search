@@ -171,6 +171,23 @@ class VideoProxyWorker(BaseWorker):
             current_version, self._library_slug, limit=50, global_scope=self._global_mode
         )
         for asset_id in stale_ids:
+            asset = self.asset_repo.get_asset_by_id(asset_id)
+            if asset is None:
+                continue
+            try:
+                source_path = resolve_path(asset.library_id, asset.rel_path)
+            except (ValueError, FileNotFoundError):
+                _log.warning(
+                    "Source file missing, skipping segmentation upgrade for asset %s",
+                    asset_id,
+                )
+                continue
+            if not source_path.exists():
+                _log.warning(
+                    "Source file missing, skipping segmentation upgrade for asset %s",
+                    asset_id,
+                )
+                continue
             self.scene_repo.clear_index_for_asset(asset_id)
             self.asset_repo.update_asset_status(asset_id, AssetStatus.pending)
 

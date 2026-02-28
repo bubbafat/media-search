@@ -2,6 +2,7 @@
 
 import io
 import logging
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -406,6 +407,18 @@ class LocalMediaStore:
         proxy_path = self._get_proxy_path(library_slug, asset_id)
         thumb_path = self._get_shard_path(library_slug, asset_id, "thumbnails")
         return file_non_empty(proxy_path) and file_non_empty(thumb_path)
+
+    def delete_asset_files(self, library_slug: str, asset_id: int) -> None:
+        """
+        Remove all derived files for an asset: thumbnail, proxy, and video clips directory.
+        Uses unlink(missing_ok=True) for files and rmtree(ignore_errors=True) for directories.
+        """
+        thumb_path = self._get_shard_path(library_slug, asset_id, "thumbnails")
+        thumb_path.unlink(missing_ok=True)
+        proxy_path = self._get_proxy_path(library_slug, asset_id)
+        proxy_path.unlink(missing_ok=True)
+        clips_dir = self.data_dir / "video_clips" / library_slug / str(asset_id)
+        shutil.rmtree(clips_dir, ignore_errors=True)
 
     def generate_proxy_and_thumbnail_from_source(
         self,

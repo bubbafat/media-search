@@ -1079,6 +1079,7 @@ def maintenance_run(
             library_slug=library_slug, global_scope=(library_slug is None)
         )
         temp_count, temp_bytes = service.preview_temp_cleanup(library_slug=library_slug)
+        would_reap, _ = service.reap_missing_source_files(dry_run=True)
         scope = f" (library: {library_slug})" if library_slug else ""
         typer.echo("Dry run: what would be done:")
         typer.echo(f"  Stale workers: {stale_workers}")
@@ -1086,14 +1087,17 @@ def maintenance_run(
         typer.echo(
             f"  Temp files: {temp_count} files, {_format_bytes(temp_bytes)} reclaimable{scope}"
         )
+        typer.echo(f"  Would reap: {would_reap} assets with missing source files")
         typer.echo("Run without --dry-run to apply changes.")
         return
     pruned = service.prune_stale_workers()
     reclaimed = service.reclaim_stale_leases(library_slug=library_slug)
     deleted = service.cleanup_temp_dir(library_slug=library_slug)
+    _, reaped = service.reap_missing_source_files(dry_run=False)
     scope = f" (library: {library_slug})" if library_slug else ""
     typer.echo(
-        f"Pruned {pruned} workers, Reclaimed {reclaimed} assets{scope}, Deleted {deleted} temp files{scope}."
+        f"Pruned {pruned} workers, Reclaimed {reclaimed} assets{scope}, "
+        f"Deleted {deleted} temp files{scope}, Reaped {reaped} assets with missing source files."
     )
 
 

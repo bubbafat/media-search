@@ -395,6 +395,77 @@ def test_video_proxy_repair_sets_pending_when_head_clip_0_byte(engine, _session_
         session.close()
 
 
+def test_video_proxy_skips_segmentation_upgrade_when_source_missing(
+    engine, _session_factory
+):
+    """When source file is missing, video proxy skips segmentation upgrade (no clear_index, no status reset)."""
+    asset_repo, worker_repo, system_metadata_repo = _create_tables_and_repos(
+        engine, _session_factory
+    )
+    scene_repo = VideoSceneRepository(_session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="guard-missing-lib",
+                name="Guard Missing",
+                absolute_path="/tmp/guard-missing",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(
+        "guard-missing-lib", "video.mp4", AssetType.video, 1000.0, 100
+    )
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET status = 'proxied', segmentation_version = 0 "
+                "WHERE library_id = 'guard-missing-lib' AND rel_path = 'video.mp4'"
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset = asset_repo.get_asset("guard-missing-lib", "video.mp4")
+    assert asset is not None
+    assert asset.status == AssetStatus.proxied
+
+    with patch(
+        "src.workers.video_proxy_worker.resolve_path",
+        side_effect=FileNotFoundError("Path does not exist"),
+    ):
+        worker = VideoProxyWorker(
+            worker_id="guard-worker",
+            repository=worker_repo,
+            heartbeat_interval_seconds=15.0,
+            asset_repo=asset_repo,
+            system_metadata_repo=system_metadata_repo,
+            scene_repo=scene_repo,
+            library_slug="guard-missing-lib",
+            repair=False,
+        )
+        worker.process_task()
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text(
+                "SELECT status FROM asset WHERE library_id = 'guard-missing-lib' AND rel_path = 'video.mp4'"
+            )
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "proxied"
+    finally:
+        session.close()
+
+
 def test_cli_proxy_repair_passes_repair_true(engine, _session_factory):
     """proxy --repair invokes ImageProxyWorker with repair=True."""
     _create_tables_and_repos(engine, _session_factory)

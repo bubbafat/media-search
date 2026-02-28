@@ -19,7 +19,7 @@ uv run media-search --help
 | `library`       | Add, remove, restore, list libraries, force video reindex (reindex-videos)                                  |
 | `trash`         | Manage soft-deleted libraries (list, empty one, empty all)                                                  |
 | `repair`        | Repair database consistency (e.g. orphan-assets: remove assets whose library no longer exists)              |
-| `maintenance`   | System maintenance and housekeeping (run: prune stale workers, reclaim leases, cleanup temp files; cleanup-data-dir: remove orphaned files)   |
+| `maintenance`   | System maintenance and housekeeping (run: prune stale workers, reclaim leases, cleanup temp files, reap assets with missing source files; cleanup-data-dir: remove orphaned files)   |
 | `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)           |
 | `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                   |
 | `scan`          | Run a one-shot scan for a library (no daemon)                                                               |
@@ -232,16 +232,16 @@ uv run media-search repair orphan-assets --force
 
 ### maintenance run
 
-Run all maintenance tasks: prune stale workers (worker_status rows older than 24h), reclaim expired leases (assets stuck in `processing` with expired lease_expires_at reset to `pending` or `poisoned`), and delete temp files in `data_dir/tmp` older than 4 hours. **Temp cleanup is skipped** when a Video Proxy Worker on the same machine is actively transcoding (based on worker heartbeat stats), to avoid deleting partial files FFmpeg is writing.
+Run all maintenance tasks: prune stale workers (worker_status rows older than 24h), reclaim expired leases (assets stuck in `processing` with expired lease_expires_at reset to `pending` or `poisoned`), delete temp files in `data_dir/tmp` older than 4 hours, and **reap assets with missing source files** (delete assets whose source files no longer exist on disk, including thumbnails, proxies, and video clips). **Temp cleanup is skipped** when a Video Proxy Worker on the same machine is actively transcoding (based on worker heartbeat stats), to avoid deleting partial files FFmpeg is writing.
 
-**Global by default.** No arguments required; maintenance runs over all libraries. Optionally pass `--library <slug>` to filter temp cleanup and lease reclaim to that library only (e.g. only `data_dir/tmp/<slug>/` and assets in that library). Pruning stale workers is always global.
+**Global by default.** No arguments required; maintenance runs over all libraries. Optionally pass `--library <slug>` to filter temp cleanup and lease reclaim to that library only (e.g. only `data_dir/tmp/<slug>/` and assets in that library). Pruning stale workers and reap are always global.
 
 Useful for cron jobs or periodic housekeeping. Requires a running PostgreSQL instance and applied migrations.
 
 
 | Option       | Description                                                                                    |
 | ------------ | ---------------------------------------------------------------------------------------------- |
-| `--dry-run`  | Show what would be done without making changes. Prints stale worker count, stale lease count, temp file count and reclaimable size. |
+| `--dry-run`  | Show what would be done without making changes. Prints stale worker count, stale lease count, temp file count, reclaimable size, and would-reap count. |
 | `--library`  | Optional. Limit temp cleanup and lease reclaim to this library slug only. Omit for global maintenance. |
 
 
@@ -254,7 +254,7 @@ uv run media-search maintenance run --library nas-main
 uv run media-search maintenance run --library nas-main --dry-run
 ```
 
-Output reports counts: `Pruned N workers, Reclaimed M assets, Deleted K temp files.` With `--dry-run`, prints a preview and exits without applying changes.
+Output reports counts: `Pruned N workers, Reclaimed M assets, Deleted K temp files, Reaped R assets with missing source files.` With `--dry-run`, prints a preview (including "Would reap: R assets with missing source files") and exits without applying changes.
 
 ---
 

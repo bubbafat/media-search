@@ -273,6 +273,56 @@ class AssetRepository:
                 {"version": version, "asset_id": asset_id},
             )
 
+    def get_all_asset_paths(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> Sequence[tuple[int, str, str]]:
+        """
+        Return (id, library_slug, rel_path) for all assets in non-deleted libraries.
+        Ordered by id for stable batching.
+        """
+        with self._session_scope(write=False) as session:
+            rows = session.execute(
+                text("""
+                    SELECT a.id, a.library_id, a.rel_path
+                    FROM asset a
+                    JOIN library l ON a.library_id = l.slug
+                    WHERE l.deleted_at IS NULL
+                    ORDER BY a.id
+                    LIMIT :limit OFFSET :offset
+                """),
+                {"limit": limit, "offset": offset},
+            ).fetchall()
+        return [(int(r[0]), str(r[1]), str(r[2])) for r in rows]
+
+    def delete_asset_cascade(self, asset_id: int) -> None:
+        """
+        Delete an asset and all dependent rows in strict FK order:
+        video_active_state, video_scenes, videoframe, project_assets, asset.
+        """
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("DELETE FROM video_active_state WHERE asset_id = :asset_id"),
+                {"asset_id": asset_id},
+            )
+            session.execute(
+                text("DELETE FROM video_scenes WHERE asset_id = :asset_id"),
+                {"asset_id": asset_id},
+            )
+            session.execute(
+                text("DELETE FROM videoframe WHERE asset_id = :asset_id"),
+                {"asset_id": asset_id},
+            )
+            session.execute(
+                text("DELETE FROM project_assets WHERE asset_id = :asset_id"),
+                {"asset_id": asset_id},
+            )
+            session.execute(
+                text("DELETE FROM asset WHERE id = :asset_id"),
+                {"asset_id": asset_id},
+            )
+
     def count_assets_by_library(
         self,
         library_id: str,

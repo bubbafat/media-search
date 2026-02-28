@@ -52,6 +52,30 @@ def test_save_and_get_thumbnail_path(temp_data_dir):
     assert path.suffix == ".jpg"
 
 
+def test_delete_asset_files_removes_thumbnail_proxy_and_clips(temp_data_dir):
+    """delete_asset_files removes thumbnail, proxy, and video clips directory."""
+    store, data_dir = temp_data_dir
+    img = Image.new("RGB", (100, 100), color="red")
+    store.save_thumbnail("lib1", 42, img)
+    store.save_proxy("lib1", 42, img)
+    clips_dir = data_dir / "video_clips" / "lib1" / "42"
+    clips_dir.mkdir(parents=True)
+    (clips_dir / "head_clip.mp4").write_bytes(b"fake")
+    assert store.get_thumbnail_path("lib1", 42).exists()
+    assert store.get_proxy_path("lib1", 42).exists()
+    assert clips_dir.exists()
+    store.delete_asset_files("lib1", 42)
+    assert not store._get_shard_path("lib1", 42, "thumbnails").exists()
+    assert not store._get_proxy_path("lib1", 42).exists()
+    assert not clips_dir.exists()
+
+
+def test_delete_asset_files_handles_missing_files(temp_data_dir):
+    """delete_asset_files does not raise when files do not exist."""
+    store, _ = temp_data_dir
+    store.delete_asset_files("lib1", 999)
+
+
 def test_atomic_write_no_tmp_remains_after_success(temp_data_dir):
     """save_proxy and save_thumbnail use atomic writes; no .tmp files remain."""
     store, data_dir = temp_data_dir

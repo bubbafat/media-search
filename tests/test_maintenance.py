@@ -4,7 +4,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import text
@@ -23,6 +23,7 @@ from src.models.entities import (
 from src.models.entities import WorkerStatus as WorkerStatusEntity
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
+from src.repository.video_scene_repo import VideoSceneRow
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
@@ -632,8 +633,219 @@ def test_cleanup_data_dir_keeps_expected_files(engine, _session_factory, tmp_pat
     assert thumb_file.exists()
 
 
+def test_get_all_asset_paths_returns_ids_in_non_deleted_libraries(
+    engine, _session_factory
+):
+    """get_all_asset_paths returns (id, library_slug, rel_path) for assets in non-deleted libs."""
+    asset_repo, worker_repo = _create_tables_and_repos(engine, _session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="paths-lib",
+                name="Paths Lib",
+                absolute_path="/tmp/paths",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("paths-lib", "a.jpg", AssetType.image, 1000.0, 100)
+    asset_repo.upsert_asset("paths-lib", "b.mp4", AssetType.video, 2000.0, 200)
+    paths = asset_repo.get_all_asset_paths(limit=100, offset=0)
+    assert len(paths) >= 2
+    ids = {p[0] for p in paths}
+    lib_slugs = {p[1] for p in paths}
+    assert "paths-lib" in lib_slugs
+    rel_paths = [p[2] for p in paths if p[1] == "paths-lib"]
+    assert "a.jpg" in rel_paths
+    assert "b.mp4" in rel_paths
+
+
+def test_delete_asset_cascade_removes_asset_and_dependents(
+    engine, _session_factory
+):
+    """delete_asset_cascade removes video_active_state, video_scenes, videoframe, project_assets, asset."""
+    asset_repo, worker_repo = _create_tables_and_repos(engine, _session_factory)
+    scene_repo = VideoSceneRepository(_session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="cascade-lib",
+                name="Cascade Lib",
+                absolute_path="/tmp/cascade",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("cascade-lib", "video.mp4", AssetType.video, 1000.0, 100)
+    asset = asset_repo.get_asset("cascade-lib", "video.mp4")
+    assert asset is not None
+    asset_id = asset.id
+    scene_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description=None,
+            metadata=None,
+            sharpness_score=1.0,
+            rep_frame_path="video_scenes/cascade-lib/1/0_5.jpg",
+            keep_reason="phash",
+        ),
+        None,
+    )
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT COUNT(*) FROM video_scenes WHERE asset_id = :aid"),
+            {"aid": asset_id},
+        ).fetchone()
+        assert row[0] == 1
+    finally:
+        session.close()
+
+    asset_repo.delete_asset_cascade(asset_id)
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT COUNT(*) FROM asset WHERE id = :aid"),
+            {"aid": asset_id},
+        ).fetchone()
+        assert row[0] == 0
+        row2 = session.execute(
+            text("SELECT COUNT(*) FROM video_scenes WHERE asset_id = :aid"),
+            {"aid": asset_id},
+        ).fetchone()
+        assert row2[0] == 0
+    finally:
+        session.close()
+
+
+def test_reap_missing_source_files_dry_run_counts_only(
+    engine, _session_factory, tmp_path
+):
+    """reap_missing_source_files(dry_run=True) counts missing sources without deleting."""
+    asset_repo, worker_repo, library_repo, video_scene_repo = (
+        _create_tables_and_all_repos(engine, _session_factory)
+    )
+    lib_slug = f"reap-dry-lib-{uuid.uuid4().hex[:8]}"
+    lib_path = tmp_path / lib_slug
+    lib_path.mkdir()
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=lib_slug,
+                name="Reap Dry Lib",
+                absolute_path=str(lib_path.resolve()),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(lib_slug, "missing.mp4", AssetType.video, 1000.0, 100)
+    asset = asset_repo.get_asset(lib_slug, "missing.mp4")
+    assert asset is not None
+
+    service = MaintenanceService(
+        asset_repo=asset_repo,
+        worker_repo=worker_repo,
+        data_dir=tmp_path,
+        library_repo=library_repo,
+        video_scene_repo=video_scene_repo,
+    )
+    would_delete, deleted = service.reap_missing_source_files(dry_run=True)
+    assert would_delete >= 1
+    assert deleted == 0
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT COUNT(*) FROM asset WHERE library_id = :slug"),
+            {"slug": lib_slug},
+        ).fetchone()
+        assert row[0] == 1
+    finally:
+        session.close()
+
+
+def test_reap_missing_source_files_deletes_assets_with_missing_source(
+    engine, _session_factory, tmp_path
+):
+    """reap_missing_source_files(dry_run=False) deletes assets and files when source missing."""
+    asset_repo, worker_repo, library_repo, video_scene_repo = (
+        _create_tables_and_all_repos(engine, _session_factory)
+    )
+    lib_slug = f"reap-exec-lib-{uuid.uuid4().hex[:8]}"
+    lib_path = tmp_path / lib_slug
+    lib_path.mkdir()
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=lib_slug,
+                name="Reap Exec Lib",
+                absolute_path=str(lib_path.resolve()),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(lib_slug, "gone.mp4", AssetType.video, 1000.0, 100)
+    asset = asset_repo.get_asset(lib_slug, "gone.mp4")
+    assert asset is not None
+    asset_id = asset.id
+
+    from src.core.storage import LocalMediaStore
+
+    mock_cfg = MagicMock()
+    mock_cfg.data_dir = str(tmp_path)
+    with patch("src.core.storage.get_config", return_value=mock_cfg):
+        store = LocalMediaStore()
+        thumb_path = (
+            tmp_path / lib_slug / "thumbnails" / str(asset_id % 1000) / f"{asset_id}.jpg"
+        )
+        thumb_path.parent.mkdir(parents=True, exist_ok=True)
+        thumb_path.write_text("thumb")
+
+        service = MaintenanceService(
+            asset_repo=asset_repo,
+            worker_repo=worker_repo,
+            data_dir=tmp_path,
+            library_repo=library_repo,
+            video_scene_repo=video_scene_repo,
+            storage=store,
+        )
+        would_delete, deleted = service.reap_missing_source_files(dry_run=False)
+    assert deleted >= 1
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT COUNT(*) FROM asset WHERE id = :aid"),
+            {"aid": asset_id},
+        ).fetchone()
+        assert row[0] == 0
+    finally:
+        session.close()
+
+
 def test_maintenance_run_dry_run_shows_preview(engine, _session_factory, tmp_path):
-    """maintenance run --dry-run prints stale workers, stale leases, temp file info without changes."""
+    """maintenance run --dry-run prints stale workers, stale leases, temp file info, would reap without changes."""
     _create_tables_and_all_repos(engine, _session_factory)
     runner = CliRunner()
     result = runner.invoke(
@@ -646,6 +858,7 @@ def test_maintenance_run_dry_run_shows_preview(engine, _session_factory, tmp_pat
     assert "Stale workers" in result.stdout
     assert "Stale leases" in result.stdout
     assert "Temp files" in result.stdout
+    assert "Would reap" in result.stdout
     assert "Run without --dry-run to apply changes" in result.stdout
 
 

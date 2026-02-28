@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.core.path_resolver import resolve_path
+from src.core.storage import LocalMediaStore
 from src.repository.asset_repo import AssetRepository
 from src.repository.worker_repo import WorkerRepository
 
@@ -30,6 +32,7 @@ class MaintenanceService:
         library_repo: "LibraryRepository",
         video_scene_repo: "VideoSceneRepository",
         hostname: str = "",
+        storage: LocalMediaStore | None = None,
     ) -> None:
         self._asset_repo = asset_repo
         self._worker_repo = worker_repo
@@ -37,6 +40,7 @@ class MaintenanceService:
         self._library_repo = library_repo
         self._video_scene_repo = video_scene_repo
         self._hostname = hostname
+        self._storage = storage if storage is not None else LocalMediaStore()
 
     def run_all(self, *, library_slug: str | None = None) -> None:
         """Execute all maintenance tasks in order. When library_slug is set, temp cleanup and reclaim are filtered to that library."""
@@ -297,3 +301,43 @@ class MaintenanceService:
                 _log.warning("Could not remove empty dir %s: %s", d, e)
 
         return deleted
+
+    def reap_missing_source_files(
+        self, *, dry_run: bool = False
+    ) -> tuple[int, int]:
+        """
+        Find assets whose source files are missing and optionally delete them.
+        Returns (would_delete_count, deleted_count) for reporting.
+        """
+        batch_size = 1000
+        offset = 0
+        would_delete = 0
+        deleted = 0
+        while True:
+            batch = self._asset_repo.get_all_asset_paths(
+                limit=batch_size, offset=offset
+            )
+            if not batch:
+                break
+            for asset_id, library_slug, rel_path in batch:
+                try:
+                    source_path = resolve_path(library_slug, rel_path)
+                except (ValueError, FileNotFoundError):
+                    if dry_run:
+                        would_delete += 1
+                    else:
+                        self._storage.delete_asset_files(library_slug, asset_id)
+                        self._asset_repo.delete_asset_cascade(asset_id)
+                        deleted += 1
+                    continue
+                if not source_path.exists():
+                    if dry_run:
+                        would_delete += 1
+                    else:
+                        self._storage.delete_asset_files(library_slug, asset_id)
+                        self._asset_repo.delete_asset_cascade(asset_id)
+                        deleted += 1
+            offset += len(batch)
+            if len(batch) < batch_size:
+                break
+        return (would_delete, deleted)
