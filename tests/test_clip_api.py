@@ -163,9 +163,10 @@ def test_clip_api_video_source_exists_302_redirect(clip_api_postgres, tmp_path):
     assert source_video.exists(), f"Source video should exist at {source_video}"
 
     # Pre-create clip file so we skip extraction (faster, no FFmpeg race)
+    # Filename uses ms: ts=5.0 -> clip_5000.mp4
     clip_dir = tmp_path / "video_clips" / "clip-lib" / "402"
     clip_dir.mkdir(parents=True, exist_ok=True)
-    (clip_dir / "clip_5.mp4").write_bytes(b"fake-mp4")
+    (clip_dir / "clip_5000.mp4").write_bytes(b"fake-mp4")
 
     app.dependency_overrides[_get_asset_repo] = lambda: asset_repo
     app.dependency_overrides[_get_library_repo] = lambda: library_repo
@@ -180,7 +181,7 @@ def test_clip_api_video_source_exists_302_redirect(clip_api_postgres, tmp_path):
                     f"Expected 302, got {res.status_code}. "
                     f"detail={res.json() if 'application/json' in res.headers.get('content-type', '') else res.text}"
                 )
-                assert res.headers["location"] == "/media/video_clips/clip-lib/402/clip_5.mp4"
+                assert res.headers["location"] == "/media/video_clips/clip-lib/402/clip_5000.mp4"
             finally:
                 app.dependency_overrides.pop(_get_asset_repo, None)
                 app.dependency_overrides.pop(_get_library_repo, None)

@@ -18,11 +18,9 @@ from src.models.entities import Asset, AssetStatus, AssetType, Library, ScanStat
 DEFAULT_LEASE_SECONDS = 300
 
 # Image extensions matching proxy worker (for repair)
-_REPAIR_IMAGE_PATTERN = r"\." + "|".join(re.escape(s) for s in IMAGE_EXTENSION_SUFFIXES) + r"$"
+_REPAIR_IMAGE_PATTERN = rf"\.({'|'.join(re.escape(s) for s in IMAGE_EXTENSION_SUFFIXES)})$"
 # Image + video extensions (ProxyWorker handles both)
-_REPAIR_PROXYABLE_PATTERN = (
-    r"\." + "|".join(re.escape(s) for s in IMAGE_EXTENSION_SUFFIXES + VIDEO_EXTENSION_SUFFIXES) + r"$"
-)
+_REPAIR_PROXYABLE_PATTERN = rf"\.({'|'.join(re.escape(s) for s in IMAGE_EXTENSION_SUFFIXES + VIDEO_EXTENSION_SUFFIXES)})$"
 
 
 class AssetRepository:
@@ -404,8 +402,8 @@ class AssetRepository:
         if not supported_exts:
             return None
         # Build regex for rel_path suffix: \.(jpg|jpeg|png|...)$
-        suffixes = "|".join(re.escape(ext.lstrip(".")) for ext in supported_exts)
-        pattern = r"\." + suffixes + r"$"
+        escaped_exts = [re.escape(ext.lstrip(".")) for ext in supported_exts]
+        pattern = rf"\.({'|'.join(escaped_exts)})$"
         params: dict = {"status": current_status.value, "pattern": pattern}
         library_clause = ""
         if library_slug is not None:
@@ -498,8 +496,8 @@ class AssetRepository:
         """
         if not supported_exts or limit < 1:
             return []
-        suffixes = "|".join(re.escape(ext.lstrip(".")) for ext in supported_exts)
-        pattern = r"\." + suffixes + r"$"
+        escaped_exts = [re.escape(ext.lstrip(".")) for ext in supported_exts]
+        pattern = rf"\.({'|'.join(escaped_exts)})$"
         params: dict = {"status": current_status.value, "pattern": pattern, "limit": limit}
         library_clause = ""
         if library_slug is not None:

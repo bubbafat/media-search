@@ -50,9 +50,8 @@ class MoondreamStationAnalyzer(BaseVisionAnalyzer):
         max_tokens: int | None = None,
     ) -> VisualAnalysis:
         Image = self._Image
-        image = Image.open(image_path)
-        if image.mode != "RGB":
-            image = image.convert("RGB")
+        with Image.open(image_path) as img:
+            image = img.convert("RGB") if img.mode != "RGB" else img.copy()
 
         try:
             caption_out = self._model.caption(image, length="short")

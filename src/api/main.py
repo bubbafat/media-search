@@ -496,7 +496,7 @@ async def api_asset_clip(
         raise HTTPException(status_code=404, detail="Source file not found")
 
     data_dir = Path(get_config().data_dir)
-    dest_path = data_dir / "video_clips" / asset.library_id / str(asset_id) / f"clip_{int(ts)}.mp4"
+    dest_path = data_dir / "video_clips" / asset.library_id / str(asset_id) / f"clip_{int(ts * 1000)}.mp4"
 
     if not dest_path.exists():
         ok = await extract_clip(source_path, dest_path, ts)
@@ -504,7 +504,7 @@ async def api_asset_clip(
             raise HTTPException(status_code=500, detail="Clip extraction failed")
 
     return RedirectResponse(
-        url=f"/media/video_clips/{asset.library_id}/{asset_id}/clip_{int(ts)}.mp4",
+        url=f"/media/video_clips/{asset.library_id}/{asset_id}/clip_{int(ts * 1000)}.mp4",
         status_code=302,
     )
 
