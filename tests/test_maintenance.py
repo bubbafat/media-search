@@ -2,6 +2,7 @@
 
 import os
 import time
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -560,11 +561,12 @@ def test_cleanup_data_dir_keeps_expected_files(engine, _session_factory, tmp_pat
     asset_repo, worker_repo, library_repo, video_scene_repo = _create_tables_and_all_repos(
         engine, _session_factory
     )
+    lib_slug = f"expected-lib-{uuid.uuid4().hex[:8]}"
     session = _session_factory()
     try:
         session.add(
             Library(
-                slug="expected-lib",
+                slug=lib_slug,
                 name="Expected Lib",
                 absolute_path="/tmp/expected",
                 is_active=True,
@@ -575,21 +577,25 @@ def test_cleanup_data_dir_keeps_expected_files(engine, _session_factory, tmp_pat
     finally:
         session.close()
 
-    asset_repo.upsert_asset("expected-lib", "a.jpg", AssetType.image, 1000.0, 5000)
+    asset_repo.upsert_asset(lib_slug, "a.jpg", AssetType.image, 1000.0, 5000)
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"]
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug=lib_slug
     )
     assert claimed is not None
     asset_id = claimed.id
     asset_repo.update_asset_status(asset_id, AssetStatus.proxied)
 
+    # Verify asset appears in get_asset_ids_expecting_proxy (pre-condition for expected set)
+    proxy_ids = asset_repo.get_asset_ids_expecting_proxy(library_slug=lib_slug)
+    assert (asset_id, lib_slug, "image") in proxy_ids, (
+        f"Asset {asset_id} not in get_asset_ids_expecting_proxy; proxy_ids={proxy_ids}"
+    )
+
     shard = asset_id % 1000
-    thumb_dir = tmp_path / "expected-lib" / "thumbnails" / str(shard)
+    thumb_dir = tmp_path / lib_slug / "thumbnails" / str(shard)
     thumb_dir.mkdir(parents=True)
     thumb_file = thumb_dir / f"{asset_id}.jpg"
     thumb_file.write_text("expected thumb")
-    import os
-
     os.utime(thumb_file, (time.time() - 20 * 60, time.time() - 20 * 60))
 
     service = MaintenanceService(
@@ -600,7 +606,7 @@ def test_cleanup_data_dir_keeps_expected_files(engine, _session_factory, tmp_pat
         video_scene_repo=video_scene_repo,
     )
     deleted = service.cleanup_data_dir(min_file_age_seconds=15 * 60)
-    assert deleted == 0
+    assert deleted == 0, f"Expected 0 deleted, got {deleted}; thumb file should be in expected set"
     assert thumb_file.exists()
 
 
