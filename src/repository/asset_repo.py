@@ -1,5 +1,6 @@
 """Asset and library scan repository: upsert assets, claim library for scanning, set scan status."""
 
+import logging
 import re
 from collections.abc import Sequence
 from contextlib import contextmanager
@@ -14,6 +15,8 @@ from src.core.file_extensions import (
     VIDEO_EXTENSION_SUFFIXES,
 )
 from src.models.entities import Asset, AssetStatus, AssetType, Library, ScanStatus
+
+_log = logging.getLogger(__name__)
 
 DEFAULT_LEASE_SECONDS = 300
 
@@ -427,23 +430,26 @@ class AssetRepository:
         current_status: AssetStatus,
         supported_exts: list[str],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        library_slug: str | None = None,
         *,
+        library_slug: str | None,
         target_model_id: int | None = None,
         system_default_model_id: int | None = None,
     ) -> Asset | None:
         """
         Claim one asset with status == current_status (or expired processing lease) in a non-deleted library,
         with rel_path ending (case-insensitive) in supported_exts.
-        When library_slug is set, only assets from that library are considered.
-        When target_model_id and system_default_model_id are set, only claim assets whose
-        library's effective target model (COALESCE(library.target_tagger_id, system_default))
-        equals target_model_id.
+
+        library_slug: Restrict to this library. Pass None only when intentionally claiming from any library
+        (global worker mode). Omitting or using None accidentally can claim from the wrong library.
+        target_model_id / system_default_model_id: when both set, restrict to assets whose library's
+        effective target model matches.
         Uses FOR UPDATE SKIP LOCKED. Sets status=processing, worker_id, lease_expires_at.
         Returns the Asset with library (slug, absolute_path) populated.
         """
         if not supported_exts:
             return None
+        if library_slug is None:
+            _log.info("Claiming asset from all libraries (library_slug=None); ensure global mode is intended.")
         # Build regex for rel_path suffix: \.(jpg|jpeg|png|...)$
         escaped_exts = [re.escape(ext.lstrip(".")) for ext in supported_exts]
         pattern = rf"\.({'|'.join(escaped_exts)})$"
@@ -528,17 +534,20 @@ class AssetRepository:
         supported_exts: list[str],
         limit: int = 1,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        library_slug: str | None = None,
         *,
+        library_slug: str | None,
         target_model_id: int | None = None,
         system_default_model_id: int | None = None,
     ) -> list[Asset]:
         """
         Claim up to `limit` assets with status == current_status.
         Same filtering and locking as claim_asset_by_status; returns a list of Assets.
+        library_slug: Restrict to this library. Pass None only for intentional global (all libraries) mode.
         """
         if not supported_exts or limit < 1:
             return []
+        if library_slug is None:
+            _log.info("Claiming assets from all libraries (library_slug=None); ensure global mode is intended.")
         escaped_exts = [re.escape(ext.lstrip(".")) for ext in supported_exts]
         pattern = rf"\.({'|'.join(escaped_exts)})$"
         params: dict = {"status": current_status.value, "pattern": pattern, "limit": limit}
@@ -685,24 +694,37 @@ class AssetRepository:
                 {"lease_seconds": lease_seconds, "id": asset_id},
             )
 
-    def count_stale_leases(self) -> int:
-        """Count assets stuck in processing with expired leases. Read-only."""
+    def count_stale_leases(self, *, library_slug: str | None = None) -> int:
+        """Count assets stuck in processing with expired leases. When library_slug is set, only counts assets in that library. Read-only."""
         with self._session_scope(write=False) as session:
+            extra = " AND library_id = :library_slug" if library_slug else ""
+            params: dict = {}
+            if library_slug:
+                params["library_slug"] = library_slug
             val = session.execute(
-                text("""
+                text(
+                    f"""
                     SELECT COUNT(*) FROM asset
                     WHERE status = 'processing'
                       AND lease_expires_at IS NOT NULL
                       AND lease_expires_at < (NOW() AT TIME ZONE 'UTC')
-                """)
+                    {extra}
+                """
+                ),
+                params,
             ).scalar()
         return int(val) if val is not None else 0
 
-    def reclaim_stale_leases(self) -> int:
-        """Reset assets stuck in processing with expired leases. Returns count updated."""
+    def reclaim_stale_leases(self, *, library_slug: str | None = None) -> int:
+        """Reset assets stuck in processing with expired leases. When library_slug is set, only reclaim assets in that library. Returns count updated."""
         with self._session_scope(write=True) as session:
+            extra = " AND library_id = :library_slug" if library_slug else ""
+            params: dict = {}
+            if library_slug:
+                params["library_slug"] = library_slug
             result = session.execute(
-                text("""
+                text(
+                    f"""
                     UPDATE asset
                     SET status = (CASE WHEN retry_count > 5 THEN 'poisoned' ELSE 'pending' END)::assetstatus,
                         worker_id = NULL, lease_expires_at = NULL,
@@ -711,7 +733,10 @@ class AssetRepository:
                     WHERE status = 'processing'
                       AND lease_expires_at IS NOT NULL
                       AND lease_expires_at < (NOW() AT TIME ZONE 'UTC')
-                """)
+                    {extra}
+                """
+                ),
+                params,
             )
             return result.rowcount or 0
 

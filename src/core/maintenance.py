@@ -36,28 +36,34 @@ class MaintenanceService:
         self._library_repo = library_repo
         self._video_scene_repo = video_scene_repo
 
-    def run_all(self) -> None:
-        """Execute all maintenance tasks in order."""
+    def run_all(self, *, library_slug: str | None = None) -> None:
+        """Execute all maintenance tasks in order. When library_slug is set, temp cleanup and reclaim are filtered to that library."""
         self.prune_stale_workers()
-        self.reclaim_stale_leases()
-        self.cleanup_temp_dir()
+        self.reclaim_stale_leases(library_slug=library_slug)
+        self.cleanup_temp_dir(library_slug=library_slug)
 
     def prune_stale_workers(self, max_age_hours: int = 24) -> int:
         """Delete worker_status rows older than max_age_hours. Returns count deleted."""
         return self._worker_repo.prune_stale_workers(max_age_hours=max_age_hours)
 
-    def reclaim_stale_leases(self) -> int:
-        """Reset assets stuck in processing with expired leases. Returns count updated."""
-        return self._asset_repo.reclaim_stale_leases()
+    def reclaim_stale_leases(self, *, library_slug: str | None = None) -> int:
+        """Reset assets stuck in processing with expired leases. When library_slug is set, only reclaim assets in that library. Returns count updated."""
+        return self._asset_repo.reclaim_stale_leases(library_slug=library_slug)
 
     def preview_temp_cleanup(
-        self, max_age_seconds: int = MAX_TEMP_AGE_SECONDS
+        self,
+        max_age_seconds: int = MAX_TEMP_AGE_SECONDS,
+        *,
+        library_slug: str | None = None,
     ) -> tuple[int, int]:
         """
         Preview files in data_dir/tmp that would be deleted.
+        When library_slug is set, only considers data_dir/tmp/library_slug/.
         Returns (file_count, total_bytes). Does not modify anything.
         """
         tmp_dir = self._data_dir / "tmp"
+        if library_slug is not None:
+            tmp_dir = tmp_dir / library_slug
         if not tmp_dir.is_dir():
             return (0, 0)
         cutoff = time.time() - max_age_seconds
@@ -79,9 +85,16 @@ class MaintenanceService:
             pass
         return (file_count, total_bytes)
 
-    def cleanup_temp_dir(self, max_age_seconds: int = MAX_TEMP_AGE_SECONDS) -> int:
-        """Delete files in data_dir/tmp older than max_age_seconds. Returns count deleted."""
+    def cleanup_temp_dir(
+        self,
+        max_age_seconds: int = MAX_TEMP_AGE_SECONDS,
+        *,
+        library_slug: str | None = None,
+    ) -> int:
+        """Delete files in data_dir/tmp older than max_age_seconds. When library_slug is set, only cleans data_dir/tmp/library_slug/. Returns count deleted."""
         tmp_dir = self._data_dir / "tmp"
+        if library_slug is not None:
+            tmp_dir = tmp_dir / library_slug
         if not tmp_dir.is_dir():
             return 0
         cutoff = time.time() - max_age_seconds

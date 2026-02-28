@@ -145,12 +145,12 @@ def test_count_stale_leases_matches_reclaim_criteria(engine, _session_factory):
     asset_repo.upsert_asset("count-lib", "b.jpg", AssetType.image, 1001.0, 5001)
 
     claimed_a = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"]
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="count-lib"
     )
     assert claimed_a is not None
     asset_id_a = claimed_a.id
     claimed_b = asset_repo.claim_asset_by_status(
-        "worker-2", AssetStatus.pending, [".jpg"]
+        "worker-2", AssetStatus.pending, [".jpg"], library_slug="count-lib"
     )
     assert claimed_b is not None
     asset_id_b = claimed_b.id
@@ -202,12 +202,12 @@ def test_reclaim_stale_leases_resets_processing_assets(engine, _session_factory)
     asset_repo.upsert_asset("reclaim-lib", "b.jpg", AssetType.image, 1001.0, 5001)
 
     claimed_a = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"]
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="reclaim-lib"
     )
     assert claimed_a is not None
     asset_id_a = claimed_a.id
     claimed_b = asset_repo.claim_asset_by_status(
-        "worker-2", AssetStatus.pending, [".jpg"]
+        "worker-2", AssetStatus.pending, [".jpg"], library_slug="reclaim-lib"
     )
     assert claimed_b is not None
     asset_id_b = claimed_b.id
@@ -266,7 +266,7 @@ def test_reclaim_stale_leases_poisons_when_retry_count_exceeds_5(engine, _sessio
 
     asset_repo.upsert_asset("poison-lib", "x.jpg", AssetType.image, 1000.0, 5000)
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"]
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="poison-lib"
     )
     assert claimed is not None
     asset_id = claimed.id

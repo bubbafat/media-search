@@ -58,6 +58,22 @@ def _get_session_factory():
     return sessionmaker(engine, autocommit=False, autoflush=False, expire_on_commit=False)
 
 
+def _require_library_or_all(
+    library_slug: str | None,
+    all_libraries: bool,
+    command_hint: str = "Provide either --library <slug> or --all.",
+) -> str | None:
+    """
+    Validate library scope for worker commands. Returns effective library_slug for the worker
+    (None means all libraries). Raises typer.BadParameter if neither or both are set.
+    """
+    if all_libraries and library_slug is not None:
+        raise typer.BadParameter("Cannot use both --library and --all.")
+    if not all_libraries and library_slug is None:
+        raise typer.BadParameter(command_hint)
+    return None if all_libraries else library_slug
+
+
 @library_app.command("add")
 def library_add(
     name: str = typer.Argument(..., help="Display name for the library"),
@@ -434,16 +450,21 @@ def asset_reindex(
 def search(
     query: str = typer.Argument(None, help="Search query (optional). If omitted, no results are returned. E.g. 'man in blue shirt'."),
     ocr: bool = typer.Option(False, "--ocr", help="Search only within extracted OCR text"),
-    library: list[str] = typer.Option([], "--library", help="Filter to these library slugs (repeatable)"),
+    library: list[str] = typer.Option([], "--library", help="Filter to these library slugs (repeatable). Required unless --all."),
+    all_libraries: bool = typer.Option(False, "--all", help="Search all libraries. Cannot be combined with --library."),
     type_filter: list[str] = typer.Option([], "--type", help="Filter to asset types: image, video (repeatable)"),
     limit: int = typer.Option(50, "--limit", help="Maximum number of results"),
 ) -> None:
     """Search assets by full-text query on visual analysis (vibe or OCR)."""
+    if all_libraries and library:
+        raise typer.BadParameter("Cannot use both --library and --all.")
+    if not all_libraries and not library:
+        raise typer.BadParameter("Provide either --library <slug> (repeatable) or --all.")
+    library_slugs: list[str] | None = None if all_libraries else library
     session_factory = _get_session_factory()
     search_repo = SearchRepository(session_factory)
     query_string = query if not ocr else None
     ocr_query = query if ocr else None
-    library_slugs = library if library else None
     asset_types: list[str] | None = None
     if type_filter:
         valid = {"image", "video"}
@@ -557,6 +578,7 @@ def proxy(
     heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
+    all_libraries: bool = typer.Option(False, "--all", help="Process all libraries (global mode). Requires explicit flag."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
     repair: bool = typer.Option(False, "--repair", help="Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
@@ -567,6 +589,9 @@ def proxy(
     ),
 ) -> None:
     """Start the image proxy worker: claims pending image assets, generates thumbnails and WebP proxies."""
+    effective_library = _require_library_or_all(
+        library_slug, all_libraries, "Provide either --library <slug> or --all for proxy."
+    )
     worker_id = (
         worker_name
         if worker_name is not None
@@ -576,12 +601,12 @@ def proxy(
 
     session_factory = _get_session_factory()
     cfg = get_config()
-    if library_slug is not None:
+    if effective_library is not None:
         lib_repo = LibraryRepository(session_factory)
-        lib = lib_repo.get_by_slug(library_slug)
+        lib = lib_repo.get_by_slug(effective_library)
         if lib is None:
             typer.echo(
-                f"Library not found or deleted: '{library_slug}'. Use 'library list' to see valid slugs.",
+                f"Library not found or deleted: '{effective_library}'. Use 'library list' to see valid slugs.",
                 err=True,
             )
             raise typer.Exit(1)
@@ -597,7 +622,7 @@ def proxy(
         root.addHandler(handler)
         root.setLevel(logging.INFO)
 
-    initial_pending = asset_repo.count_pending_proxyable(library_slug) if verbose else None
+    initial_pending = asset_repo.count_pending_proxyable(effective_library) if verbose else None
 
     use_previews = cfg.use_raw_previews and not ignore_previews
 
@@ -615,7 +640,7 @@ def proxy(
         heartbeat_interval_seconds=heartbeat,
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
-        library_slug=library_slug,
+        library_slug=effective_library,
         verbose=verbose,
         initial_pending_count=initial_pending,
         repair=repair,
@@ -632,11 +657,15 @@ def video_proxy(
     heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
+    all_libraries: bool = typer.Option(False, "--all", help="Process all libraries (global mode). Requires explicit flag."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
     repair: bool = typer.Option(False, "--repair", help="Check for missing video thumbnail files and set those assets to pending."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
 ) -> None:
     """Start the video proxy worker: claims pending video assets, 720p pipeline (thumbnail, head-clip, scene indexing)."""
+    effective_library = _require_library_or_all(
+        library_slug, all_libraries, "Provide either --library <slug> or --all for video-proxy."
+    )
     worker_id = (
         worker_name
         if worker_name is not None
@@ -645,12 +674,12 @@ def video_proxy(
     typer.secho(f"Starting Video Proxy Worker: {worker_id}")
 
     session_factory = _get_session_factory()
-    if library_slug is not None:
+    if effective_library is not None:
         lib_repo = LibraryRepository(session_factory)
-        lib = lib_repo.get_by_slug(library_slug)
+        lib = lib_repo.get_by_slug(effective_library)
         if lib is None:
             typer.echo(
-                f"Library not found or deleted: '{library_slug}'. Use 'library list' to see valid slugs.",
+                f"Library not found or deleted: '{effective_library}'. Use 'library list' to see valid slugs.",
                 err=True,
             )
             raise typer.Exit(1)
@@ -667,7 +696,7 @@ def video_proxy(
         root.addHandler(handler)
         root.setLevel(logging.INFO)
 
-    initial_pending = asset_repo.count_pending_proxyable(library_slug) if verbose else None
+    initial_pending = asset_repo.count_pending_proxyable(effective_library) if verbose else None
 
     worker = VideoProxyWorker(
         worker_id=worker_id,
@@ -676,7 +705,7 @@ def video_proxy(
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
         scene_repo=scene_repo,
-        library_slug=library_slug,
+        library_slug=effective_library,
         verbose=verbose,
         initial_pending_count=initial_pending,
         repair=repair,
@@ -753,6 +782,7 @@ def ai_start(
     heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
+    all_libraries: bool = typer.Option(False, "--all", help="Process all libraries (global mode). Requires explicit flag."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
     repair: bool = typer.Option(False, "--repair", help="Before the main loop, set assets that need re-analysis (effective model changed) to proxied."),
@@ -761,17 +791,20 @@ def ai_start(
     mode: str = typer.Option("full", "--mode", help="Processing tier: 'light' (fast tags/desc) or 'full' (OCR)."),
 ) -> None:
     """Start the AI worker: claims proxied assets, runs vision analysis, marks completed."""
+    effective_library = _require_library_or_all(
+        library_slug, all_libraries, "Provide either --library <slug> or --all for ai start."
+    )
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
     asset_repo = AssetRepository(session_factory)
     worker_repo = WorkerRepository(session_factory)
     system_metadata_repo = SystemMetadataRepository(session_factory)
 
-    if library_slug is not None:
-        lib = lib_repo.get_by_slug(library_slug)
+    if effective_library is not None:
+        lib = lib_repo.get_by_slug(effective_library)
         if lib is None:
             typer.echo(
-                f"Library not found or deleted: '{library_slug}'. Use 'library list' to see valid slugs.",
+                f"Library not found or deleted: '{effective_library}'. Use 'library list' to see valid slugs.",
                 err=True,
             )
             raise typer.Exit(1)
@@ -782,7 +815,7 @@ def ai_start(
     if analyzer is not None:
         resolved_analyzer = analyzer
     else:
-        effective_id = _resolve_effective_default_model_id(system_metadata_repo, lib_repo, library_slug)
+        effective_id = _resolve_effective_default_model_id(system_metadata_repo, lib_repo, effective_library)
         if effective_id is None:
             typer.secho(
                 "No default AI model. Set one with 'ai default set <name> [version]' or use --analyzer.",
@@ -825,7 +858,7 @@ def ai_start(
         heartbeat_interval_seconds=heartbeat,
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
-        library_slug=library_slug,
+        library_slug=effective_library,
         verbose=verbose,
         analyzer_name=resolved_analyzer,
         system_default_model_id=system_default_model_id,
@@ -845,12 +878,16 @@ def ai_video(
     heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
+    all_libraries: bool = typer.Option(False, "--all", help="Process all libraries (global mode). Requires explicit flag."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
     mode: str = typer.Option("full", "--mode", help="Processing tier: 'light' (fast tags/desc) or 'full' (OCR)."),
 ) -> None:
     """Start the Video worker: claims proxied video assets, runs vision on scene rep frames, marks completed."""
+    effective_library = _require_library_or_all(
+        library_slug, all_libraries, "Provide either --library <slug> or --all for ai video."
+    )
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
     asset_repo = AssetRepository(session_factory)
@@ -858,11 +895,11 @@ def ai_video(
     system_metadata_repo = SystemMetadataRepository(session_factory)
     scene_repo = VideoSceneRepository(session_factory)
 
-    if library_slug is not None:
-        lib = lib_repo.get_by_slug(library_slug)
+    if effective_library is not None:
+        lib = lib_repo.get_by_slug(effective_library)
         if lib is None:
             typer.echo(
-                f"Library not found or deleted: '{library_slug}'. Use 'library list' to see valid slugs.",
+                f"Library not found or deleted: '{effective_library}'. Use 'library list' to see valid slugs.",
                 err=True,
             )
             raise typer.Exit(1)
@@ -873,7 +910,7 @@ def ai_video(
     if analyzer is not None:
         resolved_analyzer = analyzer
     else:
-        effective_id = _resolve_effective_default_model_id(system_metadata_repo, lib_repo, library_slug)
+        effective_id = _resolve_effective_default_model_id(system_metadata_repo, lib_repo, effective_library)
         if effective_id is None:
             typer.secho(
                 "No default AI model. Set one with 'ai default set <name> [version]' or use --analyzer.",
@@ -917,7 +954,7 @@ def ai_video(
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
         scene_repo=scene_repo,
-        library_slug=library_slug,
+        library_slug=effective_library,
         verbose=verbose,
         analyzer_name=resolved_analyzer,
         system_default_model_id=system_default_model_id,
@@ -1003,8 +1040,13 @@ def maintenance_run(
         "--dry-run",
         help="Show what would be done without making changes",
     ),
+    library_slug: str | None = typer.Option(
+        None,
+        "--library",
+        help="Limit temp cleanup and lease reclaim to this library only. Omit for global maintenance.",
+    ),
 ) -> None:
-    """Run all maintenance tasks: prune stale workers, reclaim expired leases, cleanup temp files."""
+    """Run all maintenance tasks: prune stale workers, reclaim expired leases, cleanup temp files. Global by default; use --library to filter to one library's paths."""
     session_factory = _get_session_factory()
     asset_repo = AssetRepository(session_factory)
     worker_repo = WorkerRepository(session_factory)
@@ -1020,21 +1062,23 @@ def maintenance_run(
     )
     if dry_run:
         stale_workers = worker_repo.count_stale_workers(24)
-        stale_leases = asset_repo.count_stale_leases()
-        temp_count, temp_bytes = service.preview_temp_cleanup()
+        stale_leases = asset_repo.count_stale_leases(library_slug=library_slug)
+        temp_count, temp_bytes = service.preview_temp_cleanup(library_slug=library_slug)
+        scope = f" (library: {library_slug})" if library_slug else ""
         typer.echo("Dry run: what would be done:")
         typer.echo(f"  Stale workers: {stale_workers}")
-        typer.echo(f"  Stale leases: {stale_leases}")
+        typer.echo(f"  Stale leases: {stale_leases}{scope}")
         typer.echo(
-            f"  Temp files: {temp_count} files, {_format_bytes(temp_bytes)} reclaimable"
+            f"  Temp files: {temp_count} files, {_format_bytes(temp_bytes)} reclaimable{scope}"
         )
         typer.echo("Run without --dry-run to apply changes.")
         return
     pruned = service.prune_stale_workers()
-    reclaimed = service.reclaim_stale_leases()
-    deleted = service.cleanup_temp_dir()
+    reclaimed = service.reclaim_stale_leases(library_slug=library_slug)
+    deleted = service.cleanup_temp_dir(library_slug=library_slug)
+    scope = f" (library: {library_slug})" if library_slug else ""
     typer.echo(
-        f"Pruned {pruned} workers, Reclaimed {reclaimed} assets, Deleted {deleted} temp files."
+        f"Pruned {pruned} workers, Reclaimed {reclaimed} assets{scope}, Deleted {deleted} temp files{scope}."
     )
 
 

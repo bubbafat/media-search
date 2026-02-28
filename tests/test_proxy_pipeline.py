@@ -66,7 +66,7 @@ def test_claim_asset_by_status_returns_asset_with_library(engine, _session_facto
     asset_repo.upsert_asset("proxy-lib", "photo.jpg", AssetType.image, 1000.0, 5000)
 
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg", ".jpeg", ".png"]
+        "worker-1", AssetStatus.pending, [".jpg", ".jpeg", ".png"], library_slug="proxy-lib"
     )
     assert claimed is not None
     assert claimed.id is not None
@@ -102,7 +102,7 @@ def test_renew_asset_lease_updates_lease_expires_at(engine, _session_factory):
 
     asset_repo.upsert_asset("lease-lib", "video.mp4", AssetType.video, 2000.0, 10_000)
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".mp4", ".mov"]
+        "worker-1", AssetStatus.pending, [".mp4", ".mov"], library_slug="lease-lib"
     )
     assert claimed is not None
     asset_id = claimed.id
@@ -209,7 +209,7 @@ def test_claim_asset_by_status_returns_none_when_no_eligible(engine, _session_fa
         session.close()
 
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"]
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="empty-lib"
     )
     assert claimed is None
 
@@ -235,7 +235,7 @@ def test_claim_asset_by_status_filters_by_extension(engine, _session_factory):
 
     asset_repo.upsert_asset("ext-lib", "file.mp4", AssetType.video, 1000.0, 100)
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg", ".png"]
+        "worker-1", AssetStatus.pending, [".jpg", ".png"], library_slug="ext-lib"
     )
     assert claimed is None
 
@@ -261,7 +261,7 @@ def test_update_asset_status_clears_worker_and_lease(engine, _session_factory):
 
     asset_repo.upsert_asset("update-lib", "x.jpg", AssetType.image, 0.0, 0)
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"]
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="update-lib"
     )
     assert claimed is not None
     assert claimed.worker_id == "worker-1"
@@ -301,7 +301,7 @@ def test_mark_completed_sets_status_and_analysis_model_clears_worker(engine, _se
 
     asset_repo.upsert_asset("mc-lib", "done.jpg", AssetType.image, 0.0, 0)
     claimed = asset_repo.claim_asset_by_status(
-        "ai-worker-1", AssetStatus.pending, [".jpg"]
+        "ai-worker-1", AssetStatus.pending, [".jpg"], library_slug="mc-lib"
     )
     assert claimed is not None
     assert claimed.worker_id == "ai-worker-1"
@@ -350,7 +350,7 @@ def test_update_asset_status_sets_error_message(engine, _session_factory):
 
     asset_repo.upsert_asset("err-lib", "bad.jpg", AssetType.image, 0.0, 0)
     claimed = asset_repo.claim_asset_by_status(
-        "worker-1", AssetStatus.pending, [".jpg"]
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="err-lib"
     )
     assert claimed is not None
 
@@ -431,7 +431,9 @@ def test_update_asset_status_increments_retry_on_failed(engine, _session_factory
         session.close()
 
     asset_repo.upsert_asset("retry-inc-lib", "x.jpg", AssetType.image, 0.0, 0)
-    claimed = asset_repo.claim_asset_by_status("worker-1", AssetStatus.pending, [".jpg"])
+    claimed = asset_repo.claim_asset_by_status(
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="retry-inc-lib"
+    )
     assert claimed is not None
     asset_id = claimed.id
 
@@ -468,7 +470,9 @@ def test_update_asset_status_resets_retry_on_proxied(engine, _session_factory):
         session.close()
 
     asset_repo.upsert_asset("retry-reset-lib", "y.jpg", AssetType.image, 0.0, 0)
-    claimed = asset_repo.claim_asset_by_status("worker-1", AssetStatus.pending, [".jpg"])
+    claimed = asset_repo.claim_asset_by_status(
+        "worker-1", AssetStatus.pending, [".jpg"], library_slug="retry-reset-lib"
+    )
     assert claimed is not None
     asset_id = claimed.id
 
@@ -658,6 +662,7 @@ def test_claim_asset_by_status_filters_by_effective_target_model(engine, _sessio
         [".jpg"],
         target_model_id=id_a,
         system_default_model_id=id_a,
+        library_slug=None,
     )
     assert claimed1 is not None
     assert claimed1.library_id in ("eff-lib-default", "eff-lib-a")
@@ -668,6 +673,7 @@ def test_claim_asset_by_status_filters_by_effective_target_model(engine, _sessio
         [".jpg"],
         target_model_id=id_a,
         system_default_model_id=id_a,
+        library_slug=None,
     )
     assert claimed2 is not None
     assert claimed2.library_id in ("eff-lib-default", "eff-lib-a")
@@ -679,6 +685,7 @@ def test_claim_asset_by_status_filters_by_effective_target_model(engine, _sessio
         [".jpg"],
         target_model_id=id_a,
         system_default_model_id=id_a,
+        library_slug=None,
     )
     assert claimed3 is None
 
@@ -688,6 +695,7 @@ def test_claim_asset_by_status_filters_by_effective_target_model(engine, _sessio
         [".jpg"],
         target_model_id=id_b,
         system_default_model_id=id_a,
+        library_slug=None,
     )
     assert claimed_b is not None
     assert claimed_b.library_id == "eff-lib-b"
@@ -970,6 +978,7 @@ def test_cli_proxy_respects_ignore_previews_flag(monkeypatch):
         heartbeat=15.0,
         worker_name="worker-a",
         library_slug=None,
+        all_libraries=True,
         verbose=False,
         repair=False,
         once=True,
@@ -977,6 +986,7 @@ def test_cli_proxy_respects_ignore_previews_flag(monkeypatch):
     )
     _, kwargs1 = worker_mock.call_args
     assert kwargs1["use_previews"] is True
+    assert kwargs1["library_slug"] is None
 
     worker_mock.reset_mock()
 
@@ -985,6 +995,7 @@ def test_cli_proxy_respects_ignore_previews_flag(monkeypatch):
         heartbeat=15.0,
         worker_name="worker-b",
         library_slug=None,
+        all_libraries=True,
         verbose=False,
         repair=False,
         once=True,

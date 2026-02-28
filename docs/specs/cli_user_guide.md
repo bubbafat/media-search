@@ -234,12 +234,15 @@ uv run media-search repair orphan-assets --force
 
 Run all maintenance tasks: prune stale workers (worker_status rows older than 24h), reclaim expired leases (assets stuck in `processing` with expired lease_expires_at reset to `pending` or `poisoned`), and delete temp files in `data_dir/tmp` older than 4 hours.
 
+**Global by default.** No arguments required; maintenance runs over all libraries. Optionally pass `--library <slug>` to filter temp cleanup and lease reclaim to that library only (e.g. only `data_dir/tmp/<slug>/` and assets in that library). Pruning stale workers is always global.
+
 Useful for cron jobs or periodic housekeeping. Requires a running PostgreSQL instance and applied migrations.
 
 
 | Option       | Description                                                                                    |
 | ------------ | ---------------------------------------------------------------------------------------------- |
 | `--dry-run`  | Show what would be done without making changes. Prints stale worker count, stale lease count, temp file count and reclaimable size. |
+| `--library`  | Optional. Limit temp cleanup and lease reclaim to this library slug only. Omit for global maintenance. |
 
 
 **Example:**
@@ -247,6 +250,8 @@ Useful for cron jobs or periodic housekeeping. Requires a running PostgreSQL ins
 ```bash
 uv run media-search maintenance run
 uv run media-search maintenance run --dry-run
+uv run media-search maintenance run --library nas-main
+uv run media-search maintenance run --library nas-main --dry-run
 ```
 
 Output reports counts: `Pruned N workers, Reclaimed M assets, Deleted K temp files.` With `--dry-run`, prints a preview and exits without applying changes.
@@ -364,7 +369,7 @@ uv run media-search asset scenes nas-main video/clip.mp4 --metadata
 
 ### asset reindex library_slug rel_path
 
-Clear the video index for one video asset and set it to **pending**. Use this after changing the scene-indexing algorithm so the Video worker will re-process this asset. Exits with code 1 if the library is not found or soft-deleted, the asset is not found, or the asset is not a video. Then run `ai video` (optionally with `--library <slug>`) to re-process.
+Clear the video index for one video asset and set it to **pending**. Use this after changing the scene-indexing algorithm so the Video worker will re-process this asset. Exits with code 1 if the library is not found or soft-deleted, the asset is not found, or the asset is not a video. Then run `ai video --library <slug>` or `ai video --all` to re-process.
 
 **Note:** If you only change `PHASH_THRESHOLD` or `DEBOUNCE_SEC` (in `scene_segmenter.py`), the Video Proxy Worker will automatically invalidate and re-segment affected videos; manual reindex is optional.
 
@@ -390,6 +395,8 @@ uv run media-search ai video --library nas-main
 
 Full-text search over **image** assets (via `visual_analysis`) and **video** assets (via scene metadata in `video_scenes`). By default the query is applied to the whole JSON (vibe search). With `--ocr`, the query is applied only to the extracted OCR text (images: `visual_analysis`; videos: scene `metadata`). Only one search path is used per run: either global or OCR, not both.
 
+You must specify which libraries to search: provide **either** at least one `--library <slug>` (repeatable) **or** `--all`. You cannot use both `--library` and `--all`. If neither is provided, the command fails with an error.
+
 When a query is provided, results are ordered by **relevance** (best match first), with videos boosted by **match density** (the fraction of the video's duration that matched). Results are limited by `--limit`. Without a query, no results are returned.
 
 Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **Status**, **Best Timestamp**, **Match Density**, **Confidence**. **Best Timestamp** is the time (MM:SS) to jump to for videos, or "N/A" for images. **Match Density** is the percentage of the asset that matched: 100% for images, or for videos the percentage of total duration covered by matching scenes. The **Confidence** column shows match strength as a percentage of the top result’s relevance score (100% for the best match). It is color-coded: green for high (>80%), yellow for medium (>50%), red for lower (≤50%). When there is no search query or when scores are not comparable, confidence is shown as "—".
@@ -403,19 +410,21 @@ If no assets match, a yellow message is printed.
 
 
 
-| Option      | Description                                                               |
-| ----------- | ------------------------------------------------------------------------- |
-| `--ocr`     | Search only within extracted OCR text instead of the full visual analysis |
-| `--library` | Filter results to this library slug only                                  |
-| `--limit`   | Maximum number of results (default 50)                                    |
+| Option       | Description                                                                                               |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| `--ocr`      | Search only within extracted OCR text instead of the full visual analysis                                  |
+| `--library`  | Filter results to this library slug (repeatable). Required unless `--all`.                                 |
+| `--all`      | Search all libraries. Cannot be combined with `--library`.                                                 |
+| `--limit`    | Maximum number of results (default 50)                                                                    |
 
 
 **Example:**
 
 ```bash
-uv run media-search search "man in blue shirt"
-uv run media-search search "hamburger" --ocr
+uv run media-search search "man in blue shirt" --all
+uv run media-search search "hamburger" --ocr --all
 uv run media-search search "beach" --library nas-main --limit 20
+uv run media-search search "sunset" --library nas-main --library nas-backup
 ```
 
 ---
@@ -457,7 +466,7 @@ uv run media-search scan nas-main --verbose
 
 Start the **image** proxy worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims pending **image** assets only, generates thumbnails (JPEG) and WebP proxy images on local storage, and updates their status to proxied (or poisoned on error). Worker ID is auto-generated from hostname and a short UUID unless overridden.
 
-When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted (same message as `scan`).
+You must specify scope: provide **either** `--library <slug>` **or** `--all`. You cannot use both. If neither is provided, the command fails with an error. There is no silent global fallback. When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted (same message as `scan`).
 
 With `--once`, the worker processes one batch (one asset) and then exits immediately. If no pending image asset is found, it exits without waiting. Use this for scripting or running image and video proxy workers in parallel (e.g. `proxy --once --library slug &` and `video-proxy --once --library slug &`).
 
@@ -472,7 +481,8 @@ By default, RAW/DNG files may use an embedded or fast-path libvips preview (long
 | ------------------- | ----------------------------------------------------------------------------------------------- |
 | `--heartbeat`       | Heartbeat interval in seconds (default: 15.0)                                                   |
 | `--worker-name`     | Force a specific worker ID; defaults to auto-generated                                          |
-| `--library`         | Limit to this library slug only (optional)                                                      |
+| `--library`         | Limit to this library slug only. Required unless `--all`.                                       |
+| `--all`             | Process all libraries (global mode). Cannot be combined with `--library`.                        |
 | `--verbose`, `-v`   | Print progress (each asset and N/total)                                                         |
 | `--repair`          | Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated |
 | `--once`            | Process one batch then exit; exit immediately if no work                                        |
@@ -482,10 +492,10 @@ By default, RAW/DNG files may use an embedded or fast-path libvips preview (long
 **Example:**
 
 ```bash
-uv run media-search proxy
-uv run media-search proxy --heartbeat 10
-uv run media-search proxy --worker-name my-proxy-1
 uv run media-search proxy --library disneyland
+uv run media-search proxy --all
+uv run media-search proxy --heartbeat 10 --library disneyland
+uv run media-search proxy --worker-name my-proxy-1 --library disneyland
 uv run media-search proxy --library disneyland --verbose
 uv run media-search proxy --library disneyland --repair
 uv run media-search proxy --once --library disneyland
@@ -500,7 +510,7 @@ uv run media-search proxy --library disneyland --ignore-previews
 
 Start the **video** proxy worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims pending **video** assets only and runs the **720p disposable pipeline**: transcodes the source to a temporary 720p H.264 file, extracts a thumbnail (frame at 0.0) from the temp, extracts a 10-second head-clip (stream copy) for UI preview, runs scene indexing (pHash, best-frame selection; no vision analysis), then deletes the temp file. It sets `video_preview_path` and updates status to proxied (or poisoned on error). Worker ID is auto-generated from hostname and a short UUID unless overridden.
 
-When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted.
+You must specify scope: provide **either** `--library <slug>` **or** `--all`. You cannot use both. If neither is provided, the command fails with an error. When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted.
 
 With `--once`, the worker processes one batch (one video) and then exits immediately. If no pending video asset is found, it exits without waiting. Use this for scripting (e.g. run `proxy --once` and `video-proxy --once` in parallel after a scan).
 
@@ -511,7 +521,8 @@ With `--repair`, before the main loop the worker runs a one-time check: it finds
 | ----------------- | ------------------------------------------------------------------------------------------------------------ |
 | `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                                |
 | `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                                       |
-| `--library`       | Limit to this library slug only (optional)                                                                   |
+| `--library`       | Limit to this library slug only. Required unless `--all`.                                                    |
+| `--all`           | Process all libraries (global mode). Cannot be combined with `--library`.                                    |
 | `--verbose`, `-v` | Print per-asset progress (N/total) and detailed stage logs for each video (transcode, thumbnail, head-clip). |
 | `--repair`        | Check for missing thumbnail/head-clip and set those assets to pending                                        |
 | `--once`          | Process one batch then exit; exit immediately if no work                                                     |
@@ -520,7 +531,8 @@ With `--repair`, before the main loop the worker runs a one-time check: it finds
 **Example:**
 
 ```bash
-uv run media-search video-proxy
+uv run media-search video-proxy --library disneyland
+uv run media-search video-proxy --all
 uv run media-search video-proxy --library disneyland --once
 ```
 
@@ -532,7 +544,7 @@ When processing long videos, the worker now reports approximate **720p transcode
 
 The `ai` group manages AI/vision models and the AI worker. Models are registered by name and version; the AI worker claims proxied assets, runs vision analysis (e.g. description, tags, OCR), and marks assets completed (or poisoned on error).
 
-**Default model:** A system-wide default AI model can be set with `ai default set`. Each library may override this via its target tagger (library default). The effective default for a library is the library’s target tagger if set, otherwise the system default. When you start the AI worker without `--analyzer`, it uses the effective default for the selected library (or the system default if no library is specified). The worker only claims assets whose effective target model matches the worker’s model. After a fresh install and running migrations, the system default is **moondream2** (version 2025-01-09), seeded by migration. To use a different model as the system default, ensure it is registered (`ai add <name> <version>` if needed), then run `ai default set <name> [version]`; use `ai default show` to confirm.
+**Default model:** A system-wide default AI model can be set with `ai default set`. Each library may override this via its target tagger (library default). The effective default for a library is the library’s target tagger if set, otherwise the system default. When you start the AI worker with `--library <slug>`, it uses the effective default for that library unless you pass `--analyzer`; when you use `--all`, it uses the system default. The worker only claims assets whose effective target model matches the worker’s model. After a fresh install and running migrations, the system default is **moondream2** (version 2025-01-09), seeded by migration. To use a different model as the system default, ensure it is registered (`ai add <name> <version>` if needed), then run `ai default set <name> [version]`; use `ai default show` to confirm.
 
 ### ai default set name [version]
 
@@ -572,7 +584,7 @@ uv run media-search ai default show
 
 Start the AI worker. It runs until interrupted (Ctrl+C). The worker claims image assets (proxied in light mode, analyzed_light in full mode), runs the configured vision analyzer, and updates status: light mode sets status to analyzed_light (fast tags/description, no OCR); full mode merges OCR and sets status to completed. Worker ID is auto-generated from hostname and a short UUID unless overridden.
 
-When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted.
+You must specify scope: provide **either** `--library <slug>` **or** `--all`. You cannot use both. If neither is provided, the command fails with an error. When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted.
 
 When `--analyzer` is omitted, the worker uses the effective default: if `--library` was given, the library’s target tagger or (if null) the system default; otherwise the system default. If no default is set or the resolved model is `mock`, the command exits with an error (unless `MEDIASEARCH_ALLOW_MOCK_DEFAULT=1` in tests).
 
@@ -583,7 +595,8 @@ With `--repair`, before the main loop the worker runs a one-time repair pass: it
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `--heartbeat`     | Heartbeat interval in seconds (default: 15.0)                                                                                 |
 | `--worker-name`   | Force a specific worker ID; defaults to auto-generated                                                                        |
-| `--library`       | Limit to this library slug only (optional)                                                                                    |
+| `--library`       | Limit to this library slug only. Required unless `--all`.                                                                     |
+| `--all`           | Process all libraries (global mode). Cannot be combined with `--library`.                                                      |
 | `--verbose`, `-v` | Print progress for each completed asset                                                                                       |
 | `--analyzer`      | AI model to use (e.g. mock, moondream2, moondream3, moondream-station, md3p-int4). If omitted, uses library or system default |
 | `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop                                    |
@@ -597,14 +610,15 @@ With `--repair`, before the main loop the worker runs a one-time repair pass: it
 **Example:**
 
 ```bash
-uv run media-search ai start
+uv run media-search ai start --library nas-main
+uv run media-search ai start --all
 uv run media-search ai start --library nas-main --verbose
-uv run media-search ai start --analyzer moondream2
-uv run media-search ai start --analyzer moondream3
-uv run media-search ai start --analyzer moondream-station
+uv run media-search ai start --analyzer moondream2 --library nas-main
+uv run media-search ai start --analyzer moondream3 --library nas-main
+uv run media-search ai start --analyzer moondream-station --library nas-main
 uv run media-search ai start --library nas-main --repair
 uv run media-search ai start --once --library nas-main
-uv run media-search ai start --batch 4
+uv run media-search ai start --batch 4 --library nas-main
 uv run media-search ai start --mode light --library nas-main
 ```
 
@@ -614,16 +628,17 @@ uv run media-search ai start --mode light --library nas-main
 
 Start the Video worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims video assets (proxied in light mode, analyzed_light in full mode) that have been processed by the video-proxy worker (thumbnail, head-clip, scene index with rep frames). It runs **vision analysis only** on the existing scene representative frame images (no source video read, no head-clip generation). Light mode: fast tags/description, no OCR; sets status to analyzed_light. Full mode: merges OCR into existing scene metadata; sets status to completed. Worker ID is auto-generated as `video-<hostname>-<short-uuid>` unless overridden.
 
-Progress is printed to the terminal: when a video is claimed the worker logs **Processing video (vision-only):** with the relative path; when the asset is done it logs **Completed:** with asset id, library, and path.
+You must specify scope: provide **either** `--library <slug>` **or** `--all`. You cannot use both. If neither is provided, the command fails with an error. When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for per-scene description/tags (e.g. mock, moondream2, moondream3, moondream-station).
 
-When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted. Model resolution (effective default, mock rejection) matches `ai start`. The same vision analyzer is used for per-scene description/tags (e.g. mock, moondream2, moondream3, moondream-station).
+Progress is printed to the terminal: when a video is claimed the worker logs **Processing video (vision-only):** with the relative path; when the asset is done it logs **Completed:** with asset id, library, and path.
 
 
 | Option            | Description                                                                                                                                |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--heartbeat`     | Heartbeat interval in seconds (default: 15.0).                                                                                             |
 | `--worker-name`   | Force a specific worker ID.                                                                                                                |
-| `--library`       | Limit to this library slug only.                                                                                                           |
+| `--library`       | Limit to this library slug only. Required unless `--all`.                                                                                  |
+| `--all`           | Process all libraries (global mode). Cannot be combined with `--library`.                                                                  |
 | `--verbose`, `-v` | Print progress for each completed asset.                                                                                                   |
 | `--analyzer`      | AI model to use for scene descriptions (e.g. mock, moondream2, moondream3, moondream-station). If omitted, uses library or system default. |
 | `--once`          | Process one batch then exit; exit immediately if no work.                                                                                  |
@@ -633,11 +648,12 @@ When `--library` is provided, the command exits with code 1 if the library is no
 **Examples:**
 
 ```bash
-uv run media-search ai video
+uv run media-search ai video --library nas-main
+uv run media-search ai video --all
 uv run media-search ai video --library nas-main --verbose
-uv run media-search ai video --analyzer moondream2
-uv run media-search ai video --analyzer moondream3
-uv run media-search ai video --analyzer moondream-station
+uv run media-search ai video --analyzer moondream2 --library nas-main
+uv run media-search ai video --analyzer moondream3 --library nas-main
+uv run media-search ai video --analyzer moondream-station --library nas-main
 uv run media-search ai video --once --library nas-main
 ```
 
