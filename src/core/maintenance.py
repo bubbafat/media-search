@@ -50,7 +50,9 @@ class MaintenanceService:
 
     def reclaim_stale_leases(self, *, library_slug: str | None = None) -> int:
         """Reset assets stuck in processing with expired leases. When library_slug is set, only reclaim assets in that library. Returns count updated."""
-        return self._asset_repo.reclaim_stale_leases(library_slug=library_slug)
+        return self._asset_repo.reclaim_stale_leases(
+            library_slug=library_slug, global_scope=(library_slug is None)
+        )
 
     def preview_temp_cleanup(
         self,
@@ -144,7 +146,7 @@ class MaintenanceService:
         limit = 500
         while True:
             batch = self._asset_repo.get_asset_ids_expecting_proxy(
-                library_slug=None, limit=limit, offset=offset
+                library_slug=None, limit=limit, offset=offset, global_scope=True
             )
             if not batch:
                 break
@@ -226,7 +228,7 @@ class MaintenanceService:
         limit = 500
         while True:
             batch = self._asset_repo.get_asset_ids_expecting_proxy(
-                library_slug=None, limit=limit, offset=offset
+                library_slug=None, limit=limit, offset=offset, global_scope=True
             )
             if not batch:
                 break

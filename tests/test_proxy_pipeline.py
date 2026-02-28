@@ -663,6 +663,7 @@ def test_claim_asset_by_status_filters_by_effective_target_model(engine, _sessio
         target_model_id=id_a,
         system_default_model_id=id_a,
         library_slug=None,
+        global_scope=True,
     )
     assert claimed1 is not None
     assert claimed1.library_id in ("eff-lib-default", "eff-lib-a")
@@ -674,6 +675,7 @@ def test_claim_asset_by_status_filters_by_effective_target_model(engine, _sessio
         target_model_id=id_a,
         system_default_model_id=id_a,
         library_slug=None,
+        global_scope=True,
     )
     assert claimed2 is not None
     assert claimed2.library_id in ("eff-lib-default", "eff-lib-a")
@@ -686,6 +688,7 @@ def test_claim_asset_by_status_filters_by_effective_target_model(engine, _sessio
         target_model_id=id_a,
         system_default_model_id=id_a,
         library_slug=None,
+        global_scope=True,
     )
     assert claimed3 is None
 
@@ -696,9 +699,19 @@ def test_claim_asset_by_status_filters_by_effective_target_model(engine, _sessio
         target_model_id=id_b,
         system_default_model_id=id_a,
         library_slug=None,
+        global_scope=True,
     )
     assert claimed_b is not None
     assert claimed_b.library_id == "eff-lib-b"
+
+
+def test_count_pending_rejects_implicit_global_scope(engine, _session_factory):
+    """count_pending with library_slug=None raises ValueError unless global_scope=True."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    with pytest.raises(ValueError, match="Pass library_slug or global_scope=True"):
+        asset_repo.count_pending(None)
+    with pytest.raises(ValueError, match="Pass library_slug or global_scope=True"):
+        asset_repo.count_pending(library_slug=None)
 
 
 def test_count_pending(engine, _session_factory):
@@ -720,10 +733,10 @@ def test_count_pending(engine, _session_factory):
     finally:
         session.close()
 
-    assert asset_repo.count_pending() == 0
+    assert asset_repo.count_pending(global_scope=True) == 0
     asset_repo.upsert_asset("cnt-lib", "a.jpg", AssetType.image, 1000.0, 100)
     asset_repo.upsert_asset("cnt-lib", "b.jpg", AssetType.image, 1000.0, 200)
-    assert asset_repo.count_pending() == 2
+    assert asset_repo.count_pending(global_scope=True) == 2
     assert asset_repo.count_pending("cnt-lib") == 2
 
 
@@ -759,7 +772,7 @@ def test_count_pending_filtered_by_library(engine, _session_factory):
     asset_repo.upsert_asset("cnt-a", "a2.jpg", AssetType.image, 1000.0, 100)
     asset_repo.upsert_asset("cnt-b", "b1.jpg", AssetType.image, 1000.0, 100)
 
-    assert asset_repo.count_pending() == 3
+    assert asset_repo.count_pending(global_scope=True) == 3
     assert asset_repo.count_pending("cnt-a") == 2
     assert asset_repo.count_pending("cnt-b") == 1
     assert asset_repo.count_pending("other") == 0

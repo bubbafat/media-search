@@ -87,6 +87,7 @@ class VideoProxyWorker(BaseWorker):
         self.scene_repo = scene_repo
         self.storage = LocalMediaStore()
         self._library_slug = library_slug
+        self._global_mode = library_slug is None
         self._verbose = verbose
         self._initial_pending = initial_pending_count
         self._processed_count = 0
@@ -112,6 +113,7 @@ class VideoProxyWorker(BaseWorker):
                 library_slug=self._library_slug,
                 limit=batch_size,
                 offset=offset,
+                global_scope=self._global_mode,
             )
             if not batch:
                 break
@@ -142,7 +144,9 @@ class VideoProxyWorker(BaseWorker):
         if self._repair:
             self._run_repair_pass()
             if self._verbose:
-                self._initial_pending = self.asset_repo.count_pending_proxyable(self._library_slug)
+                self._initial_pending = self.asset_repo.count_pending_proxyable(
+                    self._library_slug, global_scope=self._global_mode
+                )
         super().run(once=once)
 
     def get_heartbeat_stats(self) -> dict[str, object] | None:
@@ -159,9 +163,11 @@ class VideoProxyWorker(BaseWorker):
         return stats
 
     def process_task(self) -> bool:
+        if self._library_slug is None and not self._global_mode:
+            raise RuntimeError("Worker scope is ambiguous: library_slug is None but global_mode is False.")
         current_version = compute_segmentation_version()
         stale_ids = self.asset_repo.get_proxied_video_asset_ids_with_stale_segmentation(
-            current_version, self._library_slug, limit=50
+            current_version, self._library_slug, limit=50, global_scope=self._global_mode
         )
         for asset_id in stale_ids:
             self.scene_repo.clear_index_for_asset(asset_id)
@@ -172,6 +178,7 @@ class VideoProxyWorker(BaseWorker):
             AssetStatus.pending,
             VIDEO_EXTENSIONS_LIST,
             library_slug=self._library_slug,
+            global_scope=self._global_mode,
         )
         if asset is None:
             asset = self.asset_repo.claim_asset_by_status(
@@ -179,6 +186,7 @@ class VideoProxyWorker(BaseWorker):
                 AssetStatus.failed,
                 VIDEO_EXTENSIONS_LIST,
                 library_slug=self._library_slug,
+                global_scope=self._global_mode,
             )
         if asset is None:
             return False

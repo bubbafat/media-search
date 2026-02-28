@@ -43,6 +43,7 @@ class ImageProxyWorker(BaseWorker):
         self.asset_repo = asset_repo
         self.storage = LocalMediaStore()
         self._library_slug = library_slug
+        self._global_mode = library_slug is None
         self._verbose = verbose
         self._initial_pending = initial_pending_count
         self._processed_count = 0
@@ -60,6 +61,7 @@ class ImageProxyWorker(BaseWorker):
                 library_slug=self._library_slug,
                 limit=batch_size,
                 offset=offset,
+                global_scope=self._global_mode,
             )
             if not batch:
                 break
@@ -85,15 +87,20 @@ class ImageProxyWorker(BaseWorker):
         if self._repair:
             self._run_repair_pass()
             if self._verbose:
-                self._initial_pending = self.asset_repo.count_pending_proxyable(self._library_slug)
+                self._initial_pending = self.asset_repo.count_pending_proxyable(
+                    self._library_slug, global_scope=self._global_mode
+                )
         super().run(once=once)
 
     def process_task(self) -> bool:
+        if self._library_slug is None and not self._global_mode:
+            raise RuntimeError("Worker scope is ambiguous: library_slug is None but global_mode is False.")
         asset = self.asset_repo.claim_asset_by_status(
             self.worker_id,
             AssetStatus.pending,
             IMAGE_EXTENSIONS_LIST,
             library_slug=self._library_slug,
+            global_scope=self._global_mode,
         )
         if asset is None:
             return False

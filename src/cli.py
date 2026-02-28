@@ -622,7 +622,13 @@ def proxy(
         root.addHandler(handler)
         root.setLevel(logging.INFO)
 
-    initial_pending = asset_repo.count_pending_proxyable(effective_library) if verbose else None
+    initial_pending = (
+        asset_repo.count_pending_proxyable(
+            effective_library, global_scope=(effective_library is None)
+        )
+        if verbose
+        else None
+    )
 
     use_previews = cfg.use_raw_previews and not ignore_previews
 
@@ -696,7 +702,13 @@ def video_proxy(
         root.addHandler(handler)
         root.setLevel(logging.INFO)
 
-    initial_pending = asset_repo.count_pending_proxyable(effective_library) if verbose else None
+    initial_pending = (
+        asset_repo.count_pending_proxyable(
+            effective_library, global_scope=(effective_library is None)
+        )
+        if verbose
+        else None
+    )
 
     worker = VideoProxyWorker(
         worker_id=worker_id,
@@ -1063,7 +1075,9 @@ def maintenance_run(
     )
     if dry_run:
         stale_workers = worker_repo.count_stale_workers(24)
-        stale_leases = asset_repo.count_stale_leases(library_slug=library_slug)
+        stale_leases = asset_repo.count_stale_leases(
+            library_slug=library_slug, global_scope=(library_slug is None)
+        )
         temp_count, temp_bytes = service.preview_temp_cleanup(library_slug=library_slug)
         scope = f" (library: {library_slug})" if library_slug else ""
         typer.echo("Dry run: what would be done:")

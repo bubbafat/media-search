@@ -148,8 +148,16 @@ class AssetRepository:
                 {"status": status.value, "slug": library_slug},
             )
 
-    def count_pending(self, library_slug: str | None = None) -> int:
-        """Return count of assets with status pending in non-deleted libraries, optionally for one library."""
+    def count_pending(
+        self,
+        library_slug: str | None = None,
+        *,
+        global_scope: bool = False,
+    ) -> int:
+        """Return count of assets with status pending in non-deleted libraries.
+        Pass library_slug for one library, or library_slug=None with global_scope=True for all."""
+        if library_slug is None and not global_scope:
+            raise ValueError("Pass library_slug or global_scope=True; implicit global scope is not allowed.")
         with self._session_scope(write=False) as session:
             q = """
                 SELECT COUNT(*) FROM asset a
@@ -163,8 +171,16 @@ class AssetRepository:
             val = session.execute(text(q), params).scalar()
         return int(val) if val is not None else 0
 
-    def count_pending_proxyable(self, library_slug: str | None = None) -> int:
-        """Return count of pending assets that are proxyable (image + video extensions)."""
+    def count_pending_proxyable(
+        self,
+        library_slug: str | None = None,
+        *,
+        global_scope: bool = False,
+    ) -> int:
+        """Return count of pending assets that are proxyable (image + video extensions).
+        Pass library_slug for one library, or library_slug=None with global_scope=True for all."""
+        if library_slug is None and not global_scope:
+            raise ValueError("Pass library_slug or global_scope=True; implicit global scope is not allowed.")
         with self._session_scope(write=False) as session:
             q = """
                 SELECT COUNT(*) FROM asset a
@@ -184,12 +200,17 @@ class AssetRepository:
         library_slug: str | None = None,
         limit: int = 500,
         offset: int = 0,
+        *,
+        global_scope: bool = False,
     ) -> Sequence[tuple[int, str, str]]:
         """
         Return (asset_id, library_slug, type_str) for assets that should have proxy/thumbnail files:
         status in (proxied, analyzed_light, completed, extracting, analyzing), image + video extensions.
-        Used by proxy --repair. Optionally filter by library_slug. Ordered by id for stable batching.
+        Pass library_slug for one library, or library_slug=None with global_scope=True for all.
+        Ordered by id for stable batching.
         """
+        if library_slug is None and not global_scope:
+            raise ValueError("Pass library_slug or global_scope=True; implicit global scope is not allowed.")
         with self._session_scope(write=False) as session:
             q = """
                 SELECT a.id, a.library_id, a.type::text
@@ -214,13 +235,17 @@ class AssetRepository:
         current_version: int,
         library_slug: str | None = None,
         limit: int = 50,
+        *,
+        global_scope: bool = False,
     ) -> list[int]:
         """
         Return asset IDs for video assets with status in (proxied, analyzed_light, completed,
         extracting, analyzing) whose segmentation_version is not NULL and differs from current_version.
-        Used by video proxy worker to invalidate and re-segment when PHASH_THRESHOLD or DEBOUNCE_SEC
-        change. Ordered by id for stable batching.
+        Pass library_slug for one library, or library_slug=None with global_scope=True for all.
+        Ordered by id for stable batching.
         """
+        if library_slug is None and not global_scope:
+            raise ValueError("Pass library_slug or global_scope=True; implicit global scope is not allowed.")
         with self._session_scope(write=False) as session:
             q = """
                 SELECT a.id FROM asset a
@@ -394,13 +419,17 @@ class AssetRepository:
         library_slug: str | None = None,
         limit: int = 500,
         offset: int = 0,
+        *,
+        global_scope: bool = False,
     ) -> Sequence[tuple[int, str]]:
         """
         Return (asset_id, library_slug) for assets that should be re-analyzed: status in
         (completed, analyzed_light, analyzing), image extensions, and analysis_model_id
-        IS DISTINCT FROM effective_target_model_id. Used by AI worker --repair.
-        Optionally filter by library_slug. Ordered by id for stable batching.
+        IS DISTINCT FROM effective_target_model_id. Pass library_slug for one library,
+        or library_slug=None with global_scope=True for all. Ordered by id for stable batching.
         """
+        if library_slug is None and not global_scope:
+            raise ValueError("Pass library_slug or global_scope=True; implicit global scope is not allowed.")
         with self._session_scope(write=False) as session:
             q = """
                 SELECT a.id, a.library_id
@@ -432,6 +461,7 @@ class AssetRepository:
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         *,
         library_slug: str | None,
+        global_scope: bool = False,
         target_model_id: int | None = None,
         system_default_model_id: int | None = None,
     ) -> Asset | None:
@@ -439,8 +469,7 @@ class AssetRepository:
         Claim one asset with status == current_status (or expired processing lease) in a non-deleted library,
         with rel_path ending (case-insensitive) in supported_exts.
 
-        library_slug: Restrict to this library. Pass None only when intentionally claiming from any library
-        (global worker mode). Omitting or using None accidentally can claim from the wrong library.
+        library_slug: Restrict to this library. Pass None with global_scope=True for global worker mode.
         target_model_id / system_default_model_id: when both set, restrict to assets whose library's
         effective target model matches.
         Uses FOR UPDATE SKIP LOCKED. Sets status=processing, worker_id, lease_expires_at.
@@ -448,8 +477,8 @@ class AssetRepository:
         """
         if not supported_exts:
             return None
-        if library_slug is None:
-            _log.info("Claiming asset from all libraries (library_slug=None); ensure global mode is intended.")
+        if library_slug is None and not global_scope:
+            raise ValueError("Pass library_slug or global_scope=True; implicit global scope is not allowed.")
         # Build regex for rel_path suffix: \.(jpg|jpeg|png|...)$
         escaped_exts = [re.escape(ext.lstrip(".")) for ext in supported_exts]
         pattern = rf"\.({'|'.join(escaped_exts)})$"
@@ -536,18 +565,19 @@ class AssetRepository:
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         *,
         library_slug: str | None,
+        global_scope: bool = False,
         target_model_id: int | None = None,
         system_default_model_id: int | None = None,
     ) -> list[Asset]:
         """
         Claim up to `limit` assets with status == current_status.
         Same filtering and locking as claim_asset_by_status; returns a list of Assets.
-        library_slug: Restrict to this library. Pass None only for intentional global (all libraries) mode.
+        library_slug: Restrict to this library. Pass None with global_scope=True for global mode.
         """
         if not supported_exts or limit < 1:
             return []
-        if library_slug is None:
-            _log.info("Claiming assets from all libraries (library_slug=None); ensure global mode is intended.")
+        if library_slug is None and not global_scope:
+            raise ValueError("Pass library_slug or global_scope=True; implicit global scope is not allowed.")
         escaped_exts = [re.escape(ext.lstrip(".")) for ext in supported_exts]
         pattern = rf"\.({'|'.join(escaped_exts)})$"
         params: dict = {"status": current_status.value, "pattern": pattern, "limit": limit}
@@ -694,8 +724,16 @@ class AssetRepository:
                 {"lease_seconds": lease_seconds, "id": asset_id},
             )
 
-    def count_stale_leases(self, *, library_slug: str | None = None) -> int:
-        """Count assets stuck in processing with expired leases. When library_slug is set, only counts assets in that library. Read-only."""
+    def count_stale_leases(
+        self,
+        *,
+        library_slug: str | None = None,
+        global_scope: bool = False,
+    ) -> int:
+        """Count assets stuck in processing with expired leases. Pass library_slug for one library,
+        or library_slug=None with global_scope=True for all. Read-only."""
+        if library_slug is None and not global_scope:
+            raise ValueError("Pass library_slug or global_scope=True; implicit global scope is not allowed.")
         with self._session_scope(write=False) as session:
             extra = " AND library_id = :library_slug" if library_slug else ""
             params: dict = {}
@@ -715,9 +753,17 @@ class AssetRepository:
             ).scalar()
         return int(val) if val is not None else 0
 
-    def reclaim_stale_leases(self, *, library_slug: str | None = None) -> int:
-        """Reset assets stuck in processing with expired leases. When library_slug is set, only reclaim assets in that library. Returns count updated.
+    def reclaim_stale_leases(
+        self,
+        *,
+        library_slug: str | None = None,
+        global_scope: bool = False,
+    ) -> int:
+        """Reset assets stuck in processing with expired leases. Pass library_slug for one library,
+        or library_slug=None with global_scope=True for all. Returns count updated.
         Note: asset.status is VARCHAR (per migrations). Do not cast to assetstatus enum."""
+        if library_slug is None and not global_scope:
+            raise ValueError("Pass library_slug or global_scope=True; implicit global scope is not allowed.")
         with self._session_scope(write=True) as session:
             extra = " AND library_id = :library_slug" if library_slug else ""
             params: dict = {}

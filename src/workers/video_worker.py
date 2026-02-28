@@ -53,6 +53,7 @@ class VideoWorker(BaseWorker):
             self.analyzer.get_model_card()
         )
         self._library_slug = library_slug
+        self._global_mode = library_slug is None
         self._verbose = verbose
         self._system_default_model_id = system_default_model_id
         self._mode = mode
@@ -62,10 +63,12 @@ class VideoWorker(BaseWorker):
         super().run(once=once)
 
     def process_task(self) -> bool:
+        if self._library_slug is None and not self._global_mode:
+            raise RuntimeError("Worker scope is ambiguous: library_slug is None but global_mode is False.")
         claim_status = (
             AssetStatus.proxied if self._mode == "light" else AssetStatus.analyzed_light
         )
-        claim_kwargs: dict = {"library_slug": self._library_slug}
+        claim_kwargs: dict = {"library_slug": self._library_slug, "global_scope": self._global_mode}
         if self._system_default_model_id is not None:
             claim_kwargs["target_model_id"] = self.db_model_id
             claim_kwargs["system_default_model_id"] = self._system_default_model_id

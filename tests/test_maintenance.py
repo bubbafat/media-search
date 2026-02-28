@@ -166,13 +166,13 @@ def test_count_stale_leases_matches_reclaim_criteria(engine, _session_factory):
     finally:
         session.close()
 
-    count_before = asset_repo.count_stale_leases()
+    count_before = asset_repo.count_stale_leases(global_scope=True)
     assert count_before == 2
 
-    updated = asset_repo.reclaim_stale_leases()
+    updated = asset_repo.reclaim_stale_leases(global_scope=True)
     assert updated == 2
 
-    count_after = asset_repo.count_stale_leases()
+    count_after = asset_repo.count_stale_leases(global_scope=True)
     assert count_after == 0
 
 
@@ -223,7 +223,7 @@ def test_reclaim_stale_leases_resets_processing_assets(engine, _session_factory)
     finally:
         session.close()
 
-    updated = asset_repo.reclaim_stale_leases()
+    updated = asset_repo.reclaim_stale_leases(global_scope=True)
     assert updated == 2
 
     session = _session_factory()
@@ -282,7 +282,7 @@ def test_reclaim_stale_leases_poisons_when_retry_count_exceeds_5(engine, _sessio
     finally:
         session.close()
 
-    updated = asset_repo.reclaim_stale_leases()
+    updated = asset_repo.reclaim_stale_leases(global_scope=True)
     assert updated == 1
 
     session = _session_factory()
