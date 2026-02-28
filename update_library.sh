@@ -55,12 +55,22 @@ repair_and_drain_ai() {
   # Initial repair pass for image AI (e.g. target model changes).
   uv run media-search ai start --library "${LIBRARY_SLUG}" --repair --once --verbose
 
-  # Drain proxied assets (images + videos).
+  # Pass 1: drain proxied -> analyzed_light (light mode: fast tags/desc, no OCR).
   while has_assets_with_status "proxied"; do
-    uv run media-search ai start --library "${LIBRARY_SLUG}" --once --verbose
-    uv run media-search ai video --library "${LIBRARY_SLUG}" --once --verbose
+    uv run media-search ai start --library "${LIBRARY_SLUG}" --mode light --once --verbose
+    uv run media-search ai video --library "${LIBRARY_SLUG}" --mode light --once --verbose
 
     if ! has_assets_with_status "proxied"; then
+      break
+    fi
+  done
+
+  # Pass 2: drain analyzed_light -> completed (full mode: OCR merge).
+  while has_assets_with_status "analyzed_light"; do
+    uv run media-search ai start --library "${LIBRARY_SLUG}" --mode full --once --verbose
+    uv run media-search ai video --library "${LIBRARY_SLUG}" --mode full --once --verbose
+
+    if ! has_assets_with_status "analyzed_light"; then
       break
     fi
   done

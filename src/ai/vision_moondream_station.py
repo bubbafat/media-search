@@ -43,7 +43,12 @@ class MoondreamStationAnalyzer(BaseVisionAnalyzer):
     def get_model_card(self) -> ModelCard:
         return ModelCard(name="moondream-station", version="local")
 
-    def analyze_image(self, image_path: Path) -> VisualAnalysis:
+    def analyze_image(
+        self,
+        image_path: Path,
+        mode: str = "full",
+        max_tokens: int | None = None,
+    ) -> VisualAnalysis:
         Image = self._Image
         image = Image.open(image_path)
         if image.mode != "RGB":
@@ -51,7 +56,8 @@ class MoondreamStationAnalyzer(BaseVisionAnalyzer):
 
         try:
             caption_out = self._model.caption(image, length="short")
-            desc = caption_out["caption"] if isinstance(caption_out["caption"], str) else "".join(caption_out["caption"])
+            cap = caption_out.get("caption") if isinstance(caption_out, dict) else None
+            desc = cap if isinstance(cap, str) else ("".join(cap) if cap else "")
         except KeyError as e:
             if e.args == ("caption",):
                 # Moondream Station (e.g. md3p-int4) may return non-standard caption format.
@@ -61,8 +67,8 @@ class MoondreamStationAnalyzer(BaseVisionAnalyzer):
                     "Describe this image briefly in one or two sentences.",
                     reasoning=False,
                 )
-                ans = caption_out["answer"]
-                desc = ans if isinstance(ans, str) else "".join(ans)
+                ans = caption_out.get("answer") if isinstance(caption_out, dict) else None
+                desc = ans if isinstance(ans, str) else ("".join(ans) if ans else "")
             else:
                 raise
 
@@ -71,14 +77,16 @@ class MoondreamStationAnalyzer(BaseVisionAnalyzer):
             "Provide a comma-separated list of single-word tags for this image.",
             reasoning=False,
         )
-        tags_str = tags_out["answer"] if isinstance(tags_out["answer"], str) else "".join(tags_out["answer"])
+        ans_tags = tags_out.get("answer") if isinstance(tags_out, dict) else None
+        tags_str = ans_tags if isinstance(ans_tags, str) else ("".join(ans_tags) if ans_tags else "")
 
         ocr_out = self._model.query(
             image,
             "Extract all readable text. If there is no text, reply 'None'.",
             reasoning=False,
         )
-        ocr_raw = ocr_out["answer"] if isinstance(ocr_out["answer"], str) else "".join(ocr_out["answer"])
+        ans_ocr = ocr_out.get("answer") if isinstance(ocr_out, dict) else None
+        ocr_raw = ans_ocr if isinstance(ans_ocr, str) else ("".join(ans_ocr) if ans_ocr else "")
 
         tags_list = _parse_tags(tags_str)
         ocr = ocr_raw.strip() if ocr_raw else None

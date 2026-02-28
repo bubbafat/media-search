@@ -30,6 +30,7 @@ class AssetStatus(str, Enum):
     proxied = "proxied"
     extracting = "extracting"
     analyzing = "analyzing"
+    analyzed_light = "analyzed_light"
     completed = "completed"
     failed = "failed"
     poisoned = "poisoned"

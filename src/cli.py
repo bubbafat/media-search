@@ -245,7 +245,7 @@ def library_reindex_videos(
 def asset_list(
     library_slug: str = typer.Argument(..., help="Library slug to list assets for"),
     limit: int = typer.Option(50, "--limit", help="Maximum number of assets to show"),
-    status: str | None = typer.Option(None, "--status", help="Filter by status: pending, processing, proxied, extracting, analyzing, completed, failed, poisoned"),
+    status: str | None = typer.Option(None, "--status", help="Filter by status: pending, processing, proxied, extracting, analyzing, analyzed_light, completed, failed, poisoned"),
 ) -> None:
     """List discovered assets for a library."""
     session_factory = _get_session_factory()
@@ -755,6 +755,7 @@ def ai_start(
     repair: bool = typer.Option(False, "--repair", help="Before the main loop, set assets that need re-analysis (effective model changed) to proxied."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
     batch: int = typer.Option(1, "--batch", help="Number of assets to claim and process in parallel per task."),
+    mode: str = typer.Option("full", "--mode", help="Processing tier: 'light' (fast tags/desc) or 'full' (OCR)."),
 ) -> None:
     """Start the AI worker: claims proxied assets, runs vision analysis, marks completed."""
     session_factory = _get_session_factory()
@@ -828,6 +829,7 @@ def ai_start(
         repair=repair,
         library_repo=lib_repo if repair else None,
         batch_size=batch,
+        mode=mode,
     )
     try:
         worker.run(once=once)
@@ -843,6 +845,7 @@ def ai_video(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
+    mode: str = typer.Option("full", "--mode", help="Processing tier: 'light' (fast tags/desc) or 'full' (OCR)."),
 ) -> None:
     """Start the Video worker: claims proxied video assets, runs vision on scene rep frames, marks completed."""
     session_factory = _get_session_factory()
@@ -915,6 +918,7 @@ def ai_video(
         verbose=verbose,
         analyzer_name=resolved_analyzer,
         system_default_model_id=system_default_model_id,
+        mode=mode,
     )
     try:
         worker.run(once=once)

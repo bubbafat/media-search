@@ -58,7 +58,12 @@ class Moondream3Analyzer(BaseVisionAnalyzer):
     def get_model_card(self) -> ModelCard:
         return ModelCard(name="moondream3", version="preview")
 
-    def analyze_image(self, image_path: Path) -> VisualAnalysis:
+    def analyze_image(
+        self,
+        image_path: Path,
+        mode: str = "full",
+        max_tokens: int | None = None,
+    ) -> VisualAnalysis:
         Image = self._Image
         image = Image.open(image_path)
         if image.mode != "RGB":

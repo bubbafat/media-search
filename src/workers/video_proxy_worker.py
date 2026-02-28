@@ -128,9 +128,9 @@ class VideoProxyWorker(BaseWorker):
             offset += len(batch)
             if len(batch) < batch_size:
                 break
-        if self._verbose or total_reset:
+        if self._verbose or total_reset or total_checked:
             _log.info(
-                "Repair: checked %s videos, reset %s to pending",
+                "Repair: checked %s video assets (proxied/completed), reset %s to pending",
                 total_checked,
                 total_reset,
             )

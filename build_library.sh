@@ -34,6 +34,10 @@ has_assets_with_status() {
 drain_proxies() {
   echo "--- Building image and video proxies for '${LIBRARY_SLUG}' ---"
 
+  # Repair pass: mark assets with missing/broken proxies as pending.
+  uv run media-search proxy --library "${LIBRARY_SLUG}" --repair --once --verbose
+  uv run media-search video-proxy --library "${LIBRARY_SLUG}" --repair --once --verbose
+
   while has_assets_with_status "pending"; do
     uv run media-search proxy --library "${LIBRARY_SLUG}" --once --verbose
     uv run media-search video-proxy --library "${LIBRARY_SLUG}" --once --verbose
@@ -47,11 +51,22 @@ drain_proxies() {
 drain_ai() {
   echo "--- Running AI analysis for '${LIBRARY_SLUG}' ---"
 
+  # Pass 1: drain proxied -> analyzed_light (light mode: fast tags/desc, no OCR).
   while has_assets_with_status "proxied"; do
-    uv run media-search ai start --library "${LIBRARY_SLUG}" --once --verbose
-    uv run media-search ai video --library "${LIBRARY_SLUG}" --once --verbose
+    uv run media-search ai start --library "${LIBRARY_SLUG}" --mode light --once --verbose
+    uv run media-search ai video --library "${LIBRARY_SLUG}" --mode light --once --verbose
 
     if ! has_assets_with_status "proxied"; then
+      break
+    fi
+  done
+
+  # Pass 2: drain analyzed_light -> completed (full mode: OCR merge).
+  while has_assets_with_status "analyzed_light"; do
+    uv run media-search ai start --library "${LIBRARY_SLUG}" --mode full --once --verbose
+    uv run media-search ai video --library "${LIBRARY_SLUG}" --mode full --once --verbose
+
+    if ! has_assets_with_status "analyzed_light"; then
       break
     fi
   done

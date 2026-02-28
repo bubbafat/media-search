@@ -10,6 +10,7 @@ from src.core.config import get_config
 from src.models.entities import SceneKeepReason
 from src.repository.video_scene_repo import (
     VideoActiveState,
+    VideoSceneListItem,
     VideoSceneRepository,
     VideoSceneRow,
 )
@@ -23,23 +24,38 @@ if TYPE_CHECKING:
 SEMANTIC_DEDUP_RATIO = 85  # token_set_ratio above this flags semantic duplicate
 
 
+def _needs_ocr(scene: VideoSceneListItem) -> bool:
+    """True if scene has light data (description) but ocr_text is missing or None."""
+    moondream = (scene.metadata or {}).get("moondream")
+    if not isinstance(moondream, dict):
+        return True
+    return moondream.get("ocr_text") is None or moondream.get("ocr_text") == ""
+
+
 def run_vision_on_scenes(
     asset_id: int,
     library_slug: str,
     repo: VideoSceneRepository,
     vision_analyzer: "BaseVisionAnalyzer",
     *,
+    mode: str = "full",
     check_interrupt: Callable[[], bool] | None = None,
 ) -> None:
     """
-    Run vision analysis on existing scene rep frames that have NULL description.
+    Run vision analysis on existing scene rep frames.
+
+    Light mode: process scenes with NULL description (tags/desc only, no OCR).
+    Full mode: process scenes that have description but need OCR; merge OCR into existing metadata.
 
     Used by VideoWorker after VideoProxyWorker has persisted scenes from the 720p pipeline.
-    Iterates scenes for the asset, loads rep_frame_path from disk, runs vision, updates description/metadata.
     """
     data_dir = Path(get_config().data_dir)
     scenes = repo.list_scenes(asset_id)
-    to_process = [s for s in scenes if s.description is None]
+    if mode == "light":
+        to_process = [s for s in scenes if s.description is None]
+    else:
+        to_process = [s for s in scenes if s.description is not None and _needs_ocr(s)]
+
     last_written_description: str | None = None
     for scene in to_process:
         if check_interrupt is not None and check_interrupt():
@@ -47,23 +63,30 @@ def run_vision_on_scenes(
         rep_path = data_dir / scene.rep_frame_path
         if not rep_path.exists():
             continue
-        analysis = vision_analyzer.analyze_image(rep_path)
-        description = analysis.description or ""
-        metadata: dict = {
-            "moondream": {
-                "description": analysis.description,
-                "tags": analysis.tags,
-                "ocr_text": analysis.ocr_text,
-            },
-        }
-        if (
-            last_written_description
-            and description
-            and fuzz.token_set_ratio(last_written_description, description) > SEMANTIC_DEDUP_RATIO
-        ):
-            metadata["semantic_duplicate"] = True
-        repo.update_scene_vision(scene.id, description, metadata)
-        last_written_description = description
+        analysis = vision_analyzer.analyze_image(rep_path, mode=mode)
+        if mode == "light":
+            description = analysis.description or ""
+            metadata: dict = {
+                "moondream": {
+                    "description": analysis.description,
+                    "tags": analysis.tags,
+                    "ocr_text": analysis.ocr_text,
+                },
+            }
+            if (
+                last_written_description
+                and description
+                and fuzz.token_set_ratio(last_written_description, description) > SEMANTIC_DEDUP_RATIO
+            ):
+                metadata["semantic_duplicate"] = True
+            repo.update_scene_vision(scene.id, description, metadata)
+            last_written_description = description
+        else:
+            existing = dict(scene.metadata) if scene.metadata else {}
+            moondream = dict(existing.get("moondream") or {})
+            moondream["ocr_text"] = analysis.ocr_text
+            existing["moondream"] = moondream
+            repo.update_scene_vision(scene.id, scene.description or "", existing)
 
 
 def _write_rep_frame_jpeg(

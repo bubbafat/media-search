@@ -244,7 +244,7 @@ List discovered assets for a library. Output is a Rich table: ID, Rel Path, Type
 | `--status` | Filter by status (e.g. `pending`, `completed`) |
 
 
-Valid status values: `pending`, `processing`, `proxied`, `extracting`, `analyzing`, `completed`, `failed`, `poisoned`.
+Valid status values: `pending`, `processing`, `proxied`, `extracting`, `analyzing`, `analyzed_light`, `completed`, `failed`, `poisoned`.
 
 Exits with an error if the library is not found or is soft-deleted.
 
@@ -519,7 +519,7 @@ uv run media-search ai default show
 
 ### ai start
 
-Start the AI worker. It runs until interrupted (Ctrl+C). The worker claims proxied image assets, runs the configured vision analyzer on their local proxy files, saves visual analysis to the asset, and sets status to completed (or poisoned on failure). Worker ID is auto-generated from hostname and a short UUID unless overridden.
+Start the AI worker. It runs until interrupted (Ctrl+C). The worker claims image assets (proxied in light mode, analyzed_light in full mode), runs the configured vision analyzer, and updates status: light mode sets status to analyzed_light (fast tags/description, no OCR); full mode merges OCR and sets status to completed. Worker ID is auto-generated from hostname and a short UUID unless overridden.
 
 When `--library` is provided, the command exits with code 1 if the library is not found or is soft-deleted.
 
@@ -538,6 +538,7 @@ With `--repair`, before the main loop the worker runs a one-time repair pass: it
 | `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop                                    |
 | `--once`          | Process one batch then exit; exit immediately if no work                                                                      |
 | `--batch`         | Number of assets to claim and process in parallel per task (default: 1). Use higher values when Moondream Station has multiple workers. |
+| `--mode`          | Processing tier: `light` (fast tags/description, skips OCR; claims proxied, sets analyzed_light) or `full` (OCR; claims analyzed_light, sets completed). Default: full. |
 
 
 **Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile). `moondream3` uses the Moondream3 vision model (moondream/moondream3-preview) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. `moondream-station` and `md3p-int4` (alias) send requests to a **local Moondream Station** server (e.g. for md3p-int4 on Apple Silicon). Install the client with `uv sync --extra station`; run [Moondream Station](https://docs.moondream.ai/station/) separately (e.g. `moondream-station`) and switch to md3p-int4 if desired. Set `MEDIASEARCH_MOONDREAM_STATION_ENDPOINT` to override the default endpoint ([http://localhost:2020/v1](http://localhost:2020/v1)).
@@ -553,13 +554,14 @@ uv run media-search ai start --analyzer moondream-station
 uv run media-search ai start --library nas-main --repair
 uv run media-search ai start --once --library nas-main
 uv run media-search ai start --batch 4
+uv run media-search ai start --mode light --library nas-main
 ```
 
 ---
 
 ### ai video
 
-Start the Video worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims **proxied** video assets (videos that have already been processed by the video-proxy worker: thumbnail, head-clip, and scene index with rep frames). It runs **vision analysis only** on the existing scene representative frame images (no source video read, no head-clip generation). It updates scene descriptions and metadata and marks the asset completed. Worker ID is auto-generated as `video-<hostname>-<short-uuid>` unless overridden.
+Start the Video worker. It runs until interrupted (Ctrl+C) unless `--once` is used. The worker claims video assets (proxied in light mode, analyzed_light in full mode) that have been processed by the video-proxy worker (thumbnail, head-clip, scene index with rep frames). It runs **vision analysis only** on the existing scene representative frame images (no source video read, no head-clip generation). Light mode: fast tags/description, no OCR; sets status to analyzed_light. Full mode: merges OCR into existing scene metadata; sets status to completed. Worker ID is auto-generated as `video-<hostname>-<short-uuid>` unless overridden.
 
 Progress is printed to the terminal: when a video is claimed the worker logs **Processing video (vision-only):** with the relative path; when the asset is done it logs **Completed:** with asset id, library, and path.
 
@@ -574,6 +576,7 @@ When `--library` is provided, the command exits with code 1 if the library is no
 | `--verbose`, `-v` | Print progress for each completed asset.                                                                                                   |
 | `--analyzer`      | AI model to use for scene descriptions (e.g. mock, moondream2, moondream3, moondream-station). If omitted, uses library or system default. |
 | `--once`          | Process one batch then exit; exit immediately if no work.                                                                                  |
+| `--mode`          | Processing tier: `light` (fast tags/description, skips OCR; claims proxied, sets analyzed_light) or `full` (OCR; claims analyzed_light, sets completed). Default: full. |
 
 
 **Examples:**

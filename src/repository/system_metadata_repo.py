@@ -192,3 +192,17 @@ class SystemMetadataRepository:
                 """),
                 {"payload": payload_json, "asset_id": asset_id},
             )
+
+    def merge_ocr_into_visual_analysis(self, asset_id: int, ocr_text: str | None) -> None:
+        """Merge ocr_text into existing visual_analysis JSONB without overwriting description/tags."""
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("""
+                    UPDATE asset
+                    SET visual_analysis = jsonb_set(
+                        COALESCE(visual_analysis, '{}'), '{ocr_text}', to_jsonb(CAST(:ocr_text AS text))
+                    )
+                    WHERE id = :asset_id
+                """),
+                {"ocr_text": ocr_text, "asset_id": asset_id},
+            )

@@ -33,7 +33,12 @@ class _SequentialDescriptionAnalyzer(BaseVisionAnalyzer):
     def get_model_card(self) -> ModelCard:
         return ModelCard(name="test-sequential", version="1.0")
 
-    def analyze_image(self, image_path: Path) -> VisualAnalysis:
+    def analyze_image(
+        self,
+        image_path: Path,
+        mode: str = "full",
+        max_tokens: int | None = None,
+    ) -> VisualAnalysis:
         desc = self._descriptions[self._index] if self._index < len(self._descriptions) else ""
         self._index += 1
         return VisualAnalysis(description=desc, tags=[], ocr_text=None)

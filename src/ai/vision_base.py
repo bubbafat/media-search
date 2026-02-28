@@ -16,7 +16,12 @@ class BaseVisionAnalyzer(ABC):
         ...
 
     @abstractmethod
-    def analyze_image(self, image_path: Path) -> VisualAnalysis:
+    def analyze_image(
+        self,
+        image_path: Path,
+        mode: str = "full",
+        max_tokens: int | None = None,
+    ) -> VisualAnalysis:
         """Analyze image at path; return description, tags, and optional OCR text."""
         ...
 
@@ -27,7 +32,12 @@ class MockVisionAnalyzer(BaseVisionAnalyzer):
     def get_model_card(self) -> ModelCard:
         return ModelCard(name="mock-analyzer", version="1.0")
 
-    def analyze_image(self, image_path: Path) -> VisualAnalysis:
+    def analyze_image(
+        self,
+        image_path: Path,
+        mode: str = "full",
+        max_tokens: int | None = None,
+    ) -> VisualAnalysis:
         time.sleep(0.5)
         return VisualAnalysis(
             description="A placeholder description.",

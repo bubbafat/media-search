@@ -48,26 +48,41 @@ class MoondreamAnalyzer(BaseVisionAnalyzer):
     def get_model_card(self) -> ModelCard:
         return ModelCard(name="moondream2", version="2025-01-09")
 
-    def analyze_image(self, image_path: Path) -> VisualAnalysis:
+    def analyze_image(
+        self,
+        image_path: Path,
+        mode: str = "full",
+        max_tokens: int | None = None,
+    ) -> VisualAnalysis:
         Image = self._Image
         image = Image.open(image_path)
         if image.mode != "RGB":
             image = image.convert("RGB")
 
+        is_light = mode == "light"
+        if is_light:
+            image = image.copy()
+            image.thumbnail((384, 384), Image.Resampling.LANCZOS)
+
         encoded = self.model.encode_image(image)
         desc = self.model.caption(encoded, length="short")["caption"]
         tags_str = self.model.query(
-            encoded, "Provide a comma-separated list of single-word tags for this image."
+            encoded,
+            "Provide a comma-separated list of single-word tags for this image.",
         )["answer"]
-        ocr_raw = self.model.query(
-            encoded, "Extract all readable text. If there is no text, reply 'None'."
-        )["answer"]
+
+        if is_light:
+            ocr = None
+        else:
+            ocr_raw = self.model.query(
+                encoded,
+                "Extract all readable text. If there is no text, reply 'None'.",
+            )["answer"]
+            ocr = ocr_raw.strip() if ocr_raw else None
+            if ocr is not None and ocr.lower() == "none":
+                ocr = None
 
         tags_list = _parse_tags(tags_str)
-        ocr = ocr_raw.strip() if ocr_raw else None
-        if ocr is not None and ocr.lower() == "none":
-            ocr = None
-
         return VisualAnalysis(
             description=desc,
             tags=tags_list,

@@ -290,6 +290,20 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             assert row[1] == "moondream-station", "moondream-station model name must be correct"
             assert row[2] == "local", "moondream-station version must be local"
 
+        # Assert asset.status accepts analyzed_light (migration 020)
+        with migration_engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO asset (library_id, rel_path, type, mtime, size, status, retry_count) "
+                    "VALUES ('mig08', 'z.webp', 'image', 0, 0, 'analyzed_light', 0)"
+                )
+            )
+            conn.commit()
+            row = conn.execute(
+                text("SELECT status FROM asset WHERE rel_path = 'z.webp'")
+            ).fetchone()
+            assert row is not None and row[0] == "analyzed_light"
+
         # Assert video_scenes has GIN FTS index (migration 013)
         with migration_engine.connect() as conn:
             idx = conn.execute(

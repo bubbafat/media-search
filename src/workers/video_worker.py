@@ -38,6 +38,7 @@ class VideoWorker(BaseWorker):
         verbose: bool = False,
         analyzer_name: str = "mock",
         system_default_model_id: int | None = None,
+        mode: str = "full",
     ) -> None:
         super().__init__(
             worker_id,
@@ -54,19 +55,23 @@ class VideoWorker(BaseWorker):
         self._library_slug = library_slug
         self._verbose = verbose
         self._system_default_model_id = system_default_model_id
+        self._mode = mode
 
     def run(self, once: bool = False) -> None:
         """Run the normal worker loop. Pass once=True to exit when no work is available."""
         super().run(once=once)
 
     def process_task(self) -> bool:
+        claim_status = (
+            AssetStatus.proxied if self._mode == "light" else AssetStatus.analyzed_light
+        )
         claim_kwargs: dict = {"library_slug": self._library_slug}
         if self._system_default_model_id is not None:
             claim_kwargs["target_model_id"] = self.db_model_id
             claim_kwargs["system_default_model_id"] = self._system_default_model_id
         asset = self.asset_repo.claim_asset_by_status(
             self.worker_id,
-            AssetStatus.proxied,
+            claim_status,
             VIDEO_EXTENSIONS_LIST,
             lease_seconds=300,
             **claim_kwargs,
@@ -86,6 +91,7 @@ class VideoWorker(BaseWorker):
                 asset.library.slug,
                 self._scene_repo,
                 self.analyzer,
+                mode=self._mode,
                 check_interrupt=_check_interrupt,
             )
             if asset.video_preview_path is None or asset.video_preview_path == "":
@@ -95,7 +101,10 @@ class VideoWorker(BaseWorker):
                     self.asset_repo.set_video_preview_path(
                         asset.id, f"video_clips/{asset.library.slug}/{asset.id}/head_clip.mp4"
                     )
-            self.asset_repo.mark_completed(asset.id, self.db_model_id)
+            if self._mode == "light":
+                self.asset_repo.mark_analyzed_light(asset.id, self.db_model_id)
+            else:
+                self.asset_repo.mark_completed(asset.id, self.db_model_id)
             _log.info(
                 "Completed: %s (%s/%s)",
                 asset.id,
@@ -104,7 +113,10 @@ class VideoWorker(BaseWorker):
             )
             return True
         except InterruptedError:
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
+            reset_status = (
+                AssetStatus.proxied if self._mode == "light" else AssetStatus.analyzed_light
+            )
+            self.asset_repo.update_asset_status(asset.id, reset_status)
             return False
         except Exception as e:
             _log.error(

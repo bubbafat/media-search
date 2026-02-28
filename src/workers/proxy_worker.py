@@ -73,9 +73,9 @@ class ImageProxyWorker(BaseWorker):
             offset += len(batch)
             if len(batch) < batch_size:
                 break
-        if self._verbose or total_reset:
+        if self._verbose or total_reset or total_checked:
             _log.info(
-                "Repair: checked %s images, reset %s to pending",
+                "Repair: checked %s image assets (proxied/completed), reset %s to pending",
                 total_checked,
                 total_reset,
             )

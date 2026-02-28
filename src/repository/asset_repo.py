@@ -184,7 +184,7 @@ class AssetRepository:
     ) -> Sequence[tuple[int, str, str]]:
         """
         Return (asset_id, library_slug, type_str) for assets that should have proxy/thumbnail files:
-        status in (proxied, completed, extracting, analyzing), image + video extensions.
+        status in (proxied, analyzed_light, completed, extracting, analyzing), image + video extensions.
         Used by proxy --repair. Optionally filter by library_slug. Ordered by id for stable batching.
         """
         with self._session_scope(write=False) as session:
@@ -193,7 +193,7 @@ class AssetRepository:
                 FROM asset a
                 JOIN library l ON a.library_id = l.slug
                 WHERE l.deleted_at IS NULL
-                  AND a.status IN ('proxied', 'completed', 'extracting', 'analyzing')
+                  AND a.status IN ('proxied', 'analyzed_light', 'completed', 'extracting', 'analyzing')
                   AND a.rel_path ~* :pattern
             """
             params: dict = {"pattern": _REPAIR_PROXYABLE_PATTERN}
@@ -353,9 +353,9 @@ class AssetRepository:
     ) -> Sequence[tuple[int, str]]:
         """
         Return (asset_id, library_slug) for assets that should be re-analyzed: status in
-        (completed, analyzing), image extensions, and analysis_model_id IS DISTINCT FROM
-        effective_target_model_id. Used by AI worker --repair. Optionally filter by library_slug.
-        Ordered by id for stable batching.
+        (completed, analyzed_light, analyzing), image extensions, and analysis_model_id
+        IS DISTINCT FROM effective_target_model_id. Used by AI worker --repair.
+        Optionally filter by library_slug. Ordered by id for stable batching.
         """
         with self._session_scope(write=False) as session:
             q = """
@@ -363,7 +363,7 @@ class AssetRepository:
                 FROM asset a
                 JOIN library l ON a.library_id = l.slug
                 WHERE l.deleted_at IS NULL
-                  AND a.status IN ('completed', 'analyzing')
+                  AND a.status IN ('completed', 'analyzed_light', 'analyzing')
                   AND a.rel_path ~* :pattern
                   AND a.analysis_model_id IS DISTINCT FROM :effective_target_model_id
             """
@@ -635,6 +635,19 @@ class AssetRepository:
                 text("""
                     UPDATE asset
                     SET status = 'completed', analysis_model_id = :analysis_model_id,
+                        worker_id = NULL, lease_expires_at = NULL
+                    WHERE id = :id
+                """),
+                {"analysis_model_id": analysis_model_id, "id": asset_id},
+            )
+
+    def mark_analyzed_light(self, asset_id: int, analysis_model_id: int) -> None:
+        """Set asset to analyzed_light, set analysis_model_id, clear worker_id and lease_expires_at."""
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("""
+                    UPDATE asset
+                    SET status = 'analyzed_light', analysis_model_id = :analysis_model_id,
                         worker_id = NULL, lease_expires_at = NULL
                     WHERE id = :id
                 """),
