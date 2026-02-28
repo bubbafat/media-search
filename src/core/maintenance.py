@@ -223,6 +223,7 @@ class MaintenanceService:
         Excludes trashed libraries. Only deletes files older than min_file_age_seconds.
         Returns count deleted.
         """
+        start_time = time.time()
         non_deleted_libs = self._library_repo.list_libraries(include_deleted=False)
         non_deleted_slugs = {lib.slug for lib in non_deleted_libs}
         expected: set[str] = set()
@@ -250,7 +251,7 @@ class MaintenanceService:
             self._video_scene_repo.get_all_rep_frame_paths_excluding_trash()
         )
 
-        cutoff = time.time() - min_file_age_seconds
+        cutoff = start_time - min_file_age_seconds
         deleted = 0
         dirs_to_prune: list[Path] = []
 
