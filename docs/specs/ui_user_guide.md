@@ -85,10 +85,10 @@ A library is considered **analyzing** when AI workers are still processing asset
 
 ### System Status
 
-The “System Status” section shows workers from `worker_status`:
+The “System Status” section shows active workers from `worker_status`. Workers that shut down gracefully are deregistered (removed from the table):
 
 - **worker_id** — Unique identifier (e.g. hostname + UUID).
-- **state** — `idle`, `processing`, `paused`, or `offline`.
+- **state** — `idle`, `processing`, or `paused`.
 - **files_processed** — Derived from the worker’s `stats` JSONB if present.
 
 If no workers are registered, the table shows: “No workers registered.”

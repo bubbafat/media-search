@@ -133,7 +133,7 @@ Every worker must implement a non-blocking `run_loop` that manages its own lifec
 - **Signal Hook (`handle_signal`):**
     - `pause`: Transition to `paused` state. Finish the current asset being processed, then stop claiming new tasks. Poll for `resume`.
     - `resume`: Transition back to `idle` and resume the task claim cycle.
-    - `shutdown`: Finish current asset, update state to `offline`, and terminate the process gracefully.
+    - `shutdown`: Finish current asset, remove worker row from `worker_status` (deregister), and terminate the process gracefully.
 - **Priority:** OS signals (SIGINT/SIGTERM) must trigger the same graceful `shutdown` sequence to ensure DB consistency.
 
 ---

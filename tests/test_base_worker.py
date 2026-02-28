@@ -52,7 +52,7 @@ def _start_worker_in_thread(worker: BaseWorker) -> threading.Thread:
 
 
 def test_worker_start_creates_worker_status_record(engine, _session_factory):
-    """Starting a worker creates a WorkerStatus row."""
+    """Worker deregisters on shutdown (removes row from worker_status)."""
     repo, system_metadata_repo = _create_repo_and_tables(engine, _session_factory)
     worker = _ConcreteWorker(
         "test-worker-1", repo, heartbeat_interval_seconds=60, system_metadata_repo=system_metadata_repo
@@ -66,9 +66,7 @@ def test_worker_start_creates_worker_status_record(engine, _session_factory):
     session = _session_factory()
     try:
         row = session.get(WorkerStatusEntity, "test-worker-1")
-        assert row is not None
-        assert row.worker_id == "test-worker-1"
-        assert row.state == WorkerState.offline
+        assert row is None
     finally:
         session.close()
 
@@ -158,7 +156,7 @@ def test_pause_command_transitions_state_and_stops_process_task(engine, _session
 
 
 def test_shutdown_command_causes_graceful_exit(engine, _session_factory):
-    """Setting command to 'shutdown' causes worker to set state offline and exit the loop."""
+    """Setting command to 'shutdown' causes worker to deregister and exit the loop."""
     repo, system_metadata_repo = _create_repo_and_tables(engine, _session_factory)
     worker = _ConcreteWorker(
         "shutdown-worker",
@@ -187,14 +185,13 @@ def test_shutdown_command_causes_graceful_exit(engine, _session_factory):
     session = _session_factory()
     try:
         row = session.get(WorkerStatusEntity, "shutdown-worker")
-        assert row is not None
-        assert row.state == WorkerState.offline
+        assert row is None
     finally:
         session.close()
 
 
 def test_sigterm_causes_graceful_exit(postgres_container, engine, _session_factory):
-    """SIGTERM to a process running the worker causes clean exit and state=offline."""
+    """SIGTERM to a process running the worker causes clean exit and deregistration."""
     # Create tables and seed schema_version so subprocess pre-flight check passes
     _create_repo_and_tables(engine, _session_factory)
     url = postgres_container.get_connection_url()
@@ -241,7 +238,29 @@ worker.run()
     session = _session_factory()
     try:
         row = session.get(WorkerStatusEntity, "sigterm-worker")
+        assert row is None
+    finally:
+        session.close()
+
+
+def test_unregister_worker_deletes_row(engine, _session_factory):
+    """unregister_worker removes the worker row from worker_status."""
+    repo, system_metadata_repo = _create_repo_and_tables(engine, _session_factory)
+    worker_id = "unregister-test-worker"
+    repo.register_worker(worker_id, WorkerState.idle, hostname="test-host")
+
+    session = _session_factory()
+    try:
+        row = session.get(WorkerStatusEntity, worker_id)
         assert row is not None
-        assert row.state == WorkerState.offline
+    finally:
+        session.close()
+
+    repo.unregister_worker(worker_id)
+
+    session = _session_factory()
+    try:
+        row = session.get(WorkerStatusEntity, worker_id)
+        assert row is None
     finally:
         session.close()

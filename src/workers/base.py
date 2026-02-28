@@ -134,7 +134,7 @@ class BaseWorker(ABC):
         Main entry: pre-flight compatibility check, register worker, start heartbeat thread, run loop.
         Loop checks DB for command (pause/resume/shutdown), calls handle_signal, then process_task when not paused.
         When once=True, exit immediately when process_task() returns False (no work available).
-        On exit, sets state to offline.
+        On exit, deregisters the worker (removes row from worker_status).
         """
         self._install_signal_handlers()
         self._check_compatibility()
@@ -183,7 +183,10 @@ class BaseWorker(ABC):
                     _log.info("Checking for work...")
         finally:
             self.should_exit = True
-            # Ensure the worker is marked offline when the loop exits, regardless of how we left it.
-            self._set_state(WorkerState.offline)
+            # Deregister the worker from worker_status on shutdown.
+            try:
+                self._repo.unregister_worker(self.worker_id)
+            except Exception:
+                logging.error(f"Failed to unregister worker {self.worker_id} during shutdown", exc_info=True)
             if self._heartbeat_thread is not None:
                 self._heartbeat_thread.join(timeout=2.0)

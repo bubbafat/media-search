@@ -96,6 +96,13 @@ class WorkerRepository:
             if row is not None:
                 row.command = WorkerCommand.none
 
+    def unregister_worker(self, worker_id: str) -> None:
+        """Remove the worker row from worker_status on graceful shutdown."""
+        with self._session_scope(write=True) as session:
+            row = session.get(WorkerStatusEntity, worker_id)
+            if row is not None:
+                session.delete(row)
+
     def get_active_local_worker_count(self, hostname: str, exclude_worker_id: str) -> int:
         """Count workers on the same host that are active (not offline, seen in last 60s)."""
         now = _utcnow()
