@@ -99,6 +99,34 @@ class VideoSceneRepository:
                 )
             return result
 
+    def get_scene_by_id(self, scene_id: int) -> VideoSceneListItem | None:
+        """Return scene by id, or None. Used for strict merge: fetch fresh metadata before save."""
+        with self._session_scope(write=False) as session:
+            row = session.execute(
+                text("""
+                    SELECT id, start_ts, end_ts, description, metadata,
+                           sharpness_score, rep_frame_path, keep_reason
+                    FROM video_scenes
+                    WHERE id = :scene_id
+                """),
+                {"scene_id": scene_id},
+            ).fetchone()
+            if row is None:
+                return None
+            meta = row[4]
+            if meta is not None and not isinstance(meta, dict):
+                meta = dict(meta) if hasattr(meta, "items") else None
+            return VideoSceneListItem(
+                id=int(row[0]),
+                start_ts=float(row[1]),
+                end_ts=float(row[2]),
+                description=str(row[3]) if row[3] is not None else None,
+                metadata=meta,
+                sharpness_score=float(row[5]),
+                rep_frame_path=str(row[6] or ""),
+                keep_reason=str(row[7] or ""),
+            )
+
     def get_first_scene_rep_frame_paths(self, asset_ids: list[int]) -> dict[int, str]:
         """
         Return a dict mapping asset_id to the first scene's rep_frame_path (by start_ts)

@@ -246,3 +246,83 @@ def test_video_worker_process_task_poisons_on_exception(engine, _session_factory
     finally:
         session.close()
 
+
+def test_video_worker_safety_check_runs_missing_pass_when_scenes_incomplete(
+    engine, _session_factory,
+):
+    """When mode=full and some scenes lack description, safety check runs light pass before completing."""
+    _create_tables_and_seed(engine, _session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="safety-lib",
+                name="Safety",
+                absolute_path="/tmp/safety",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo = AssetRepository(_session_factory)
+    asset_repo.upsert_asset("safety-lib", "video.mp4", AssetType.video, 0.0, 1000)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET status = 'analyzed_light' WHERE library_id = 'safety-lib' AND rel_path = 'video.mp4'"
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    scene_repo = VideoSceneRepository(_session_factory)
+    session = _session_factory()
+    asset_id = session.execute(
+        text("SELECT id FROM asset WHERE library_id = 'safety-lib' AND rel_path = 'video.mp4'")
+    ).scalar_one()
+    session.close()
+
+    scene_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description=None,
+            metadata=None,
+            sharpness_score=10.0,
+            rep_frame_path=f"video_scenes/safety-lib/{asset_id}/0.000_5.000.jpg",
+            keep_reason="phash",
+        ),
+        None,
+    )
+
+    worker_repo = WorkerRepository(_session_factory)
+    system_repo = SystemMetadataRepository(_session_factory)
+    worker = VideoWorker(
+        worker_id="video-safety",
+        repository=worker_repo,
+        heartbeat_interval_seconds=15.0,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_repo,
+        scene_repo=scene_repo,
+        library_slug="safety-lib",
+        mode="full",
+    )
+
+    call_count = 0
+
+    def _track_calls(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+
+    with patch("src.workers.video_worker.run_vision_on_scenes", side_effect=_track_calls):
+        result = worker.process_task()
+
+    assert result is True
+    assert call_count >= 2, "Safety check should run light pass when scenes lack description"
+

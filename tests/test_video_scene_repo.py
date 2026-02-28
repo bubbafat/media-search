@@ -150,6 +150,34 @@ def test_get_asset_ids_with_scenes_returns_assets_with_scenes(engine, _session_f
     assert filtered == [(asset_id_a, "lib-repair-a")]
 
 
+def test_get_scene_by_id_returns_scene_or_none(engine, _session_factory):
+    """get_scene_by_id returns VideoSceneListItem for existing scene, None otherwise."""
+    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-lib-get-by-id")
+    rel_path = f"video_scenes/vid-lib-get-by-id/{asset_id}/0.000_5.000.jpg"
+    scene_id = video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description="Test scene",
+            metadata={"moondream": {"description": "test", "tags": ["a"]}},
+            sharpness_score=10.0,
+            rep_frame_path=rel_path,
+            keep_reason="phash",
+        ),
+        None,
+    )
+    scene = video_repo.get_scene_by_id(scene_id)
+    assert scene is not None
+    assert scene.id == scene_id
+    assert scene.description == "Test scene"
+    assert scene.metadata is not None
+    assert scene.metadata.get("moondream", {}).get("tags") == ["a"]
+
+    assert video_repo.get_scene_by_id(999999) is None
+
+
 def test_list_scenes_empty_returns_empty_list(engine, _session_factory):
     """list_scenes when no scenes exist returns empty list."""
     _, video_repo = _create_tables_and_seed(engine, _session_factory)

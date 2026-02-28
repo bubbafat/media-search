@@ -13,11 +13,12 @@ from src.models.entities import AssetType, Library, SceneKeepReason, SystemMetad
 from src.repository.asset_repo import AssetRepository
 from src.repository.video_scene_repo import (
     VideoActiveState,
+    VideoSceneListItem,
     VideoSceneRepository,
     VideoSceneRow,
 )
 from src.video.high_res_extractor import SOI, EOI
-from src.video.indexing import run_video_scene_indexing
+from src.video.indexing import needs_ocr, run_video_scene_indexing, run_vision_on_scenes
 from src.video.scene_segmenter import SceneResult
 
 pytestmark = [pytest.mark.slow]
@@ -295,3 +296,128 @@ def test_indexing_raises_when_no_scenes_produced(engine, _session_factory, tmp_p
         MockSegmenter.return_value.iter_scenes.return_value = mock_yields
         with pytest.raises(ValueError, match="No frames produced by decoder"):
             run_video_scene_indexing(asset_id, video_path, "vid-int-zero", video_repo)
+
+
+@pytest.mark.fast
+def test_needs_ocr_returns_true_when_ocr_key_absent():
+    """needs_ocr returns True when ocr_text key is absent, False when present (even if empty)."""
+    scene_no_ocr = VideoSceneListItem(
+        id=1, start_ts=0.0, end_ts=5.0, description="A scene",
+        metadata={"moondream": {"description": "a", "tags": ["x"]}},
+        sharpness_score=10.0, rep_frame_path="x.jpg", keep_reason="phash"
+    )
+    assert needs_ocr(scene_no_ocr) is True
+
+    scene_with_empty_ocr = VideoSceneListItem(
+        id=2, start_ts=0.0, end_ts=5.0, description="B scene",
+        metadata={"moondream": {"description": "b", "tags": [], "ocr_text": ""}},
+        sharpness_score=10.0, rep_frame_path="y.jpg", keep_reason="phash"
+    )
+    assert needs_ocr(scene_with_empty_ocr) is False
+
+    scene_with_none_ocr = VideoSceneListItem(
+        id=3, start_ts=0.0, end_ts=5.0, description="C scene",
+        metadata={"moondream": {"description": "c", "tags": [], "ocr_text": None}},
+        sharpness_score=10.0, rep_frame_path="z.jpg", keep_reason="phash"
+    )
+    assert needs_ocr(scene_with_none_ocr) is False
+
+
+def test_run_vision_on_scenes_strict_merge_full_preserves_light_tags(
+    engine, _session_factory, tmp_path
+):
+    """Strict merge (Full): scene with Light tags gets OCR added; tags and description preserved."""
+    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-int-merge-full")
+    slug = "vid-int-merge-full"
+    rep_path_rel = f"video_scenes/{slug}/{asset_id}/0.000_5.000.jpg"
+    rep_dir = tmp_path / "video_scenes" / slug / str(asset_id)
+    rep_dir.mkdir(parents=True)
+    (tmp_path / rep_path_rel).write_bytes(SOI + b"x" + EOI)
+
+    scene_id = video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description="A person in a room",
+            metadata={"moondream": {"description": "A person in a room", "tags": ["indoor", "person"]}},
+            sharpness_score=10.0,
+            rep_frame_path=rep_path_rel,
+            keep_reason="phash",
+        ),
+        None,
+    )
+
+    mock_analysis = VisualAnalysis(
+        description="A person in a room",
+        tags=["indoor", "person"],
+        ocr_text="HELLO WORLD",
+    )
+    mock_analyzer = MagicMock()
+    mock_analyzer.analyze_image.return_value = mock_analysis
+
+    mock_config = MagicMock()
+    mock_config.data_dir = str(tmp_path)
+    with patch("src.video.indexing.get_config", return_value=mock_config):
+        run_vision_on_scenes(
+            asset_id, slug, video_repo, mock_analyzer, mode="full"
+        )
+
+    scenes = video_repo.list_scenes(asset_id)
+    assert len(scenes) == 1
+    meta = scenes[0].metadata
+    assert meta is not None
+    md = meta.get("moondream", {})
+    assert md.get("description") == "A person in a room"
+    assert md.get("tags") == ["indoor", "person"]
+    assert md.get("ocr_text") == "HELLO WORLD"
+
+
+def test_run_vision_on_scenes_strict_merge_light_preserves_showinfo(
+    engine, _session_factory, tmp_path
+):
+    """Strict merge (Light): scene with existing showinfo preserves it when adding moondream."""
+    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-int-merge-light")
+    slug = "vid-int-merge-light"
+    rep_path_rel = f"video_scenes/{slug}/{asset_id}/0.000_5.000.jpg"
+    rep_dir = tmp_path / "video_scenes" / slug / str(asset_id)
+    rep_dir.mkdir(parents=True)
+    (tmp_path / rep_path_rel).write_bytes(SOI + b"x" + EOI)
+
+    video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description=None,
+            metadata={"showinfo": "pts_time:1.0 n:30"},
+            sharpness_score=10.0,
+            rep_frame_path=rep_path_rel,
+            keep_reason="phash",
+        ),
+        None,
+    )
+
+    mock_analysis = VisualAnalysis(
+        description="A room",
+        tags=["indoor"],
+        ocr_text=None,
+    )
+    mock_analyzer = MagicMock()
+    mock_analyzer.analyze_image.return_value = mock_analysis
+
+    mock_config = MagicMock()
+    mock_config.data_dir = str(tmp_path)
+    with patch("src.video.indexing.get_config", return_value=mock_config):
+        run_vision_on_scenes(
+            asset_id, slug, video_repo, mock_analyzer, mode="light"
+        )
+
+    scenes = video_repo.list_scenes(asset_id)
+    assert len(scenes) == 1
+    meta = scenes[0].metadata
+    assert meta is not None
+    assert meta.get("showinfo") == "pts_time:1.0 n:30"
+    assert "moondream" in meta

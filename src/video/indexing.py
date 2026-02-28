@@ -24,12 +24,12 @@ if TYPE_CHECKING:
 SEMANTIC_DEDUP_RATIO = 85  # token_set_ratio above this flags semantic duplicate
 
 
-def _needs_ocr(scene: VideoSceneListItem) -> bool:
-    """True if scene has light data (description) but ocr_text is missing or None."""
+def needs_ocr(scene: VideoSceneListItem) -> bool:
+    """True if scene has description but ocr_text key is absent (Full pass not yet run)."""
     moondream = (scene.metadata or {}).get("moondream")
     if not isinstance(moondream, dict):
         return True
-    return moondream.get("ocr_text") is None or moondream.get("ocr_text") == ""
+    return "ocr_text" not in moondream
 
 
 def run_vision_on_scenes(
@@ -55,7 +55,7 @@ def run_vision_on_scenes(
     if mode == "light":
         to_process = [s for s in scenes if s.description is None]
     else:
-        to_process = [s for s in scenes if s.description is not None and _needs_ocr(s)]
+        to_process = [s for s in scenes if s.description is not None and needs_ocr(s)]
 
     last_written_description: str | None = None
     for scene in to_process:
@@ -67,15 +67,16 @@ def run_vision_on_scenes(
         if not rep_path.exists():
             continue
         analysis = vision_analyzer.analyze_image(rep_path, mode=mode)
+        fresh = repo.get_scene_by_id(scene.id)
         if mode == "light":
             description = analysis.description or ""
-            metadata: dict = {
-                "moondream": {
-                    "description": analysis.description,
-                    "tags": analysis.tags,
-                    "ocr_text": analysis.ocr_text,
-                },
-            }
+            existing = (fresh.metadata if fresh else None) or {}
+            metadata = dict(existing)
+            moondream = dict(metadata.get("moondream") or {})
+            moondream["description"] = analysis.description
+            moondream["tags"] = analysis.tags
+            moondream["ocr_text"] = analysis.ocr_text
+            metadata["moondream"] = moondream
             if (
                 last_written_description
                 and description
@@ -85,11 +86,12 @@ def run_vision_on_scenes(
             repo.update_scene_vision(scene.id, description, metadata)
             last_written_description = description
         else:
-            existing = dict(scene.metadata) if scene.metadata else {}
+            existing = (fresh.metadata if fresh else scene.metadata) or {}
             moondream = dict(existing.get("moondream") or {})
             moondream["ocr_text"] = analysis.ocr_text
-            existing["moondream"] = moondream
-            repo.update_scene_vision(scene.id, scene.description or "", existing)
+            merged = dict(existing)
+            merged["moondream"] = moondream
+            repo.update_scene_vision(scene.id, scene.description or "", merged)
 
 
 def _write_rep_frame_jpeg(

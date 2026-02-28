@@ -11,7 +11,7 @@ from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
-from src.video.indexing import run_vision_on_scenes
+from src.video.indexing import needs_ocr, run_vision_on_scenes
 from src.workers.base import BaseWorker
 
 _log = logging.getLogger(__name__)
@@ -95,6 +95,35 @@ class VideoWorker(BaseWorker):
                 check_interrupt=_check_interrupt,
                 renew_lease=lambda: self.asset_repo.renew_asset_lease(asset.id, 300),
             )
+            # Safety check: before mark_completed, ensure all scenes have description and OCR
+            if self._mode == "full":
+                _renew = lambda: self.asset_repo.renew_asset_lease(asset.id, 300)
+                for _ in range(3):
+                    scenes = self._scene_repo.list_scenes(asset.id)
+                    missing_desc = [s for s in scenes if s.description is None]
+                    missing_ocr = [s for s in scenes if s.description and needs_ocr(s)]
+                    if not missing_desc and not missing_ocr:
+                        break
+                    if missing_desc:
+                        run_vision_on_scenes(
+                            asset.id,
+                            asset.library.slug,
+                            self._scene_repo,
+                            self.analyzer,
+                            mode="light",
+                            check_interrupt=_check_interrupt,
+                            renew_lease=_renew,
+                        )
+                    elif missing_ocr:
+                        run_vision_on_scenes(
+                            asset.id,
+                            asset.library.slug,
+                            self._scene_repo,
+                            self.analyzer,
+                            mode="full",
+                            check_interrupt=_check_interrupt,
+                            renew_lease=_renew,
+                        )
             if asset.video_preview_path is None or asset.video_preview_path == "":
                 data_dir = Path(get_config().data_dir)
                 clip_path = data_dir / "video_clips" / asset.library.slug / str(asset.id) / "head_clip.mp4"
