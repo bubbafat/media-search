@@ -27,6 +27,8 @@ We use a **Composite Comparison Strategy** to decide when a "Scene" starts and e
 * **Temporal Ceiling:** To prevent infinite scenes in static or slow-moving shots, a new scene is forced every **30 seconds**.
 * **Debounce Guard:** To prevent "jitter" from camera flashes or rapid movement, new scene triggers are ignored if they occur within **3 seconds** of the last cut (unless forced by the 30s ceiling).
 
+If you change these parameters (e.g. PHASH_THRESHOLD or DEBOUNCE_SEC in `scene_segmenter.py`), the system will automatically invalidate existing proxied videos and re-segment them on the next Video Proxy Worker pass. No manual reindex is needed.
+
 
 
 ---

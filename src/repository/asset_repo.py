@@ -21,6 +21,8 @@ DEFAULT_LEASE_SECONDS = 300
 _REPAIR_IMAGE_PATTERN = rf"\.({'|'.join(re.escape(s) for s in IMAGE_EXTENSION_SUFFIXES)})$"
 # Image + video extensions (ProxyWorker handles both)
 _REPAIR_PROXYABLE_PATTERN = rf"\.({'|'.join(re.escape(s) for s in IMAGE_EXTENSION_SUFFIXES + VIDEO_EXTENSION_SUFFIXES)})$"
+# Video extensions only (for segmentation invalidation)
+_REPAIR_VIDEO_PATTERN = rf"\.({'|'.join(re.escape(s) for s in VIDEO_EXTENSION_SUFFIXES)})$"
 
 
 class AssetRepository:
@@ -204,6 +206,45 @@ class AssetRepository:
             rows = session.execute(text(q), params).fetchall()
         return [(int(r[0]), str(r[1]), str(r[2])) for r in rows]
 
+    def get_proxied_video_asset_ids_with_stale_segmentation(
+        self,
+        current_version: int,
+        library_slug: str | None = None,
+        limit: int = 50,
+    ) -> list[int]:
+        """
+        Return asset IDs for video assets with status in (proxied, analyzed_light, completed,
+        extracting, analyzing) whose segmentation_version is not NULL and differs from current_version.
+        Used by video proxy worker to invalidate and re-segment when PHASH_THRESHOLD or DEBOUNCE_SEC
+        change. Ordered by id for stable batching.
+        """
+        with self._session_scope(write=False) as session:
+            q = """
+                SELECT a.id FROM asset a
+                JOIN library l ON a.library_id = l.slug
+                WHERE l.deleted_at IS NULL
+                  AND a.status IN ('proxied', 'analyzed_light', 'completed', 'extracting', 'analyzing')
+                  AND a.type = 'video'
+                  AND a.rel_path ~* :pattern
+                  AND a.segmentation_version IS NOT NULL
+                  AND a.segmentation_version != :current_version
+            """
+            params: dict = {"pattern": _REPAIR_VIDEO_PATTERN, "current_version": current_version, "limit": limit}
+            if library_slug is not None:
+                q += " AND a.library_id = :library_slug"
+                params["library_slug"] = library_slug
+            q += " ORDER BY a.id LIMIT :limit"
+            rows = session.execute(text(q), params).fetchall()
+        return [int(r[0]) for r in rows]
+
+    def set_segmentation_version(self, asset_id: int, version: int) -> None:
+        """Set segmentation_version for an asset (e.g. after scene indexing completes)."""
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text("UPDATE asset SET segmentation_version = :version WHERE id = :asset_id"),
+                {"version": version, "asset_id": asset_id},
+            )
+
     def count_assets_by_library(
         self,
         library_id: str,
@@ -265,7 +306,8 @@ class AssetRepository:
                 SELECT a.id, a.library_id, a.rel_path, a.type, a.mtime, a.size,
                        a.status, a.tags_model_id, a.analysis_model_id, a.worker_id,
                        a.lease_expires_at, a.retry_count, a.error_message,
-                       a.visual_analysis, a.preview_path, a.video_preview_path
+                       a.visual_analysis, a.preview_path, a.video_preview_path,
+                       a.segmentation_version
                 FROM asset a
                 JOIN library l ON a.library_id = l.slug
                 WHERE l.deleted_at IS NULL AND a.library_id = :slug
@@ -293,6 +335,7 @@ class AssetRepository:
                     visual_analysis=r[13],
                     preview_path=r[14],
                     video_preview_path=r[15],
+                    segmentation_version=r[16],
                 )
                 for r in rows
             ]

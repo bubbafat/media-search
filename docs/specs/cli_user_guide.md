@@ -123,6 +123,8 @@ uv run media-search library list --include-deleted
 
 Clear the video index and set all video assets in the library to **pending**. Use this after changing the scene-indexing algorithm so the Video worker will re-process all videos in the library. Exits with code 1 if the library is not found or soft-deleted. Then run `ai video --library <slug>` to re-process.
 
+**Note:** If you only change `PHASH_THRESHOLD` or `DEBOUNCE_SEC` (in `scene_segmenter.py`), the Video Proxy Worker will automatically invalidate and re-segment affected videos; manual reindex is optional.
+
 
 | Argument       | Description  |
 | -------------- | ------------ |
@@ -316,6 +318,8 @@ uv run media-search asset scenes nas-main video/clip.mp4 --metadata
 ### asset reindex library_slug rel_path
 
 Clear the video index for one video asset and set it to **pending**. Use this after changing the scene-indexing algorithm so the Video worker will re-process this asset. Exits with code 1 if the library is not found or soft-deleted, the asset is not found, or the asset is not a video. Then run `ai video` (optionally with `--library <slug>`) to re-process.
+
+**Note:** If you only change `PHASH_THRESHOLD` or `DEBOUNCE_SEC` (in `scene_segmenter.py`), the Video Proxy Worker will automatically invalidate and re-segment affected videos; manual reindex is optional.
 
 
 | Argument       | Description                                         |

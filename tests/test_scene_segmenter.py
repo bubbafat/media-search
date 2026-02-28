@@ -13,12 +13,34 @@ from src.video.scene_segmenter import (
     TEMPORAL_CEILING_SEC,
     SceneResult,
     SceneSegmenter,
+    compute_segmentation_version,
     _sharpness,
     _trigger_keep_reason,
 )
 from src.video.video_scanner import VideoScanner
 
 pytestmark = [pytest.mark.fast]
+
+
+# --- compute_segmentation_version ---
+
+
+def test_compute_segmentation_version_deterministic():
+    """compute_segmentation_version returns deterministic int from PHASH_THRESHOLD and DEBOUNCE_SEC."""
+    v = compute_segmentation_version()
+    assert isinstance(v, int)
+    assert v == PHASH_THRESHOLD * 10000 + int(DEBOUNCE_SEC * 1000)
+
+
+def test_compute_segmentation_version_changes_with_params():
+    """compute_segmentation_version changes when PHASH_THRESHOLD or DEBOUNCE_SEC change."""
+    with patch("src.video.scene_segmenter.PHASH_THRESHOLD", 40):
+        with patch("src.video.scene_segmenter.DEBOUNCE_SEC", 5.0):
+            v = compute_segmentation_version()
+    expected = 40 * 10000 + int(5.0 * 1000)
+    assert v == expected
+    assert v == 405000
+    assert v != PHASH_THRESHOLD * 10000 + int(DEBOUNCE_SEC * 1000)
 
 
 # --- _trigger_keep_reason (CompositeStrategy) ---

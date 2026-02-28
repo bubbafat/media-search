@@ -21,6 +21,11 @@ DEBOUNCE_SEC = 3.0
 SKIP_FRAMES_BEST = 2
 
 
+def compute_segmentation_version() -> int:
+    """Compute version integer from PHASH_THRESHOLD and DEBOUNCE_SEC for invalidation tracking."""
+    return PHASH_THRESHOLD * 10000 + int(DEBOUNCE_SEC * 1000)
+
+
 @dataclass(frozen=True)
 class SceneResult:
     """One representative frame per closed scene."""

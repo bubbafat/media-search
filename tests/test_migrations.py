@@ -349,6 +349,18 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             ).fetchone()
             assert row is not None, "asset.size column must exist"
             assert row[0] == "int8", "asset.size must be BIGINT (udt_name=int8)"
+
+        # Assert asset.segmentation_version column exists (migration 021)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT column_name, is_nullable, udt_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'asset' AND column_name = 'segmentation_version'"
+                )
+            ).fetchone()
+            assert row is not None, "asset.segmentation_version column must exist"
+            assert row[1] == "YES", "asset.segmentation_version must be nullable"
+            assert row[2] == "int4", "asset.segmentation_version must be integer (udt_name=int4)"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

@@ -21,6 +21,7 @@ from src.video.clip_extractor import (
     transcode_to_720p_h264_detailed,
 )
 from src.video.indexing import run_video_scene_indexing
+from src.video.scene_segmenter import compute_segmentation_version
 from src.workers.base import BaseWorker
 
 _log = logging.getLogger(__name__)
@@ -158,6 +159,14 @@ class VideoProxyWorker(BaseWorker):
         return stats
 
     def process_task(self) -> bool:
+        current_version = compute_segmentation_version()
+        stale_ids = self.asset_repo.get_proxied_video_asset_ids_with_stale_segmentation(
+            current_version, self._library_slug, limit=50
+        )
+        for asset_id in stale_ids:
+            self.scene_repo.clear_index_for_asset(asset_id)
+            self.asset_repo.update_asset_status(asset_id, AssetStatus.pending)
+
         asset = self.asset_repo.claim_asset_by_status(
             self.worker_id,
             AssetStatus.pending,
@@ -296,6 +305,7 @@ class VideoProxyWorker(BaseWorker):
             self.asset_repo.set_video_preview_path(
                 asset.id, f"video_clips/{library_slug}/{asset.id}/head_clip.mp4"
             )
+            self.asset_repo.set_segmentation_version(asset.id, current_version)
             self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
             self._processed_count += 1
             self._current_stage = "completed"

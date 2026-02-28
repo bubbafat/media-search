@@ -1351,3 +1351,102 @@ def test_video_proxy_worker_poisons_on_resolve_path_file_not_found(engine, _sess
         assert row[0] == "poisoned"
     finally:
         session.close()
+
+
+def test_video_proxy_worker_invalidates_stale_segmentation_version(engine, _session_factory, tmp_path):
+    """When segmentation_version differs from current PHASH_THRESHOLD/DEBOUNCE_SEC, proxied videos are invalidated (scenes cleared, status=pending)."""
+    from src.repository.system_metadata_repo import SystemMetadataRepository
+    from src.repository.video_scene_repo import VideoSceneRepository
+    from src.repository.worker_repo import WorkerRepository
+    from src.video.scene_segmenter import compute_segmentation_version
+    from src.workers.video_proxy_worker import VideoProxyWorker
+
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+
+    lib_root = tmp_path / "vid-invalidate-lib"
+    lib_root.mkdir()
+    (lib_root / "clip.mp4").write_bytes(b"fake-video")
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="vid-invalidate-lib",
+                name="Vid Invalidate Lib",
+                absolute_path=str(lib_root),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("vid-invalidate-lib", "clip.mp4", AssetType.video, 1000.0, 100)
+    asset = asset_repo.get_asset("vid-invalidate-lib", "clip.mp4")
+    assert asset is not None
+    assert asset.id is not None
+    asset_id = asset.id
+
+    # Simulate asset was proxied with old segmentation_version (different from current)
+    session = _session_factory()
+    try:
+        session.execute(
+            text("UPDATE asset SET status = 'proxied', segmentation_version = :v WHERE id = :id"),
+            {"v": 99999, "id": asset_id},
+        )
+        session.execute(
+            text(
+                "INSERT INTO video_scenes (asset_id, start_ts, end_ts, sharpness_score, rep_frame_path, keep_reason) "
+                "VALUES (:id, 0.0, 5.0, 1.0, 'video_scenes/vid-invalidate-lib/1/0.0_5.0.jpg', 'forced')"
+            ),
+            {"id": asset_id},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    worker_repo = WorkerRepository(_session_factory)
+    system_metadata_repo = SystemMetadataRepository(_session_factory)
+    scene_repo = VideoSceneRepository(_session_factory)
+    config_mock = MagicMock()
+    config_mock.data_dir = str(tmp_path)
+
+    with patch("src.core.config.get_config", return_value=config_mock):
+        with patch("src.workers.video_proxy_worker.get_config", return_value=config_mock):
+            with patch("src.core.storage.get_config", return_value=config_mock):
+                with patch(
+                    "src.repository.asset_repo.AssetRepository.claim_asset_by_status",
+                    return_value=None,
+                ):
+                    worker = VideoProxyWorker(
+                        worker_id="vid-invalidate-worker",
+                        repository=worker_repo,
+                        heartbeat_interval_seconds=15.0,
+                        asset_repo=asset_repo,
+                        system_metadata_repo=system_metadata_repo,
+                        scene_repo=scene_repo,
+                        library_slug="vid-invalidate-lib",
+                    )
+                    result = worker.process_task()
+
+    assert result is False
+    current_version = compute_segmentation_version()
+    assert current_version != 99999
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status, segmentation_version FROM asset WHERE id = :id"),
+            {"id": asset_id},
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "pending"
+        assert row[1] == 99999
+        count = session.execute(
+            text("SELECT COUNT(*) FROM video_scenes WHERE asset_id = :id"), {"id": asset_id}
+        ).scalar()
+        assert count == 0
+    finally:
+        session.close()

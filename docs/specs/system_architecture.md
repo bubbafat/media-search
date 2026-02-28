@@ -53,6 +53,7 @@ By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-d
 - `lease_expires_at` (DateTime): Dead-man's switch for worker failure recovery.
 - `preview_path` (String, nullable): **Deprecated.** Previously held the path to an animated WebP preview; the UI now uses a static scene frame as the preview image (first scene for library, best-match scene for search), derived from `video_scenes.rep_frame_path` via the API. The column remains; the Video Worker no longer sets it.
 - `video_preview_path` (String, nullable): For video assets, path **relative to data_dir** to the 10-second head-clip MP4 (e.g. `video_clips/{library_slug}/{asset_id}/head_clip.mp4`). Used for hover/tap preview playback in the UI. Set when the Video Worker generates the head clip; NULL until then.
+- `segmentation_version` (Integer, nullable): For video assets, encodes the `PHASH_THRESHOLD` and `DEBOUNCE_SEC` parameters used when scene indexing completed. When these parameters change, the Video Proxy Worker invalidates proxied videos (clears scene data, resets status to `pending`) so they are re-segmented. NULL for legacy assets or before indexing.
 
 ### 2.3 `video_frames` Table
 - `id` (UUID or BigInt, PK): Primary identifier.
@@ -73,6 +74,8 @@ Scene-based video indexing (pHash + temporal ceiling + best-frame selection) is 
   - Updated via **UPSERT** (`INSERT ... ON CONFLICT (asset_id) DO UPDATE`) so there are no orphaned state rows if the orchestrator is invoked multiple times for the same asset.
 
 **Resume semantics:** (1) On startup, query `video_scenes` for `max(end_ts)` for the target `asset_id`. (2) **Seek:** Initialize the frame scanner at `max(max_end_ts - 2.0, 0)` (FFmpeg input seek). (3) **Catch-up:** Consume frames and discard until scanner PTS ≥ `max_end_ts`. (4) **State restore:** Load `video_active_state` and re-initialize the segmenter with `anchor_phash` and `scene_start_ts`. **Atomicity:** When a scene is closed, one transaction inserts into `video_scenes` and either UPSERTs or deletes `video_active_state`; on EOF the active state row is deleted.
+
+**Segmentation versioning:** `asset.segmentation_version` tracks the `PHASH_THRESHOLD` and `DEBOUNCE_SEC` values used when scene indexing completed. If these parameters change (e.g. in code), the Video Proxy Worker detects the mismatch, clears scene data for affected assets, resets them to `pending`, and re-segments on the next pass. Legacy assets with NULL `segmentation_version` are not invalidated.
 
 ### 2.5 `worker_status` Table
 - `worker_id` (String, PK): Unique identifier for the worker instance (e.g., hostname + UUID).
