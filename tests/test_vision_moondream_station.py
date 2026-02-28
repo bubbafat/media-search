@@ -15,41 +15,46 @@ def test_parse_tags_dedupes_preserving_order():
 
 @pytest.mark.fast
 def test_analyze_image_falls_back_to_query_when_caption_raises_keyerror():
-    """When caption() raises KeyError('caption'), analyze_image falls back to query for description."""
-    pytest.importorskip("moondream")
+    """When _caption raises KeyError('caption'), analyze_image falls back to query for description."""
     from pathlib import Path
 
     from src.ai.vision_moondream_station import MoondreamStationAnalyzer
 
-    calls = []
+    post_calls = []
 
-    def mock_query(image, question, *, reasoning=False):
-        calls.append(question)
-        if "Describe" in question:
-            return {"answer": "fallback description from query"}
-        if "tags" in question.lower():
-            return {"answer": "outdoor, snow"}
-        if "Extract" in question or "text" in question.lower():
-            return {"answer": "None"}
-        return {"answer": "unknown"}
+    def mock_post(path: str, json_payload: dict):
+        post_calls.append((path, json_payload.get("question", json_payload.get("length", ""))))
+        if path == "caption":
+            # Non-standard response without "caption" key triggers KeyError in _caption
+            return {}
+        if path == "query":
+            question = json_payload.get("question", "")
+            if "Describe" in question:
+                return {"answer": "fallback description from query"}
+            if "tags" in question.lower():
+                return {"answer": "outdoor, snow"}
+            if "Extract" in question or "text" in question.lower():
+                return {"answer": "None"}
+            return {"answer": "unknown"}
+        return {}
 
     with patch.dict("os.environ", {"MEDIASEARCH_MOONDREAM_STATION_ENDPOINT": "http://localhost:9999/v1"}):
         analyzer = MoondreamStationAnalyzer()
-        mock_model = MagicMock()
-        mock_model.caption.side_effect = KeyError("caption")
-        mock_model.query.side_effect = mock_query
-        analyzer._model = mock_model
+        with patch.object(analyzer, "_post", side_effect=mock_post):
+            with patch("PIL.Image.open") as mock_open:
+                mock_img = MagicMock()
+                mock_img.mode = "RGB"
+                mock_img.convert.return_value = mock_img
+                mock_img.copy.return_value = mock_img
+                mock_open.return_value.__enter__ = MagicMock(return_value=mock_img)
+                mock_open.return_value.__exit__ = MagicMock(return_value=False)
 
-    with patch("PIL.Image.open") as mock_open:
-        mock_img = MagicMock()
-        mock_img.mode = "RGB"
-        mock_open.return_value = mock_img
-
-        result = analyzer.analyze_image(Path("/tmp/test.jpg"))
+                result = analyzer.analyze_image(Path("/tmp/test.jpg"))
 
     assert result.description == "fallback description from query"
     assert result.tags == ["outdoor", "snow"]
     assert result.ocr_text is None
-    assert mock_model.caption.called
-    assert mock_model.query.call_count == 3
-    assert "Describe this image briefly" in calls[0]
+    assert post_calls[0][0] == "caption"
+    assert post_calls[1][0] == "query"
+    assert "Describe this image briefly" in post_calls[1][1]
+    assert len(post_calls) == 4  # caption + 3 query calls

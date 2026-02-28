@@ -53,52 +53,36 @@ def test_get_vision_analyzer_moondream3_returns_moondream3_analyzer():
     assert analyzer.get_model_card().version == "1dae073c"
 
 
-@pytest.mark.ai
+@pytest.mark.fast
 def test_get_vision_analyzer_moondream_station_returns_station_analyzer():
-    """get_vision_analyzer('moondream-station') returns MoondreamStationAnalyzer when moondream is installed."""
-    try:
-        pytest.importorskip("moondream")
-    except Exception:
-        pytest.skip("moondream package not installed (install with: uv sync --extra station)")
+    """get_vision_analyzer('moondream-station') returns MoondreamStationAnalyzer."""
     from src.ai.vision_moondream_station import MoondreamStationAnalyzer
 
-    try:
-        analyzer = get_vision_analyzer("moondream-station")
-    except ValueError as e:
-        pytest.skip(f"moondream-station not available: {e}")
+    analyzer = get_vision_analyzer("moondream-station")
     assert isinstance(analyzer, MoondreamStationAnalyzer)
     assert isinstance(analyzer, BaseVisionAnalyzer)
     assert analyzer.get_model_card().name == "moondream-station"
     assert analyzer.get_model_card().version == "local"
 
 
-@pytest.mark.ai
+@pytest.mark.fast
 def test_get_vision_analyzer_md3p_int4_returns_station_analyzer():
     """get_vision_analyzer('md3p-int4') returns MoondreamStationAnalyzer (alias for station)."""
-    try:
-        pytest.importorskip("moondream")
-    except Exception:
-        pytest.skip("moondream package not installed (install with: uv sync --extra station)")
     from src.ai.vision_moondream_station import MoondreamStationAnalyzer
 
-    try:
-        analyzer = get_vision_analyzer("md3p-int4")
-    except ValueError as e:
-        pytest.skip(f"md3p-int4 not available: {e}")
+    analyzer = get_vision_analyzer("md3p-int4")
     assert isinstance(analyzer, MoondreamStationAnalyzer)
     assert analyzer.get_model_card().name == "moondream-station"
 
 
 @pytest.mark.fast
-def test_get_vision_analyzer_moondream_station_without_extra_raises_helpful_error():
-    """When moondream is not installed, get_vision_analyzer('moondream-station') raises ValueError with install hint."""
-    try:
-        import moondream  # noqa: F401
-        pytest.skip("moondream is installed; cannot test missing-extra path")
-    except ImportError:
-        pass
-    with pytest.raises(ValueError, match=r"uv sync --extra station"):
-        get_vision_analyzer("moondream-station")
+def test_get_vision_analyzer_moondream_station_works_without_moondream_client():
+    """moondream-station uses requests.Session and does not require the moondream client package."""
+    from src.ai.vision_moondream_station import MoondreamStationAnalyzer
+
+    analyzer = get_vision_analyzer("moondream-station")
+    assert isinstance(analyzer, MoondreamStationAnalyzer)
+    assert analyzer.get_model_card().name == "moondream-station"
 
 
 @pytest.mark.ai
