@@ -64,6 +64,7 @@ class Moondream3Analyzer(BaseVisionAnalyzer):
         image_path: Path,
         mode: str = "full",
         max_tokens: int | None = None,
+        should_flush_memory: bool = False,
     ) -> VisualAnalysis:
         Image = self._Image
         with Image.open(image_path) as img:
@@ -87,8 +88,15 @@ class Moondream3Analyzer(BaseVisionAnalyzer):
         if ocr is not None and ocr.lower() == "none":
             ocr = None
 
-        return VisualAnalysis(
+        result = VisualAnalysis(
             description=desc,
             tags=tags_list,
             ocr_text=ocr,
         )
+        if should_flush_memory:
+            import torch
+
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+                torch.mps.synchronize()
+        return result

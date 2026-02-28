@@ -21,6 +21,7 @@ class BaseVisionAnalyzer(ABC):
         image_path: Path,
         mode: str = "full",
         max_tokens: int | None = None,
+        should_flush_memory: bool = False,
     ) -> VisualAnalysis:
         """Analyze image at path; return description, tags, and optional OCR text."""
         ...
@@ -37,6 +38,7 @@ class MockVisionAnalyzer(BaseVisionAnalyzer):
         image_path: Path,
         mode: str = "full",
         max_tokens: int | None = None,
+        should_flush_memory: bool = False,
     ) -> VisualAnalysis:
         time.sleep(0.5)
         return VisualAnalysis(

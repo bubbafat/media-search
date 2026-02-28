@@ -1,9 +1,10 @@
 """Worker status repository: register, heartbeat, command, state. No ORM in business logic."""
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.models.entities import WorkerCommand, WorkerState
@@ -94,3 +95,18 @@ class WorkerRepository:
             row = session.get(WorkerStatusEntity, worker_id)
             if row is not None:
                 row.command = WorkerCommand.none
+
+    def get_active_local_worker_count(self, hostname: str, exclude_worker_id: str) -> int:
+        """Count workers on the same host that are active (not offline, seen in last 60s)."""
+        now = _utcnow()
+        cutoff = now - timedelta(seconds=60)
+        with self._session_scope(write=False) as session:
+            result = session.scalar(
+                select(func.count()).select_from(WorkerStatusEntity).where(
+                    WorkerStatusEntity.hostname == hostname,
+                    WorkerStatusEntity.worker_id != exclude_worker_id,
+                    WorkerStatusEntity.state != WorkerState.offline,
+                    WorkerStatusEntity.last_seen_at >= cutoff,
+                )
+            )
+            return result or 0

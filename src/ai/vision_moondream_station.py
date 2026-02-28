@@ -48,6 +48,7 @@ class MoondreamStationAnalyzer(BaseVisionAnalyzer):
         image_path: Path,
         mode: str = "full",
         max_tokens: int | None = None,
+        should_flush_memory: bool = False,
     ) -> VisualAnalysis:
         Image = self._Image
         with Image.open(image_path) as img:

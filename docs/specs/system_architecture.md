@@ -116,10 +116,12 @@ The pipeline is divided into specialized, isolated worker types to prevent hardw
 4. **The ML / AI Worker (GPU Bound):**
    - **Role:** The Intelligence Engine.
    - **Action:** Claims `proxied` **image** assets. It never touches the network or the user's NAS. It strictly reads the lightweight local proxies from the SSD, runs them through local LLMs/Vision Models (e.g., Moondream, CLIP), extracts tags/embeddings, and updates the asset to `completed`.
+   - **Local-Aware Memory Flushing:** When other active workers exist on the same host, PyTorch-based analyzers flush MPS cache after inference to avoid unified memory starvation.
 
 5. **The Video Worker (GPU Bound, vision-only):**
    - **Role:** Vision backfill for **video** scene rep frames.
    - **Action:** Claims `proxied` **video** assets that already have scene bounds and representative frames (persisted by the Video Proxy Worker). It runs vision analysis (e.g. Moondream) only on the existing rep frame images, updates scene descriptions and metadata, and marks the asset completed. It does **not** re-read the source video or generate the head-clip (Video Proxy Worker already set `video_preview_path`).
+   - **Local-Aware Memory Flushing:** Same as AI Worker; when other local workers are active, MPS cache is flushed after each scene analysis.
 
 6. **The Garbage Collector Worker (Disk & DB Bound):**
    - **Role:** The Janitor.

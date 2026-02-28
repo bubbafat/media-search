@@ -41,6 +41,7 @@ def run_vision_on_scenes(
     mode: str = "full",
     check_interrupt: Callable[[], bool] | None = None,
     renew_lease: Callable[[], None] | None = None,
+    should_flush_memory: bool = False,
 ) -> None:
     """
     Run vision analysis on existing scene rep frames.
@@ -66,7 +67,9 @@ def run_vision_on_scenes(
         rep_path = data_dir / scene.rep_frame_path
         if not rep_path.exists():
             continue
-        analysis = vision_analyzer.analyze_image(rep_path, mode=mode)
+        analysis = vision_analyzer.analyze_image(
+            rep_path, mode=mode, should_flush_memory=should_flush_memory
+        )
         fresh = repo.get_scene_by_id(scene.id)
         if mode == "light":
             description = analysis.description or ""

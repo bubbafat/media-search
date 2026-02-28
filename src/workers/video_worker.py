@@ -84,6 +84,11 @@ class VideoWorker(BaseWorker):
         def _check_interrupt() -> bool:
             return self.should_exit
 
+        active_count = self._repo.get_active_local_worker_count(
+            self.hostname, self.worker_id
+        )
+        should_flush_memory = active_count > 0
+
         _log.info("Processing video (vision-only): %s", asset.rel_path)
         try:
             run_vision_on_scenes(
@@ -94,6 +99,7 @@ class VideoWorker(BaseWorker):
                 mode=self._mode,
                 check_interrupt=_check_interrupt,
                 renew_lease=lambda: self.asset_repo.renew_asset_lease(asset.id, 300),
+                should_flush_memory=should_flush_memory,
             )
             # Safety check: before mark_completed, ensure all scenes have description and OCR
             if self._mode == "full":
@@ -113,6 +119,7 @@ class VideoWorker(BaseWorker):
                             mode="light",
                             check_interrupt=_check_interrupt,
                             renew_lease=_renew,
+                            should_flush_memory=should_flush_memory,
                         )
                     elif missing_ocr:
                         run_vision_on_scenes(
@@ -123,6 +130,7 @@ class VideoWorker(BaseWorker):
                             mode="full",
                             check_interrupt=_check_interrupt,
                             renew_lease=_renew,
+                            should_flush_memory=should_flush_memory,
                         )
             if asset.video_preview_path is None or asset.video_preview_path == "":
                 data_dir = Path(get_config().data_dir)

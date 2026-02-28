@@ -138,7 +138,13 @@ class AIWorker(BaseWorker):
             assert asset.id is not None
             try:
                 proxy_path = self.storage.get_proxy_path(asset.library.slug, asset.id)
-                results = self.analyzer.analyze_image(proxy_path, mode=mode)
+                active_count = self._repo.get_active_local_worker_count(
+                    self.hostname, self.worker_id
+                )
+                should_flush_memory = active_count > 0
+                results = self.analyzer.analyze_image(
+                    proxy_path, mode=mode, should_flush_memory=should_flush_memory
+                )
                 if mode == "light":
                     self._system_metadata_repo.save_visual_analysis(
                         asset.id,

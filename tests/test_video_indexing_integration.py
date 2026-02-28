@@ -39,6 +39,7 @@ class _SequentialDescriptionAnalyzer(BaseVisionAnalyzer):
         image_path: Path,
         mode: str = "full",
         max_tokens: int | None = None,
+        should_flush_memory: bool = False,
     ) -> VisualAnalysis:
         desc = self._descriptions[self._index] if self._index < len(self._descriptions) else ""
         self._index += 1
