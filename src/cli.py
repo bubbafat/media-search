@@ -1059,6 +1059,7 @@ def maintenance_run(
         cfg.data_dir,
         library_repo=library_repo,
         video_scene_repo=video_scene_repo,
+        hostname=socket.gethostname(),
     )
     if dry_run:
         stale_workers = worker_repo.count_stale_workers(24)
@@ -1103,6 +1104,7 @@ def maintenance_cleanup_data_dir(
         cfg.data_dir,
         library_repo=library_repo,
         video_scene_repo=video_scene_repo,
+        hostname=socket.gethostname(),
     )
     if dry_run:
         file_count, total_bytes = service.preview_data_dir_cleanup()

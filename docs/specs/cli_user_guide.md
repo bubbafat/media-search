@@ -232,7 +232,7 @@ uv run media-search repair orphan-assets --force
 
 ### maintenance run
 
-Run all maintenance tasks: prune stale workers (worker_status rows older than 24h), reclaim expired leases (assets stuck in `processing` with expired lease_expires_at reset to `pending` or `poisoned`), and delete temp files in `data_dir/tmp` older than 4 hours.
+Run all maintenance tasks: prune stale workers (worker_status rows older than 24h), reclaim expired leases (assets stuck in `processing` with expired lease_expires_at reset to `pending` or `poisoned`), and delete temp files in `data_dir/tmp` older than 4 hours. **Temp cleanup is skipped** when a Video Proxy Worker on the same machine is actively transcoding (based on worker heartbeat stats), to avoid deleting partial files FFmpeg is writing.
 
 **Global by default.** No arguments required; maintenance runs over all libraries. Optionally pass `--library <slug>` to filter temp cleanup and lease reclaim to that library only (e.g. only `data_dir/tmp/<slug>/` and assets in that library). Pruning stale workers is always global.
 

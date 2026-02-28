@@ -716,7 +716,8 @@ class AssetRepository:
         return int(val) if val is not None else 0
 
     def reclaim_stale_leases(self, *, library_slug: str | None = None) -> int:
-        """Reset assets stuck in processing with expired leases. When library_slug is set, only reclaim assets in that library. Returns count updated."""
+        """Reset assets stuck in processing with expired leases. When library_slug is set, only reclaim assets in that library. Returns count updated.
+        Note: asset.status is VARCHAR (per migrations). Do not cast to assetstatus enum."""
         with self._session_scope(write=True) as session:
             extra = " AND library_id = :library_slug" if library_slug else ""
             params: dict = {}
@@ -726,7 +727,7 @@ class AssetRepository:
                 text(
                     f"""
                     UPDATE asset
-                    SET status = (CASE WHEN retry_count > 5 THEN 'poisoned' ELSE 'pending' END)::assetstatus,
+                    SET status = (CASE WHEN retry_count > 5 THEN 'poisoned' ELSE 'pending' END),
                         worker_id = NULL, lease_expires_at = NULL,
                         retry_count = CASE WHEN retry_count > 5 THEN retry_count + 1 ELSE retry_count END,
                         error_message = CASE WHEN retry_count > 5 THEN 'Lease expired (reclaimed)' ELSE error_message END

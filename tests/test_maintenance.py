@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import text
-from sqlmodel import SQLModel
 from typer.testing import CliRunner
 
 from src.cli import app
@@ -32,16 +31,14 @@ pytestmark = [pytest.mark.slow]
 
 
 def _create_tables_and_repos(engine, session_factory):
-    """Create all tables, seed schema_version. Return (asset_repo, worker_repo)."""
-    SQLModel.metadata.create_all(engine)
-    session = session_factory()
-    try:
-        existing = session.get(SystemMetadata, "schema_version")
-        if existing is None:
-            session.add(SystemMetadata(key="schema_version", value="1"))
-            session.commit()
-    finally:
-        session.close()
+    """Run alembic migrations to match production schema (VARCHAR asset.status). Return (asset_repo, worker_repo)."""
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_cfg = Config("alembic.ini")
+    alembic_cfg.set_main_option("script_location", "migrations")
+    # Attach engine for offline mode - alembic needs DB URL from env
+    command.upgrade(alembic_cfg, "head")
     return AssetRepository(session_factory), WorkerRepository(session_factory)
 
 
@@ -352,6 +349,31 @@ def test_preview_temp_cleanup_returns_count_and_size(tmp_path):
     assert total_bytes == 5
     assert old_file.exists()
     assert new_file.exists()
+
+
+def test_cleanup_temp_dir_skips_when_local_transcode_active(tmp_path):
+    """cleanup_temp_dir skips tmp when has_active_local_transcodes returns True."""
+    tmp_dir = tmp_path / "tmp"
+    tmp_dir.mkdir()
+    old_file = tmp_dir / "old.txt"
+    old_file.write_text("old")
+    past = time.time() - (5 * 3600)
+    os.utime(old_file, (past, past))
+
+    worker_repo = MagicMock(spec=WorkerRepository)
+    worker_repo.has_active_local_transcodes.return_value = True
+    svc = MaintenanceService(
+        asset_repo=MagicMock(),
+        worker_repo=worker_repo,
+        data_dir=tmp_path,
+        library_repo=MagicMock(),
+        video_scene_repo=MagicMock(),
+        hostname="test-host",
+    )
+    deleted = svc.cleanup_temp_dir(max_age_seconds=4 * 3600)
+    assert deleted == 0
+    assert old_file.exists()
+    worker_repo.has_active_local_transcodes.assert_called_once_with("test-host")
 
 
 def test_cleanup_temp_dir_skips_nonexistent_dir(tmp_path):

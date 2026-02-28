@@ -29,12 +29,14 @@ class MaintenanceService:
         *,
         library_repo: "LibraryRepository",
         video_scene_repo: "VideoSceneRepository",
+        hostname: str = "",
     ) -> None:
         self._asset_repo = asset_repo
         self._worker_repo = worker_repo
         self._data_dir = Path(data_dir)
         self._library_repo = library_repo
         self._video_scene_repo = video_scene_repo
+        self._hostname = hostname
 
     def run_all(self, *, library_slug: str | None = None) -> None:
         """Execute all maintenance tasks in order. When library_slug is set, temp cleanup and reclaim are filtered to that library."""
@@ -92,6 +94,11 @@ class MaintenanceService:
         library_slug: str | None = None,
     ) -> int:
         """Delete files in data_dir/tmp older than max_age_seconds. When library_slug is set, only cleans data_dir/tmp/library_slug/. Returns count deleted."""
+        if self._hostname and self._worker_repo.has_active_local_transcodes(self._hostname):
+            _log.info(
+                "Active local transcode detected. Skipping 'tmp' directory cleanup for safety."
+            )
+            return 0
         tmp_dir = self._data_dir / "tmp"
         if library_slug is not None:
             tmp_dir = tmp_dir / library_slug

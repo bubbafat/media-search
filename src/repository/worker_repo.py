@@ -137,3 +137,19 @@ class WorkerRepository:
                 )
             )
             return result or 0
+
+    def has_active_local_transcodes(self, hostname: str) -> bool:
+        """Return True if any worker on this host is actively transcoding (seen in last 120s)."""
+        now = _utcnow()
+        cutoff = now - timedelta(seconds=120)
+        with self._session_scope(write=False) as session:
+            result = session.scalar(
+                select(func.count()).select_from(WorkerStatusEntity).where(
+                    WorkerStatusEntity.hostname == hostname,
+                    WorkerStatusEntity.state != WorkerState.offline,
+                    WorkerStatusEntity.last_seen_at >= cutoff,
+                    WorkerStatusEntity.stats.isnot(None),
+                    WorkerStatusEntity.stats["current_stage"].astext == "transcode",
+                )
+            )
+            return (result or 0) > 0

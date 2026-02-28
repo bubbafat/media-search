@@ -155,3 +155,91 @@ def test_get_active_local_worker_count_excludes_other_hosts(engine, _session_fac
     assert repo.get_active_local_worker_count(host2, "worker-x") == 1
     assert repo.get_active_local_worker_count(host3, "worker-x") == 0
 
+
+def test_has_active_local_transcodes_returns_true_when_transcoding(engine, _session_factory):
+    """Returns True when a worker on this host has current_stage transcode and recent heartbeat."""
+    repo = _create_repo_and_tables(engine, _session_factory)
+    now = _utcnow()
+    host = "host-transcode-test"
+    session = _session_factory()
+    try:
+        session.add(
+            WorkerStatusEntity(
+                worker_id="worker-transcoding",
+                hostname=host,
+                last_seen_at=now,
+                state=WorkerState.processing,
+                stats={"current_stage": "transcode"},
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    assert repo.has_active_local_transcodes(host) is True
+
+
+def test_has_active_local_transcodes_returns_false_when_not_transcoding(engine, _session_factory):
+    """Returns False when worker has different stage, offline, or no stats."""
+    repo = _create_repo_and_tables(engine, _session_factory)
+    now = _utcnow()
+    host = "host-not-transcode-test"
+    session = _session_factory()
+    try:
+        session.add(
+            WorkerStatusEntity(
+                worker_id="worker-not-transcode-1",
+                hostname=host,
+                last_seen_at=now,
+                state=WorkerState.processing,
+                stats={"current_stage": "thumbnail"},
+            )
+        )
+        session.add(
+            WorkerStatusEntity(
+                worker_id="worker-not-transcode-2",
+                hostname=host,
+                last_seen_at=now,
+                state=WorkerState.offline,
+                stats={"current_stage": "transcode"},
+            )
+        )
+        session.add(
+            WorkerStatusEntity(
+                worker_id="worker-not-transcode-3",
+                hostname=host,
+                last_seen_at=now,
+                state=WorkerState.processing,
+                stats=None,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    assert repo.has_active_local_transcodes(host) is False
+
+
+def test_has_active_local_transcodes_excludes_stale(engine, _session_factory):
+    """Returns False when transcode worker has last_seen > 120 seconds ago."""
+    repo = _create_repo_and_tables(engine, _session_factory)
+    now = _utcnow()
+    stale = now - timedelta(seconds=121)
+    host = "host-stale-transcode-test"
+    session = _session_factory()
+    try:
+        session.add(
+            WorkerStatusEntity(
+                worker_id="worker-stale-transcode",
+                hostname=host,
+                last_seen_at=stale,
+                state=WorkerState.processing,
+                stats={"current_stage": "transcode"},
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    assert repo.has_active_local_transcodes(host) is False
+
