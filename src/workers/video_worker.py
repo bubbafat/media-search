@@ -6,6 +6,7 @@ from pathlib import Path
 from src.ai.factory import get_vision_analyzer
 from src.core.config import get_config
 from src.core.file_extensions import VIDEO_EXTENSIONS_LIST
+from src.core.io_utils import file_non_empty
 from src.models.entities import AssetStatus
 from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
@@ -138,7 +139,7 @@ class VideoWorker(BaseWorker):
             if asset.video_preview_path is None or asset.video_preview_path == "":
                 data_dir = Path(get_config().data_dir)
                 clip_path = data_dir / "video_clips" / asset.library.slug / str(asset.id) / "head_clip.mp4"
-                if clip_path.exists():
+                if file_non_empty(clip_path):
                     self.asset_repo.set_video_preview_path(
                         asset.id, f"video_clips/{asset.library.slug}/{asset.id}/head_clip.mp4"
                     )

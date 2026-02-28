@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.core.config import get_config
 from src.core.file_extensions import VIDEO_EXTENSIONS_LIST
+from src.core.io_utils import file_non_empty
 from src.core.path_resolver import resolve_path
 from src.core.storage import LocalMediaStore
 from src.models.entities import AssetStatus
@@ -123,7 +124,7 @@ class VideoProxyWorker(BaseWorker):
                 missing = False
                 if not self.storage.thumbnail_exists(library_slug, asset_id):
                     missing = True
-                if not self._head_clip_path(library_slug, asset_id).exists():
+                if not file_non_empty(self._head_clip_path(library_slug, asset_id)):
                     missing = True
                 if missing:
                     self.asset_repo.update_asset_status(asset_id, AssetStatus.pending)

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.core.config import get_config
+from src.core.io_utils import file_non_empty
 from src.core.path_resolver import resolve_path
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
@@ -504,7 +505,7 @@ async def api_asset_clip(
     data_dir = Path(get_config().data_dir)
     dest_path = data_dir / "video_clips" / asset.library_id / str(asset_id) / f"clip_{int(ts * 1000)}.mp4"
 
-    if not dest_path.exists():
+    if not file_non_empty(dest_path):
         ok = await extract_clip(source_path, dest_path, ts)
         if not ok:
             raise HTTPException(status_code=500, detail="Clip extraction failed")

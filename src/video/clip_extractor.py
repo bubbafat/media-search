@@ -9,8 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from src.core.io_utils import file_non_empty
+
 _log = logging.getLogger(__name__)
 
+_ZERO_BYTE_STDERR_SUFFIX = "\n[media-search] Output file is 0 bytes; treating as failure"
 _DEFAULT_STDERR_TAIL_LINES = 40
 
 
@@ -208,6 +211,20 @@ def transcode_to_720p_h264_detailed(
             )
         return _run_ffmpeg(cmd)
 
+    def _validate_dest() -> None:
+        """If last attempt ok but dest is 0-byte, treat as failure."""
+        if not attempts or not attempts[-1].ok:
+            return
+        if file_non_empty(dest):
+            return
+        dest.unlink(missing_ok=True)
+        last = attempts[-1]
+        attempts[-1] = FFmpegAttempt(
+            cmd=last.cmd,
+            returncode=1,
+            stderr=(last.stderr or "") + _ZERO_BYTE_STDERR_SUFFIX,
+        )
+
     use_vt = _is_h264_videotoolbox_available()
     if use_vt:
         _log.info(
@@ -216,22 +233,26 @@ def transcode_to_720p_h264_detailed(
         )
         attempts.append(_run_cmd("h264_videotoolbox"))
         if attempts[-1].ok:
-            _log.info(
-                "FFmpeg 720p transcode succeeded with h264_videotoolbox for %s",
-                source,
-            )
-            if on_progress is not None and duration is not None:
-                on_progress(1.0)
-            return attempts
+            _validate_dest()
+            if attempts[-1].ok:
+                _log.info(
+                    "FFmpeg 720p transcode succeeded with h264_videotoolbox for %s",
+                    source,
+                )
+                if on_progress is not None and duration is not None:
+                    on_progress(1.0)
+                return attempts
         _log.info(
             "FFmpeg 720p transcode with h264_videotoolbox failed for %s, falling back to libx264",
             source,
         )
         attempts.append(_run_cmd("libx264"))
+        _validate_dest()
         return attempts
 
     _log.info("FFmpeg 720p transcode: using libx264 for %s", source)
     attempts.append(_run_cmd("libx264"))
+    _validate_dest()
     return attempts
 
 
@@ -295,7 +316,15 @@ def extract_head_clip_copy_detailed(
         "+faststart",
         str(dest),
     ]
-    return _run_ffmpeg(cmd)
+    attempt = _run_ffmpeg(cmd)
+    if attempt.ok and not file_non_empty(dest):
+        dest.unlink(missing_ok=True)
+        return FFmpegAttempt(
+            cmd=cmd,
+            returncode=1,
+            stderr=(attempt.stderr or "") + _ZERO_BYTE_STDERR_SUFFIX,
+        )
+    return attempt
 
 
 def extract_video_frame(source: Path, dest: Path, timestamp: float = 0.0) -> bool:
@@ -338,7 +367,15 @@ def extract_video_frame_detailed(
         "scale='min(1280,iw)':-2",
         str(dest),
     ]
-    return _run_ffmpeg(cmd)
+    attempt = _run_ffmpeg(cmd)
+    if attempt.ok and not file_non_empty(dest):
+        dest.unlink(missing_ok=True)
+        return FFmpegAttempt(
+            cmd=cmd,
+            returncode=1,
+            stderr=(attempt.stderr or "") + _ZERO_BYTE_STDERR_SUFFIX,
+        )
+    return attempt
 
 
 def extract_video_clip(
@@ -392,6 +429,14 @@ def extract_video_clip(
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode == 0:
+        if not file_non_empty(dest):
+            dest.unlink(missing_ok=True)
+            if result.stderr:
+                _log.warning(
+                    "FFmpeg clip extraction produced 0-byte output: %s",
+                    result.stderr.strip(),
+                )
+            return False
         return True
     if result.stderr:
         _log.warning("FFmpeg clip extraction failed: %s", result.stderr.strip())
@@ -463,6 +508,15 @@ async def extract_clip(
     _, stderr_bytes = await process.communicate()
 
     if process.returncode == 0:
+        if not file_non_empty(dest_path):
+            dest_path.unlink(missing_ok=True)
+            stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
+            if stderr:
+                _log.warning(
+                    "FFmpeg clip extraction produced 0-byte output: %s",
+                    stderr,
+                )
+            return False
         return True
     stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
     if stderr:

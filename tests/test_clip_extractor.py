@@ -9,6 +9,7 @@ import pytest
 from src.video.clip_extractor import (
     extract_clip,
     extract_head_clip_copy,
+    extract_video_frame,
     probe_video_duration,
     run_ffmpeg_with_progress,
     transcode_to_720p_h264,
@@ -16,6 +17,14 @@ from src.video.clip_extractor import (
 )
 
 pytestmark = [pytest.mark.slow]
+
+
+def _mock_ffmpeg_success(cmd, **kwargs):
+    """Mock subprocess.run that writes non-empty output file and returns success."""
+    out_path = Path(cmd[-1])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(b"fake output")
+    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
 
 @pytest.mark.fast
@@ -27,7 +36,7 @@ def test_transcode_to_720p_h264_success(tmp_path):
     with patch("src.video.clip_extractor._is_h264_videotoolbox_available", return_value=False):
         with patch(
             "src.video.clip_extractor.subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            side_effect=_mock_ffmpeg_success,
         ):
             assert transcode_to_720p_h264(source, dest) is True
 
@@ -52,16 +61,21 @@ def test_transcode_to_720p_h264_videotoolbox_falls_back_to_linx264(tmp_path):
     source = tmp_path / "in.mov"
     source.write_bytes(b"fake")
     dest = tmp_path / "out.mp4"
+    call_count = [0]
+
+    def mock_run(cmd, **kwargs):
+        call_count[0] += 1
+        out = Path(cmd[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"fake output")
+        # Call 1: vt fail, Call 2: libx264 success. Calls 3-4: same for transcode_to_720p_h264.
+        is_success = call_count[0] in (2, 4)
+        return subprocess.CompletedProcess(
+            cmd, 0 if is_success else 1, stdout="", stderr="vt failed"
+        )
+
     with patch("src.video.clip_extractor._is_h264_videotoolbox_available", return_value=True):
-        with patch(
-            "src.video.clip_extractor.subprocess.run",
-            side_effect=[
-                subprocess.CompletedProcess([], 1, stdout="", stderr="vt failed"),
-                subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-                subprocess.CompletedProcess([], 1, stdout="", stderr="vt failed"),
-                subprocess.CompletedProcess([], 0, stdout="", stderr=""),
-            ],
-        ):
+        with patch("src.video.clip_extractor.subprocess.run", side_effect=mock_run):
             attempts = transcode_to_720p_h264_detailed(source, dest)
             assert len(attempts) == 2
             assert "h264_videotoolbox" in attempts[0].cmd
@@ -77,7 +91,10 @@ def test_extract_head_clip_copy_success(tmp_path):
     source = tmp_path / "in.mp4"
     source.write_bytes(b"fake")
     dest = tmp_path / "head_clip.mp4"
-    with patch("src.video.clip_extractor.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="", stderr="")):
+    with patch(
+        "src.video.clip_extractor.subprocess.run",
+        side_effect=_mock_ffmpeg_success,
+    ):
         assert extract_head_clip_copy(source, dest, duration=10.0) is True
 
 
@@ -89,6 +106,49 @@ def test_extract_head_clip_copy_failure(tmp_path):
     dest = tmp_path / "head_clip.mp4"
     with patch("src.video.clip_extractor.subprocess.run", return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="Error")):
         assert extract_head_clip_copy(source, dest, duration=10.0) is False
+
+
+@pytest.mark.fast
+def test_extract_head_clip_copy_0_byte_returns_false(tmp_path):
+    """extract_head_clip_copy returns False when ffmpeg exits 0 but produces 0-byte output."""
+    source = tmp_path / "in.mp4"
+    source.write_bytes(b"fake")
+    dest = tmp_path / "head_clip.mp4"
+    with patch(
+        "src.video.clip_extractor.subprocess.run",
+        return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+    ):
+        assert extract_head_clip_copy(source, dest, duration=10.0) is False
+        assert not dest.exists()  # 0-byte file should be unlinked
+
+
+@pytest.mark.fast
+def test_extract_video_frame_0_byte_returns_false(tmp_path):
+    """extract_video_frame returns False when ffmpeg exits 0 but produces 0-byte output."""
+    source = tmp_path / "in.mp4"
+    source.write_bytes(b"fake")
+    dest = tmp_path / "thumb.jpg"
+    with patch(
+        "src.video.clip_extractor.subprocess.run",
+        return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+    ):
+        assert extract_video_frame(source, dest, timestamp=0.0) is False
+        assert not dest.exists()
+
+
+@pytest.mark.fast
+def test_transcode_0_byte_returns_false(tmp_path):
+    """transcode_to_720p_h264 returns False when ffmpeg exits 0 but produces 0-byte output."""
+    source = tmp_path / "in.mov"
+    source.write_bytes(b"fake")
+    dest = tmp_path / "out.mp4"
+    with patch("src.video.clip_extractor._is_h264_videotoolbox_available", return_value=False):
+        with patch(
+            "src.video.clip_extractor.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ):
+            assert transcode_to_720p_h264(source, dest) is False
+            assert not dest.exists()
 
 
 def _create_test_video(tmp_path: Path, duration: float = 5.0) -> Path:

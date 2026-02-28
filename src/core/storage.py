@@ -10,6 +10,7 @@ from PIL import ImageOps
 
 from src.core.config import get_config
 from src.core.file_extensions import RAW_EXTENSIONS
+from src.core.io_utils import file_non_empty
 
 if TYPE_CHECKING:
     import pyvips  # type: ignore[import]
@@ -389,9 +390,9 @@ class LocalMediaStore:
         return path
 
     def thumbnail_exists(self, library_slug: str, asset_id: int) -> bool:
-        """Return True if the thumbnail file exists. Used by proxy --repair for videos."""
+        """Return True if the thumbnail file exists and is non-empty. Used by proxy --repair for videos."""
         path = self._get_shard_path(library_slug, asset_id, "thumbnails")
-        return path.exists()
+        return file_non_empty(path)
 
     def get_proxy_path(self, library_slug: str, asset_id: int) -> Path:
         """Return path to proxy (WebP); raise FileNotFoundError if it does not exist."""
@@ -401,10 +402,10 @@ class LocalMediaStore:
         return path
 
     def proxy_and_thumbnail_exist(self, library_slug: str, asset_id: int) -> bool:
-        """Return True if both proxy (WebP) and thumbnail files exist. Used by proxy --repair."""
+        """Return True if both proxy (WebP) and thumbnail files exist and are non-empty. Used by proxy --repair."""
         proxy_path = self._get_proxy_path(library_slug, asset_id)
         thumb_path = self._get_shard_path(library_slug, asset_id, "thumbnails")
-        return proxy_path.exists() and thumb_path.exists()
+        return file_non_empty(proxy_path) and file_non_empty(thumb_path)
 
     def generate_proxy_and_thumbnail_from_source(
         self,
