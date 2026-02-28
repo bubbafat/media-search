@@ -279,6 +279,44 @@ def test_indexing_vision_dedup_flags_semantic_duplicate(engine, _session_factory
         session.close()
 
 
+def test_indexing_raises_when_truncated(engine, _session_factory, tmp_path):
+    """When segmenter yields scenes but max_end_ts is short of video duration, run_video_scene_indexing raises ValueError."""
+    asset_repo, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-int-truncated")
+    w, h = 480, 270
+    frame_size = w * h * 3
+    fake_frame = b"\x80" * frame_size
+
+    # Scene ends at 9.0s; video duration is 60.0s -> truncated
+    scene1 = SceneResult(
+        best_frame_bytes=fake_frame,
+        best_pts=5.0,
+        scene_start_pts=0.0,
+        scene_end_pts=9.0,
+        keep_reason=SceneKeepReason.forced,
+        sharpness_score=10.0,
+    )
+    mock_yields = [(scene1, None)]
+
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"fake")
+    mock_config = MagicMock()
+    mock_config.data_dir = str(tmp_path)
+    with patch("src.video.indexing.get_config", return_value=mock_config):
+        with patch("src.video.indexing.probe_video_duration", return_value=60.0):
+            with patch("src.video.indexing.VideoScanner") as MockScanner:
+                MockScanner.return_value.out_width = w
+                MockScanner.return_value.out_height = h
+                with patch("src.video.indexing.SceneSegmenter") as MockSegmenter:
+                    MockSegmenter.return_value.iter_scenes.return_value = mock_yields
+                    with pytest.raises(ValueError, match="truncated") as exc_info:
+                        run_video_scene_indexing(
+                            asset_id, video_path, "vid-int-truncated", video_repo
+                        )
+    assert "indexed to 9.0" in str(exc_info.value)
+    assert "duration is 60.0" in str(exc_info.value)
+
+
 def test_indexing_raises_when_no_scenes_produced(engine, _session_factory, tmp_path):
     """When segmenter yields no scenes (e.g. no frames from decoder), run_video_scene_indexing raises ValueError."""
     asset_repo, video_repo = _create_tables_and_seed(engine, _session_factory)

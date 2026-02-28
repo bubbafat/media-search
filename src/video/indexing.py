@@ -1,5 +1,6 @@
 """Video scene indexing: resume-aware pipeline that persists scenes and active state to PostgreSQL."""
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -14,6 +15,7 @@ from src.repository.video_scene_repo import (
     VideoSceneRepository,
     VideoSceneRow,
 )
+from src.video.clip_extractor import probe_video_duration
 from src.video.high_res_extractor import extract_frame as extract_high_res_frame
 from src.video.scene_segmenter import SceneSegmenter
 from src.video.video_scanner import SyncError, VideoScanner
@@ -21,7 +23,10 @@ from src.video.video_scanner import SyncError, VideoScanner
 if TYPE_CHECKING:
     from src.ai.vision_base import BaseVisionAnalyzer
 
+_log = logging.getLogger(__name__)
+
 SEMANTIC_DEDUP_RATIO = 85  # token_set_ratio above this flags semantic duplicate
+DURATION_TOLERANCE_SEC = 2.0  # max allowed gap between indexed end_ts and video duration
 
 
 def needs_ocr(scene: VideoSceneListItem) -> bool:
@@ -97,6 +102,26 @@ def run_vision_on_scenes(
             repo.update_scene_vision(scene.id, scene.description or "", merged)
 
 
+def _verify_index_reached_end(
+    asset_id: int,
+    repo: VideoSceneRepository,
+    expected_duration_sec: float | None,
+) -> None:
+    """Raise ValueError if indexed end_ts is short of video duration (truncated index)."""
+    if expected_duration_sec is None:
+        _log.warning("Duration probe returned None; skipping truncation check")
+        return
+    actual_end_ts = repo.get_max_end_ts(asset_id)
+    if actual_end_ts is None:
+        return
+    tolerance = min(DURATION_TOLERANCE_SEC, expected_duration_sec * 0.02)
+    if actual_end_ts < expected_duration_sec - tolerance:
+        raise ValueError(
+            f"Video index truncated: indexed to {actual_end_ts:.1f}s but duration is {expected_duration_sec:.1f}s; "
+            "decoder may have stopped early."
+        )
+
+
 def _write_rep_frame_jpeg(
     frame_bytes: bytes,
     width: int,
@@ -138,6 +163,8 @@ def run_video_scene_indexing(
     video_path = Path(video_path)
     if not video_path.exists():
         raise FileNotFoundError(video_path)
+
+    expected_duration = probe_video_duration(video_path)
 
     max_end_ts = repo.get_max_end_ts(asset_id)
     active_state = repo.get_active_state(asset_id)
@@ -250,12 +277,14 @@ def run_video_scene_indexing(
     scenes_saved, repro_auto, stderr_auto = _run_once(hwaccel="auto")
 
     if scenes_saved > 0:
+        _verify_index_reached_end(asset_id, repo, expected_duration)
         return
 
     # Pass 2: software decode (no hwaccel)
     scenes_saved2, repro_sw, stderr_sw = _run_once(hwaccel=None)
 
     if scenes_saved2 > 0:
+        _verify_index_reached_end(asset_id, repo, expected_duration)
         return
 
     # Still no frames/scenes.

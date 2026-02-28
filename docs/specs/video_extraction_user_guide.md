@@ -65,6 +65,9 @@ The Video Worker supports a two-pass tiered pipeline via `--mode`:
 - **Light mode:** Claims `proxied` assets. Runs vision analysis for description and tags only (no OCR). Marks asset `analyzed_light`.
 - **Full mode:** Claims `analyzed_light` assets. Adds OCR to scenes that already have descriptions. Merges OCR into existing metadata without overwriting Light tags or descriptions. Marks asset `completed`.
 
+### Scene Index Truncation and Retries
+The scene indexing pipeline verifies that indexing reached the actual end of the video. If the decoder stops early (e.g., hardware decoder error or premature EOF), `max(end_ts)` will be short of the video duration. In that case, `run_video_scene_indexing` raises a `ValueError` with message `"Video index truncated: indexed to Xs but duration is Ys; decoder may have stopped early."` The Video Proxy Worker treats this as a **retryable** failure: the asset is marked `failed` (not `poisoned`), and another worker may retry. On retry, the worker uses software decode (no hwaccel) if hardware decode previously failed; the duration check ensures partial runs are never marked successful.
+
 ### Strict Merge Policy
 To prevent "Incomplete Scenes" and data loss, vision backfill uses a **Strict Merge** policy:
 - **Fetch before save:** Before writing any vision data, the worker fetches the current scene metadata from the database. This avoids overwriting with stale in-memory data from a prior list.
