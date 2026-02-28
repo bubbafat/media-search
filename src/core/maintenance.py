@@ -156,15 +156,33 @@ class MaintenanceService:
                 break
             for asset_id, lib_slug, _ in batch:
                 shard = asset_id % 1000
-                expected.add(f"{lib_slug}/thumbnails/{shard}/{asset_id}.jpg")
-                expected.add(f"{lib_slug}/proxies/{shard}/{asset_id}.webp")
+                expected.add(
+                    str(
+                        (
+                            self._data_dir
+                            / lib_slug
+                            / "thumbnails"
+                            / str(shard)
+                            / f"{asset_id}.jpg"
+                        ).resolve()
+                    )
+                )
+                expected.add(
+                    str(
+                        (
+                            self._data_dir
+                            / lib_slug
+                            / "proxies"
+                            / str(shard)
+                            / f"{asset_id}.webp"
+                        ).resolve()
+                    )
+                )
             offset += limit
-        expected.update(
-            self._asset_repo.get_all_video_preview_paths_excluding_trash()
-        )
-        expected.update(
-            self._video_scene_repo.get_all_rep_frame_paths_excluding_trash()
-        )
+        for rel in self._asset_repo.get_all_video_preview_paths_excluding_trash():
+            expected.add(str((self._data_dir / rel).resolve()))
+        for rel in self._video_scene_repo.get_all_rep_frame_paths_excluding_trash():
+            expected.add(str((self._data_dir / rel).resolve()))
 
         cutoff = time.time() - min_file_age_seconds
 
@@ -177,9 +195,8 @@ class MaintenanceService:
                         continue
                     if entry.is_file():
                         try:
-                            rel = entry.relative_to(self._data_dir).as_posix()
                             st = entry.stat()
-                            if rel not in exp and st.st_mtime < cutoff:
+                            if str(entry.resolve()) not in exp and st.st_mtime < cutoff:
                                 file_count += 1
                                 total_bytes += st.st_size
                         except (PermissionError, OSError):
@@ -239,17 +256,35 @@ class MaintenanceService:
                 break
             for asset_id, lib_slug, _ in batch:
                 shard = asset_id % 1000
-                expected.add(f"{lib_slug}/thumbnails/{shard}/{asset_id}.jpg")
-                expected.add(f"{lib_slug}/proxies/{shard}/{asset_id}.webp")
+                expected.add(
+                    str(
+                        (
+                            self._data_dir
+                            / lib_slug
+                            / "thumbnails"
+                            / str(shard)
+                            / f"{asset_id}.jpg"
+                        ).resolve()
+                    )
+                )
+                expected.add(
+                    str(
+                        (
+                            self._data_dir
+                            / lib_slug
+                            / "proxies"
+                            / str(shard)
+                            / f"{asset_id}.webp"
+                        ).resolve()
+                    )
+                )
             offset += limit
 
         # Video preview paths and scene rep frames
-        expected.update(
-            self._asset_repo.get_all_video_preview_paths_excluding_trash()
-        )
-        expected.update(
-            self._video_scene_repo.get_all_rep_frame_paths_excluding_trash()
-        )
+        for rel in self._asset_repo.get_all_video_preview_paths_excluding_trash():
+            expected.add(str((self._data_dir / rel).resolve()))
+        for rel in self._video_scene_repo.get_all_rep_frame_paths_excluding_trash():
+            expected.add(str((self._data_dir / rel).resolve()))
 
         cutoff = start_time - min_file_age_seconds
         deleted = 0
@@ -263,8 +298,10 @@ class MaintenanceService:
                         continue
                     if entry.is_file():
                         try:
-                            rel = entry.relative_to(self._data_dir).as_posix()
-                            if rel not in expected and entry.stat().st_mtime < cutoff:
+                            if (
+                                str(entry.resolve()) not in expected
+                                and entry.stat().st_mtime < cutoff
+                            ):
                                 entry.unlink()
                                 deleted += 1
                         except (PermissionError, OSError) as e:
