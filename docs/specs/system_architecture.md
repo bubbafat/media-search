@@ -45,7 +45,7 @@ By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-d
 - `rel_path` (String): Path relative to the library root. 
 - **Indexing:** A **Composite Unique Index** on `(library_id, rel_path)` is mandatory.
 - `type` (Enum): `image`, `video`.
-- `mtime` (Float): Unix timestamp of last filesystem modification. Used for "Dirty Checks" during fast scans.
+- `mtime` (Float): Unix timestamp of last filesystem modification. Used for "Dirty Checks" during fast scans. When the Scanner Worker detects mtime or size change for an existing video asset, the asset repository atomically clears `video_scenes`, `video_active_state`, `preview_path`, and `video_preview_path` (same behavior as CLI reindex). This prevents "Frankenstein video" corruption when a user replaces a file in-place (e.g., re-rendering a Premiere project): without this, `run_video_scene_indexing` would resume from old `max(end_ts)` and append new scenes to stale metadata.
 - `size` (BigInt): File size in bytes.
 - `status` (Enum): `pending`, `proxied`, `extracting`, `analyzing`, `completed`, `failed`, `poisoned`.
 - `tags_model_id` (FK): Records which AI model produced the *current* data.

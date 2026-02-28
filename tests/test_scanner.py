@@ -13,6 +13,11 @@ from src.models.entities import AssetStatus, Library, ScanStatus, SystemMetadata
 from src.models.entities import WorkerStatus as WorkerStatusEntity
 from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
+from src.repository.video_scene_repo import (
+    VideoActiveState,
+    VideoSceneRepository,
+    VideoSceneRow,
+)
 from src.repository.worker_repo import WorkerRepository
 from src.workers.scanner import ScannerWorker
 
@@ -297,6 +302,61 @@ def test_dirty_detection(scanner_worker, tmp_path):
     assets_after = _get_assets(session_factory, library_slug)
     assert len(assets_after) == 1
     assert assets_after[0]["status"] == AssetStatus.pending.value
+
+
+def test_dirty_detection_clears_video_index(scanner_worker, tmp_path):
+    """When mtime changes for a video asset, scanner upsert clears video_scenes and video_active_state
+    to avoid Frankenstein video (old scene metadata merged with new content)."""
+    worker, library_slug, run_worker, session_factory = scanner_worker
+    f = tmp_path / "a.mkv"
+    f.write_bytes(b"video")
+    with run_worker(worker):
+        time.sleep(0.8)
+    assets = _get_assets(session_factory, library_slug)
+    assert len(assets) == 1
+    session = session_factory()
+    try:
+        row = session.execute(
+            text("SELECT id FROM asset WHERE library_id = :lib AND rel_path = 'a.mkv'"),
+            {"lib": library_slug},
+        ).fetchone()
+        assert row is not None
+        asset_id = row[0]
+    finally:
+        session.close()
+
+    video_repo = VideoSceneRepository(session_factory)
+    video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description="Old scene",
+            metadata=None,
+            sharpness_score=10.0,
+            rep_frame_path=f"video_scenes/{library_slug}/{asset_id}/0.000_5.000.jpg",
+            keep_reason="phash",
+        ),
+        VideoActiveState("abc", 0.0, 2.0, 10.0),
+    )
+    assert len(video_repo.list_scenes(asset_id)) == 1
+    assert video_repo.get_active_state(asset_id) is not None
+
+    os.utime(f, (time.time(), time.time() + 10))
+    session = session_factory()
+    try:
+        lib = session.get(Library, library_slug)
+        lib.scan_status = ScanStatus.full_scan_requested
+        session.commit()
+    finally:
+        session.close()
+
+    worker.should_exit = False
+    with run_worker(worker):
+        time.sleep(0.8)
+
+    assert video_repo.list_scenes(asset_id) == []
+    assert video_repo.get_active_state(asset_id) is None
 
 
 def test_signal_respect_pause(engine, _session_factory, run_worker, tmp_path):

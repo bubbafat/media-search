@@ -60,9 +60,26 @@ class AssetRepository:
         """
         Insert or update an asset. On conflict (library_id, rel_path), update mtime/size/type.
         Only reset status to 'pending' and clear tags_model_id when mtime or size differs.
+        When mtime or size changes for an existing video asset, clear video_scenes,
+        video_active_state, preview_path, and video_preview_path to avoid Frankenstein video
+        (old scene metadata merged with new content after file replacement).
         """
         type_val = type.value
+        params = {
+            "library_id": library_id,
+            "rel_path": rel_path,
+            "type": type_val,
+            "mtime": mtime,
+            "size": size,
+        }
         with self._session_scope(write=True) as session:
+            old_row = session.execute(
+                text("""
+                    SELECT id, type, mtime, size FROM asset
+                    WHERE library_id = :library_id AND rel_path = :rel_path
+                """),
+                params,
+            ).fetchone()
             session.execute(
                 text("""
                     INSERT INTO asset (library_id, rel_path, type, mtime, size, status, retry_count)
@@ -85,14 +102,29 @@ class AssetRepository:
                             ELSE asset.tags_model_id
                         END
                 """),
-                {
-                    "library_id": library_id,
-                    "rel_path": rel_path,
-                    "type": type_val,
-                    "mtime": mtime,
-                    "size": size,
-                },
+                params,
             )
+            if (
+                old_row is not None
+                and str(old_row[1]) == "video"
+                and (old_row[2] != mtime or old_row[3] != size)
+            ):
+                asset_id = old_row[0]
+                session.execute(
+                    text("DELETE FROM video_active_state WHERE asset_id = :asset_id"),
+                    {"asset_id": asset_id},
+                )
+                session.execute(
+                    text("DELETE FROM video_scenes WHERE asset_id = :asset_id"),
+                    {"asset_id": asset_id},
+                )
+                session.execute(
+                    text("""
+                        UPDATE asset SET preview_path = NULL, video_preview_path = NULL
+                        WHERE id = :asset_id
+                    """),
+                    {"asset_id": asset_id},
+                )
 
     def claim_library_for_scanning(self, slug: str | None = None) -> Library | None:
         """

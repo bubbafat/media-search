@@ -185,6 +185,51 @@ def test_list_scenes_empty_returns_empty_list(engine, _session_factory):
     assert video_repo.list_scenes(asset_id) == []
 
 
+def test_upsert_asset_clears_video_index_on_mtime_or_size_change(engine, _session_factory):
+    """When upsert_asset detects mtime or size change for an existing video asset, it clears
+    video_scenes, video_active_state, preview_path, and video_preview_path (Frankenstein bug fix)."""
+    asset_repo, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-lib-upsert-clear")
+    asset_repo.set_preview_path(asset_id, "video_scenes/vid-lib-upsert-clear/1/preview.webp")
+    asset_repo.set_video_preview_path(
+        asset_id, "video_clips/vid-lib-upsert-clear/1/head_clip.mp4"
+    )
+    video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description="Old",
+            metadata=None,
+            sharpness_score=10.0,
+            rep_frame_path=f"video_scenes/vid-lib-upsert-clear/{asset_id}/0.000_5.000.jpg",
+            keep_reason="phash",
+        ),
+        VideoActiveState("abc", 0.0, 2.0, 10.0),
+    )
+    assert len(video_repo.list_scenes(asset_id)) == 1
+    assert video_repo.get_active_state(asset_id) is not None
+
+    asset_repo.upsert_asset("vid-lib-upsert-clear", "video.mp4", AssetType.video, 2000.0, 6000)
+
+    assert video_repo.list_scenes(asset_id) == []
+    assert video_repo.get_active_state(asset_id) is None
+    assert video_repo.get_max_end_ts(asset_id) is None
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text(
+                "SELECT preview_path, video_preview_path FROM asset WHERE id = :id"
+            ),
+            {"id": asset_id},
+        ).fetchone()
+        assert row is not None
+        assert row[0] is None
+        assert row[1] is None
+    finally:
+        session.close()
+
+
 def test_clear_index_for_asset_removes_scenes_and_active_state(engine, _session_factory):
     """clear_index_for_asset deletes all video_scenes and video_active_state for the asset.
     When CLI clears index it also clears asset.preview_path; assert that flow leaves preview_path NULL."""
