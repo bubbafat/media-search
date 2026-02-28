@@ -482,6 +482,102 @@ class AssetRepository:
             asset.library = library
             return asset
 
+    def claim_assets_by_status(
+        self,
+        worker_id: str,
+        current_status: AssetStatus,
+        supported_exts: list[str],
+        limit: int = 1,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        library_slug: str | None = None,
+        *,
+        target_model_id: int | None = None,
+        system_default_model_id: int | None = None,
+    ) -> list[Asset]:
+        """
+        Claim up to `limit` assets with status == current_status.
+        Same filtering and locking as claim_asset_by_status; returns a list of Assets.
+        """
+        if not supported_exts or limit < 1:
+            return []
+        suffixes = "|".join(re.escape(ext.lstrip(".")) for ext in supported_exts)
+        pattern = r"\." + suffixes + r"$"
+        params: dict = {"status": current_status.value, "pattern": pattern, "limit": limit}
+        library_clause = ""
+        if library_slug is not None:
+            library_clause = " AND a.library_id = :library_slug"
+            params["library_slug"] = library_slug
+        effective_target_clause = ""
+        if target_model_id is not None and system_default_model_id is not None:
+            effective_target_clause = " AND COALESCE(l.target_tagger_id, :system_default_model_id) = :target_model_id"
+            params["target_model_id"] = target_model_id
+            params["system_default_model_id"] = system_default_model_id
+        params["worker_id"] = worker_id
+        params["lease_seconds"] = lease_seconds
+        with self._session_scope(write=True) as session:
+            rows = session.execute(
+                text(f"""
+                    SELECT a.id, a.library_id, a.rel_path, a.type, a.mtime, a.size,
+                           a.tags_model_id, a.analysis_model_id, a.retry_count, a.error_message,
+                           l.slug AS lib_slug, l.absolute_path AS lib_absolute_path
+                    FROM asset a
+                    JOIN library l ON a.library_id = l.slug
+                    WHERE l.deleted_at IS NULL
+                      AND a.status = :status
+                      AND a.rel_path ~* :pattern
+                      {library_clause}
+                      {effective_target_clause}
+                    FOR UPDATE OF a SKIP LOCKED
+                    LIMIT :limit
+                """),
+                params,
+            ).fetchall()
+            if not rows:
+                return []
+            ids = [r[0] for r in rows]
+            session.execute(
+                text("""
+                    UPDATE asset
+                    SET status = 'processing',
+                        worker_id = :worker_id,
+                        lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval,
+                        retry_count = retry_count + 1
+                    WHERE id = ANY(:ids)
+                """),
+                {"worker_id": worker_id, "lease_seconds": lease_seconds, "ids": ids},
+            )
+            lease_expires = datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
+            assets: list[Asset] = []
+            for r in rows:
+                retry_count = int(r[8] or 0) + 1
+                library = Library(
+                    slug=r[10],
+                    name="",
+                    absolute_path=r[11] or "",
+                    is_active=True,
+                    scan_status=ScanStatus.idle,
+                    target_tagger_id=None,
+                    sampling_limit=100,
+                )
+                asset = Asset(
+                    id=r[0],
+                    library_id=r[1],
+                    rel_path=r[2],
+                    type=AssetType(r[3]),
+                    mtime=r[4],
+                    size=r[5],
+                    status=AssetStatus.processing,
+                    tags_model_id=r[6],
+                    analysis_model_id=r[7],
+                    worker_id=worker_id,
+                    lease_expires_at=lease_expires,
+                    retry_count=retry_count,
+                    error_message=r[9],
+                )
+                asset.library = library
+                assets.append(asset)
+            return assets
+
     def update_asset_status(
         self,
         asset_id: int,

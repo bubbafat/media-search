@@ -754,6 +754,7 @@ def ai_start(
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
     repair: bool = typer.Option(False, "--repair", help="Before the main loop, set assets that need re-analysis (effective model changed) to proxied."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
+    batch: int = typer.Option(1, "--batch", help="Number of assets to claim and process in parallel per task."),
 ) -> None:
     """Start the AI worker: claims proxied assets, runs vision analysis, marks completed."""
     session_factory = _get_session_factory()
@@ -826,6 +827,7 @@ def ai_start(
         system_default_model_id=system_default_model_id,
         repair=repair,
         library_repo=lib_repo if repair else None,
+        batch_size=batch,
     )
     try:
         worker.run(once=once)

@@ -537,6 +537,7 @@ With `--repair`, before the main loop the worker runs a one-time repair pass: it
 | `--analyzer`      | AI model to use (e.g. mock, moondream2, moondream3, moondream-station, md3p-int4). If omitted, uses library or system default |
 | `--repair`        | Set assets that need re-analysis (effective model changed) to proxied before the main loop                                    |
 | `--once`          | Process one batch then exit; exit immediately if no work                                                                      |
+| `--batch`         | Number of assets to claim and process in parallel per task (default: 1). Use higher values when Moondream Station has multiple workers. |
 
 
 **Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile). `moondream3` uses the Moondream3 vision model (moondream/moondream3-preview) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. `moondream-station` and `md3p-int4` (alias) send requests to a **local Moondream Station** server (e.g. for md3p-int4 on Apple Silicon). Install the client with `uv sync --extra station`; run [Moondream Station](https://docs.moondream.ai/station/) separately (e.g. `moondream-station`) and switch to md3p-int4 if desired. Set `MEDIASEARCH_MOONDREAM_STATION_ENDPOINT` to override the default endpoint ([http://localhost:2020/v1](http://localhost:2020/v1)).
@@ -551,6 +552,7 @@ uv run media-search ai start --analyzer moondream3
 uv run media-search ai start --analyzer moondream-station
 uv run media-search ai start --library nas-main --repair
 uv run media-search ai start --once --library nas-main
+uv run media-search ai start --batch 4
 ```
 
 ---

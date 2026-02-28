@@ -130,6 +130,67 @@ def test_ai_worker_process_task_completes_asset_and_saves_analysis(engine, _sess
         proxy_path.unlink(missing_ok=True)
 
 
+def test_ai_worker_process_task_batch_processes_multiple_assets(engine, _session_factory):
+    """process_task with batch_size>1 claims and processes multiple assets in parallel."""
+    _create_tables_and_seed(engine, _session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="batch-lib",
+                name="Batch Lib",
+                absolute_path="/tmp/batch-lib",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo = AssetRepository(_session_factory)
+    asset_repo.upsert_asset("batch-lib", "a.jpg", AssetType.image, 0.0, 100)
+    asset_repo.upsert_asset("batch-lib", "b.jpg", AssetType.image, 0.0, 100)
+    session = _session_factory()
+    try:
+        session.execute(text("UPDATE asset SET status = 'proxied' WHERE library_id = 'batch-lib'"))
+        session.commit()
+    finally:
+        session.close()
+
+    worker_repo = WorkerRepository(_session_factory)
+    system_repo = SystemMetadataRepository(_session_factory)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        proxy_a = Path(tmpdir) / "a.jpg"
+        proxy_b = Path(tmpdir) / "b.jpg"
+        proxy_a.touch()
+        proxy_b.touch()
+        worker = AIWorker(
+            worker_id="ai-batch",
+            repository=worker_repo,
+            heartbeat_interval_seconds=15.0,
+            asset_repo=asset_repo,
+            system_metadata_repo=system_repo,
+            library_slug="batch-lib",
+            batch_size=2,
+        )
+        worker.storage.get_proxy_path = MagicMock(return_value=proxy_a)
+        with patch("src.ai.vision_base.time.sleep"):
+            result = worker.process_task()
+        assert result is True
+
+        session = _session_factory()
+        try:
+            rows = session.execute(
+                text("SELECT rel_path, status FROM asset WHERE library_id = 'batch-lib' ORDER BY rel_path")
+            ).fetchall()
+            assert len(rows) == 2
+            assert rows[0][0] == "a.jpg" and rows[0][1] == "completed"
+            assert rows[1][0] == "b.jpg" and rows[1][1] == "completed"
+        finally:
+            session.close()
+
+
 def test_ai_worker_process_task_poisons_on_exception(engine, _session_factory):
     """process_task sets status to poisoned and error_message when analyzer raises."""
     _create_tables_and_seed(engine, _session_factory)

@@ -49,8 +49,22 @@ class MoondreamStationAnalyzer(BaseVisionAnalyzer):
         if image.mode != "RGB":
             image = image.convert("RGB")
 
-        caption_out = self._model.caption(image, length="short")
-        desc = caption_out["caption"] if isinstance(caption_out["caption"], str) else "".join(caption_out["caption"])
+        try:
+            caption_out = self._model.caption(image, length="short")
+            desc = caption_out["caption"] if isinstance(caption_out["caption"], str) else "".join(caption_out["caption"])
+        except KeyError as e:
+            if e.args == ("caption",):
+                # Moondream Station (e.g. md3p-int4) may return non-standard caption format.
+                # Fall back to query endpoint which returns {"answer": ...}.
+                caption_out = self._model.query(
+                    image,
+                    "Describe this image briefly in one or two sentences.",
+                    reasoning=False,
+                )
+                ans = caption_out["answer"]
+                desc = ans if isinstance(ans, str) else "".join(ans)
+            else:
+                raise
 
         tags_out = self._model.query(
             image,

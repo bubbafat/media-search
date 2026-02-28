@@ -2,11 +2,12 @@
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.ai.factory import get_vision_analyzer
 from src.core.file_extensions import IMAGE_EXTENSIONS_LIST
 from src.core.storage import LocalMediaStore
-from src.models.entities import AssetStatus
+from src.models.entities import Asset, AssetStatus
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
@@ -39,6 +40,7 @@ class AIWorker(BaseWorker):
         system_default_model_id: int | None = None,
         repair: bool = False,
         library_repo: LibraryRepository | None = None,
+        batch_size: int = 1,
     ) -> None:
         super().__init__(
             worker_id,
@@ -57,6 +59,7 @@ class AIWorker(BaseWorker):
         self._system_default_model_id = system_default_model_id
         self._repair = repair
         self._library_repo = library_repo
+        self._batch_size = max(1, batch_size)
 
     def _run_repair_pass(self) -> None:
         """
@@ -110,49 +113,66 @@ class AIWorker(BaseWorker):
         super().run(once=once)
 
     def process_task(self) -> bool:
-        claim_kwargs: dict = {"library_slug": self._library_slug}
+        claim_kwargs: dict = {"library_slug": self._library_slug, "limit": self._batch_size}
         if self._system_default_model_id is not None:
             claim_kwargs["target_model_id"] = self.db_model_id
             claim_kwargs["system_default_model_id"] = self._system_default_model_id
-        asset = self.asset_repo.claim_asset_by_status(
+        assets = self.asset_repo.claim_assets_by_status(
             self.worker_id,
             AssetStatus.proxied,
             IMAGE_EXTENSIONS_LIST,
             **claim_kwargs,
         )
-        if asset is None:
+        if not assets:
             return False
-        assert asset.id is not None
         card = self.analyzer.get_model_card()
-        try:
-            started = time.perf_counter()
-            proxy_path = self.storage.get_proxy_path(asset.library.slug, asset.id)
-            results = self.analyzer.analyze_image(proxy_path)
-            self._system_metadata_repo.save_visual_analysis(
-                asset.id,
-                results,
-                model_name=card.name,
-                model_version=card.version,
-            )
-            self.asset_repo.mark_completed(asset.id, self.db_model_id)
-            elapsed = time.perf_counter() - started
-            if self._verbose:
-                _log.info(
-                    "Completed asset %s (%s/%s) in %.1fs",
+
+        def _process_one(asset: Asset) -> tuple[int, str, str, Exception | None]:
+            """Run analyze_image for one asset. Returns (asset_id, slug, rel_path, error or None)."""
+            assert asset.id is not None
+            try:
+                proxy_path = self.storage.get_proxy_path(asset.library.slug, asset.id)
+                results = self.analyzer.analyze_image(proxy_path)
+                self._system_metadata_repo.save_visual_analysis(
                     asset.id,
-                    asset.library.slug,
-                    asset.rel_path,
-                    elapsed,
+                    results,
+                    model_name=card.name,
+                    model_version=card.version,
                 )
-        except Exception as e:
-            _log.error(
-                "AI worker failed for asset %s (%s): %s",
-                asset.id,
-                asset.rel_path,
-                e,
-                exc_info=True,
-            )
-            self.asset_repo.update_asset_status(
-                asset.id, AssetStatus.poisoned, str(e)
+                self.asset_repo.mark_completed(asset.id, self.db_model_id)
+                return (asset.id, asset.library.slug, asset.rel_path, None)
+            except Exception as e:
+                return (asset.id, asset.library.slug, asset.rel_path, e)
+
+        started = time.perf_counter()
+        completed = 0
+        failed = 0
+        with ThreadPoolExecutor(max_workers=len(assets)) as executor:
+            futures = {executor.submit(_process_one, a): a for a in assets}
+            for future in as_completed(futures):
+                asset_id, slug, rel_path, err = future.result()
+                if err is None:
+                    completed += 1
+                    if self._verbose:
+                        _log.info("Completed asset %s (%s/%s)", asset_id, slug, rel_path)
+                else:
+                    failed += 1
+                    _log.error(
+                        "AI worker failed for asset %s (%s): %s",
+                        asset_id,
+                        rel_path,
+                        err,
+                        exc_info=True,
+                    )
+                    self.asset_repo.update_asset_status(
+                        asset_id, AssetStatus.poisoned, str(err)
+                    )
+        elapsed = time.perf_counter() - started
+        if self._verbose and completed:
+            _log.info(
+                "Batch: %s completed, %s failed in %.1fs",
+                completed,
+                failed,
+                elapsed,
             )
         return True
