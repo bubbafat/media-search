@@ -114,12 +114,16 @@ class VideoWorker(BaseWorker):
                 asset_analysis_model_id=asset.analysis_model_id,
                 asset_tags_model_id=asset.tags_model_id,
                 check_interrupt=_check_interrupt,
-                renew_lease=lambda: self.asset_repo.renew_asset_lease(asset.id, 300),
+                renew_lease=lambda: self.asset_repo.renew_asset_lease(
+                    asset.id, 300, worker_id=self.worker_id
+                ),
                 should_flush_memory=should_flush_memory,
             )
             # Safety check: before mark_completed, ensure all scenes have description and OCR
             if self._mode == "full":
-                _renew = lambda: self.asset_repo.renew_asset_lease(asset.id, 300)
+                _renew = lambda: self.asset_repo.renew_asset_lease(
+                    asset.id, 300, worker_id=self.worker_id
+                )
                 for _ in range(3):
                     scenes = self._scene_repo.list_scenes(asset.id)
                     missing_desc = [s for s in scenes if s.description is None]
@@ -162,9 +166,13 @@ class VideoWorker(BaseWorker):
                         asset.id, f"video_clips/{asset.library.slug}/{asset.id}/head_clip.mp4"
                     )
             if self._mode == "light":
-                self.asset_repo.mark_analyzed_light(asset.id, self.db_model_id)
+                self.asset_repo.mark_analyzed_light(
+                    asset.id, self.db_model_id, owned_by=self.worker_id
+                )
             else:
-                self.asset_repo.mark_completed(asset.id, self.db_model_id)
+                self.asset_repo.mark_completed(
+                    asset.id, self.db_model_id, owned_by=self.worker_id
+                )
             _log.info(
                 "Completed: %s (%s/%s)",
                 asset.id,
@@ -176,7 +184,9 @@ class VideoWorker(BaseWorker):
             reset_status = (
                 AssetStatus.proxied if self._mode == "light" else AssetStatus.analyzed_light
             )
-            self.asset_repo.update_asset_status(asset.id, reset_status)
+            self.asset_repo.update_asset_status(
+                asset.id, reset_status, owned_by=self.worker_id
+            )
             return False
         except Exception as e:
             _log.error(
@@ -188,7 +198,11 @@ class VideoWorker(BaseWorker):
             )
             msg = str(e)
             if asset.retry_count > MAX_RETRY_COUNT_BEFORE_POISON:
-                self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, msg)
+                self.asset_repo.update_asset_status(
+                    asset.id, AssetStatus.poisoned, msg, owned_by=self.worker_id
+                )
             else:
-                self.asset_repo.update_asset_status(asset.id, AssetStatus.failed, msg)
+                self.asset_repo.update_asset_status(
+                    asset.id, AssetStatus.failed, msg, owned_by=self.worker_id
+                )
             return True

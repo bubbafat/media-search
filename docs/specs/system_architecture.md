@@ -22,6 +22,7 @@ By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-d
 ### 1.2 Task Orchestration (The State Machine)
 - **Pull-Based Logic:** Workers determine their own work by querying the `assets` table. There is no central dispatcher.
 - **Lease Mechanism:** A "Claim" consists of an atomic update setting `status='processing'`, assigning a `worker_id`, and setting a `lease_expires_at` timestamp.
+- **Lease Ownership:** Workers may only update, renew, or complete assets they own (`worker_id` must match). When the Scanner detects mtime/size change (file replaced), or when repair/maintenance/CLI resets an asset, the repository clears `worker_id` and `lease_expires_at`, evicting the current worker. An evicted worker's completion update is rejected; the asset stays pending for re-processing.
 - **Recovery:** Any asset with `status='processing'` and `lease_expires_at < now()` is considered "Abandoned" and must be eligible for re-claiming by any healthy worker.
 
 ---
@@ -45,7 +46,7 @@ By strictly tracking AI data provenance and utilizing soft-delete/chunked-hard-d
 - `rel_path` (String): Path relative to the library root. 
 - **Indexing:** A **Composite Unique Index** on `(library_id, rel_path)` is mandatory.
 - `type` (Enum): `image`, `video`.
-- `mtime` (Float): Unix timestamp of last filesystem modification. Used for "Dirty Checks" during fast scans. When the Scanner Worker detects mtime or size change for an existing video asset, the asset repository atomically clears `video_scenes`, `video_active_state`, `preview_path`, and `video_preview_path` (same behavior as CLI reindex). This prevents "Frankenstein video" corruption when a user replaces a file in-place (e.g., re-rendering a Premiere project): without this, `run_video_scene_indexing` would resume from old `max(end_ts)` and append new scenes to stale metadata.
+- `mtime` (Float): Unix timestamp of last filesystem modification. Used for "Dirty Checks" during fast scans. When the Scanner Worker detects mtime or size change for an existing asset, the asset repository atomically resets `status` to `pending`, clears `tags_model_id`, `worker_id`, and `lease_expires_at` (evicting any worker currently processing it), and for video assets also clears `video_scenes`, `video_active_state`, `preview_path`, and `video_preview_path` (same behavior as CLI reindex). This prevents "Frankenstein video" corruption when a user replaces a file in-place (e.g., re-rendering a Premiere project): without this, `run_video_scene_indexing` would resume from old `max(end_ts)` and append new scenes to stale metadata.
 - `size` (BigInt): File size in bytes.
 - `status` (Enum): `pending`, `proxied`, `extracting`, `analyzing`, `completed`, `failed`, `poisoned`.
 - `tags_model_id` (FK): Records which AI model produced the *current* data.

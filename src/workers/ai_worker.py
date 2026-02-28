@@ -159,12 +159,16 @@ class AIWorker(BaseWorker):
                         model_name=card.name,
                         model_version=card.version,
                     )
-                    self.asset_repo.mark_analyzed_light(asset.id, self.db_model_id)
+                    self.asset_repo.mark_analyzed_light(
+                        asset.id, self.db_model_id, owned_by=self.worker_id
+                    )
                 else:
                     self._system_metadata_repo.merge_ocr_into_visual_analysis(
                         asset.id, results.ocr_text
                     )
-                    self.asset_repo.mark_completed(asset.id, self.db_model_id)
+                    self.asset_repo.mark_completed(
+                        asset.id, self.db_model_id, owned_by=self.worker_id
+                    )
                 return (asset.id, asset.library.slug, asset.rel_path, None)
             except Exception as e:
                 return (asset.id, asset.library.slug, asset.rel_path, e)
@@ -190,7 +194,7 @@ class AIWorker(BaseWorker):
                         exc_info=True,
                     )
                     self.asset_repo.update_asset_status(
-                        asset_id, AssetStatus.poisoned, str(err)
+                        asset_id, AssetStatus.poisoned, str(err), owned_by=self.worker_id
                     )
         elapsed = time.perf_counter() - started
         if self._verbose and completed:

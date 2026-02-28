@@ -228,7 +228,9 @@ class VideoProxyWorker(BaseWorker):
                 asset.rel_path,
                 e,
             )
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, str(e))
+            self.asset_repo.update_asset_status(
+                asset.id, AssetStatus.poisoned, str(e), owned_by=self.worker_id
+            )
             self._current_asset_id = None
             self._current_asset_rel_path = None
             self._current_stage = None
@@ -265,7 +267,9 @@ class VideoProxyWorker(BaseWorker):
                 self._current_stage_progress = p
                 if last_reported_percent is None or (p - last_reported_percent) >= 0.05:
                     last_reported_percent = p
-                    self.asset_repo.renew_asset_lease(asset.id, 300)
+                    self.asset_repo.renew_asset_lease(
+                        asset.id, 300, worker_id=self.worker_id
+                    )
                     pct = int(p * 100)
                     _log.info(
                         "[asset %s] %s%% complete (720p transcode)",
@@ -324,14 +328,23 @@ class VideoProxyWorker(BaseWorker):
                 library_slug,
                 self.scene_repo,
                 vision_analyzer=None,
-                on_scene_closed=lambda: self.asset_repo.renew_asset_lease(asset.id, 300),
+                on_scene_closed=lambda: self.asset_repo.renew_asset_lease(
+                    asset.id, 300, worker_id=self.worker_id
+                ),
                 check_interrupt=lambda: self.should_exit,
             )
             self.asset_repo.set_video_preview_path(
                 asset.id, f"video_clips/{library_slug}/{asset.id}/head_clip.mp4"
             )
             self.asset_repo.set_segmentation_version(asset.id, current_version)
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
+            if not self.asset_repo.update_asset_status(
+                asset.id, AssetStatus.proxied, owned_by=self.worker_id
+            ):
+                _log.info(
+                    "Asset %s was evicted (scanner reset or lease reclaimed); skipping completion update",
+                    asset.id,
+                )
+                return True
             self._processed_count += 1
             self._current_stage = "completed"
             self._current_stage_progress = 1.0
@@ -345,7 +358,9 @@ class VideoProxyWorker(BaseWorker):
                     total,
                 )
         except InterruptedError:
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.pending)
+            self.asset_repo.update_asset_status(
+                asset.id, AssetStatus.pending, owned_by=self.worker_id
+            )
             return False
         except _PermanentVideoProxyError as e:
             _log.error(
@@ -354,7 +369,9 @@ class VideoProxyWorker(BaseWorker):
                 source_path,
                 e,
             )
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, str(e))
+            self.asset_repo.update_asset_status(
+                asset.id, AssetStatus.poisoned, str(e), owned_by=self.worker_id
+            )
         except _RetryableVideoProxyError as e:
             # Retryable: mark failed unless we exceeded retry limit.
             msg = str(e)
@@ -362,9 +379,13 @@ class VideoProxyWorker(BaseWorker):
                 msg = (
                     f"{msg}\n\nRetry limit exceeded (retry_count={asset.retry_count} > {MAX_RETRY_COUNT_BEFORE_POISON})"
                 )
-                self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, msg)
+                self.asset_repo.update_asset_status(
+                    asset.id, AssetStatus.poisoned, msg, owned_by=self.worker_id
+                )
             else:
-                self.asset_repo.update_asset_status(asset.id, AssetStatus.failed, msg)
+                self.asset_repo.update_asset_status(
+                    asset.id, AssetStatus.failed, msg, owned_by=self.worker_id
+                )
         except Exception as e:
             _log.error(
                 "Video proxy worker failed for asset %s (%s): %s",
@@ -375,15 +396,20 @@ class VideoProxyWorker(BaseWorker):
             )
             msg = str(e)
             if "No frames produced by decoder" in msg or "ffprobe returned no stream" in msg:
-                self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, msg)
+                self.asset_repo.update_asset_status(
+                    asset.id, AssetStatus.poisoned, msg, owned_by=self.worker_id
+                )
             elif asset.retry_count > MAX_RETRY_COUNT_BEFORE_POISON:
                 self.asset_repo.update_asset_status(
                     asset.id,
                     AssetStatus.poisoned,
                     f"{msg}\n\nRetry limit exceeded (retry_count={asset.retry_count} > {MAX_RETRY_COUNT_BEFORE_POISON})",
+                    owned_by=self.worker_id,
                 )
             else:
-                self.asset_repo.update_asset_status(asset.id, AssetStatus.failed, msg)
+                self.asset_repo.update_asset_status(
+                    asset.id, AssetStatus.failed, msg, owned_by=self.worker_id
+                )
         finally:
             temp_path.unlink(missing_ok=True)
             self._current_asset_id = None

@@ -123,7 +123,9 @@ class ImageProxyWorker(BaseWorker):
                 asset.rel_path,
                 e,
             )
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, str(e))
+            self.asset_repo.update_asset_status(
+                asset.id, AssetStatus.poisoned, str(e), owned_by=self.worker_id
+            )
             return True
         try:
             # Cascade: generate proxy first, then thumbnail from that proxy image,
@@ -134,7 +136,14 @@ class ImageProxyWorker(BaseWorker):
                 source_path,
                 use_previews=self._use_previews,
             )
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.proxied)
+            if not self.asset_repo.update_asset_status(
+                asset.id, AssetStatus.proxied, owned_by=self.worker_id
+            ):
+                _log.info(
+                    "Asset %s was evicted (scanner reset or lease reclaimed); skipping completion update",
+                    asset.id,
+                )
+                return True
             self._processed_count += 1
             if self._verbose:
                 total = self._initial_pending if self._initial_pending is not None else "?"
@@ -155,9 +164,13 @@ class ImageProxyWorker(BaseWorker):
             )
             msg = str(e)
             if asset.retry_count > MAX_RETRY_COUNT_BEFORE_POISON:
-                self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, msg)
+                self.asset_repo.update_asset_status(
+                    asset.id, AssetStatus.poisoned, msg, owned_by=self.worker_id
+                )
             else:
-                self.asset_repo.update_asset_status(asset.id, AssetStatus.failed, msg)
+                self.asset_repo.update_asset_status(
+                    asset.id, AssetStatus.failed, msg, owned_by=self.worker_id
+                )
         return True
 
 

@@ -304,6 +304,59 @@ def test_dirty_detection(scanner_worker, tmp_path):
     assert assets_after[0]["status"] == AssetStatus.pending.value
 
 
+def test_dirty_detection_evicts_worker(scanner_worker, tmp_path):
+    """When mtime changes, scanner upsert clears worker_id and lease_expires_at (evicts worker)."""
+    worker, library_slug, run_worker, session_factory = scanner_worker
+    f = tmp_path / "evict.mkv"
+    f.write_bytes(b"video")
+    with run_worker(worker):
+        time.sleep(0.8)
+    assets = _get_assets(session_factory, library_slug)
+    assert len(assets) == 1
+    session = session_factory()
+    try:
+        session.execute(
+            text("""
+                UPDATE asset
+                SET status = 'processing', worker_id = 'worker-x',
+                    lease_expires_at = (NOW() AT TIME ZONE 'UTC') + INTERVAL '5 minutes'
+                WHERE library_id = :lib AND rel_path = 'evict.mkv'
+            """),
+            {"lib": library_slug},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    os.utime(f, (time.time(), time.time() + 10))
+    session = session_factory()
+    try:
+        lib = session.get(Library, library_slug)
+        lib.scan_status = ScanStatus.full_scan_requested
+        session.commit()
+    finally:
+        session.close()
+
+    worker.should_exit = False
+    with run_worker(worker):
+        time.sleep(0.8)
+
+    session = session_factory()
+    try:
+        row = session.execute(
+            text(
+                "SELECT status, worker_id, lease_expires_at FROM asset WHERE library_id = :lib AND rel_path = 'evict.mkv'"
+            ),
+            {"lib": library_slug},
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "pending"
+        assert row[1] is None
+        assert row[2] is None
+    finally:
+        session.close()
+
+
 def test_dirty_detection_clears_video_index(scanner_worker, tmp_path):
     """When mtime changes for a video asset, scanner upsert clears video_scenes and video_active_state
     to avoid Frankenstein video (old scene metadata merged with new content)."""

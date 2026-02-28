@@ -116,7 +116,7 @@ def test_renew_asset_lease_updates_lease_expires_at(engine, _session_factory):
     finally:
         session.close()
 
-    asset_repo.renew_asset_lease(asset_id, lease_seconds=60)
+    asset_repo.renew_asset_lease(asset_id, lease_seconds=60, worker_id="worker-1")
 
     session = _session_factory()
     try:
@@ -266,7 +266,9 @@ def test_update_asset_status_clears_worker_and_lease(engine, _session_factory):
     assert claimed is not None
     assert claimed.worker_id == "worker-1"
 
-    asset_repo.update_asset_status(claimed.id, AssetStatus.proxied)
+    asset_repo.update_asset_status(
+        claimed.id, AssetStatus.proxied, owned_by=claimed.worker_id
+    )
 
     session = _session_factory()
     try:
@@ -275,6 +277,91 @@ def test_update_asset_status_clears_worker_and_lease(engine, _session_factory):
         assert row.status == AssetStatus.proxied
         assert row.worker_id is None
         assert row.lease_expires_at is None
+    finally:
+        session.close()
+
+
+def test_update_asset_status_ownership_rejected(engine, _session_factory):
+    """update_asset_status(owned_by=X) is rejected when worker_id != X (evicted worker)."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="own-lib",
+                name="Own Lib",
+                absolute_path="/tmp/own",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("own-lib", "x.jpg", AssetType.image, 0.0, 0)
+    claimed = asset_repo.claim_asset_by_status(
+        "worker-A", AssetStatus.pending, [".jpg"], library_slug="own-lib"
+    )
+    assert claimed is not None
+    assert claimed.worker_id == "worker-A"
+
+    ok = asset_repo.update_asset_status(
+        claimed.id, AssetStatus.proxied, owned_by="worker-B"
+    )
+    assert ok is False
+
+    session = _session_factory()
+    try:
+        row = session.get(Asset, claimed.id)
+        assert row is not None
+        assert row.status == AssetStatus.processing
+        assert row.worker_id == "worker-A"
+    finally:
+        session.close()
+
+
+def test_upsert_asset_clears_worker_lease_on_mtime_change(engine, _session_factory):
+    """upsert_asset with mtime/size change clears worker_id and lease_expires_at (evicts worker)."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="evict-lib",
+                name="Evict Lib",
+                absolute_path="/tmp/evict",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("evict-lib", "video.mp4", AssetType.video, 1000.0, 5000)
+    claimed = asset_repo.claim_asset_by_status(
+        "worker-1", AssetStatus.pending, [".mp4"], library_slug="evict-lib"
+    )
+    assert claimed is not None
+    assert claimed.worker_id == "worker-1"
+    assert claimed.lease_expires_at is not None
+
+    asset_repo.upsert_asset("evict-lib", "video.mp4", AssetType.video, 2000.0, 6000)
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status, worker_id, lease_expires_at, mtime, size FROM asset WHERE library_id = 'evict-lib' AND rel_path = 'video.mp4'")
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "pending"
+        assert row[1] is None
+        assert row[2] is None
+        assert row[3] == 2000.0
+        assert row[4] == 6000
     finally:
         session.close()
 
@@ -315,7 +402,7 @@ def test_mark_completed_sets_status_and_analysis_model_clears_worker(engine, _se
     finally:
         session.close()
 
-    asset_repo.mark_completed(claimed.id, model_id)
+    asset_repo.mark_completed(claimed.id, model_id, owned_by=claimed.worker_id)
 
     session = _session_factory()
     try:
@@ -355,7 +442,8 @@ def test_update_asset_status_sets_error_message(engine, _session_factory):
     assert claimed is not None
 
     asset_repo.update_asset_status(
-        claimed.id, AssetStatus.poisoned, error_message="File corrupted"
+        claimed.id, AssetStatus.poisoned, error_message="File corrupted",
+        owned_by=claimed.worker_id,
     )
 
     session = _session_factory()
@@ -437,7 +525,9 @@ def test_update_asset_status_increments_retry_on_failed(engine, _session_factory
     assert claimed is not None
     asset_id = claimed.id
 
-    asset_repo.update_asset_status(asset_id, AssetStatus.failed, "transient error")
+    asset_repo.update_asset_status(
+        asset_id, AssetStatus.failed, "transient error", owned_by="worker-1"
+    )
     session = _session_factory()
     try:
         row = session.execute(
@@ -485,7 +575,9 @@ def test_update_asset_status_resets_retry_on_proxied(engine, _session_factory):
     finally:
         session.close()
 
-    asset_repo.update_asset_status(asset_id, AssetStatus.proxied)
+    asset_repo.update_asset_status(
+        asset_id, AssetStatus.proxied, owned_by="worker-1"
+    )
     session = _session_factory()
     try:
         row = session.execute(

@@ -59,7 +59,8 @@ class AssetRepository:
     ) -> None:
         """
         Insert or update an asset. On conflict (library_id, rel_path), update mtime/size/type.
-        Only reset status to 'pending' and clear tags_model_id when mtime or size differs.
+        Only reset status to 'pending', clear tags_model_id, worker_id, and lease_expires_at
+        when mtime or size differs (evicts current worker).
         When mtime or size changes for an existing video asset, clear video_scenes,
         video_active_state, preview_path, and video_preview_path to avoid Frankenstein video
         (old scene metadata merged with new content after file replacement).
@@ -100,6 +101,18 @@ class AssetRepository:
                                  OR asset.size IS DISTINCT FROM EXCLUDED.size
                             THEN NULL
                             ELSE asset.tags_model_id
+                        END,
+                        worker_id = CASE
+                            WHEN asset.mtime IS DISTINCT FROM EXCLUDED.mtime
+                                 OR asset.size IS DISTINCT FROM EXCLUDED.size
+                            THEN NULL
+                            ELSE asset.worker_id
+                        END,
+                        lease_expires_at = CASE
+                            WHEN asset.mtime IS DISTINCT FROM EXCLUDED.mtime
+                                 OR asset.size IS DISTINCT FROM EXCLUDED.size
+                            THEN NULL
+                            ELSE asset.lease_expires_at
                         END
                 """),
                 params,
@@ -753,12 +766,25 @@ class AssetRepository:
         asset_id: int,
         status: AssetStatus,
         error_message: str | None = None,
-    ) -> None:
+        *,
+        owned_by: str | None = None,
+    ) -> bool:
         """Set asset status, clear worker_id and lease_expires_at; optionally set error_message.
-        Increments retry_count on failed/poisoned; resets to 0 on proxied/analyzed_light/completed."""
+        Increments retry_count on failed/poisoned; resets to 0 on proxied/analyzed_light/completed.
+        When owned_by is set, update only if worker_id = owned_by (strict lease ownership).
+        Returns True if a row was updated, False otherwise (e.g. evicted worker)."""
+        params: dict = {
+            "status": status.value,
+            "error_message": error_message,
+            "id": asset_id,
+        }
+        where_clause = "WHERE id = :id"
+        if owned_by is not None:
+            where_clause += " AND worker_id = :owned_by"
+            params["owned_by"] = owned_by
         with self._session_scope(write=True) as session:
-            session.execute(
-                text("""
+            result = session.execute(
+                text(f"""
                     UPDATE asset
                     SET status = :status, worker_id = NULL, lease_expires_at = NULL,
                         error_message = :error_message,
@@ -767,14 +793,11 @@ class AssetRepository:
                             WHEN :status IN ('proxied', 'analyzed_light', 'completed') THEN 0
                             ELSE retry_count
                         END
-                    WHERE id = :id
+                    {where_clause}
                 """),
-                {
-                    "status": status.value,
-                    "error_message": error_message,
-                    "id": asset_id,
-                },
+                params,
             )
+            return (result.rowcount or 0) > 0
 
     def set_preview_path(self, asset_id: int, path: str | None) -> None:
         """Set or clear asset.preview_path (relative to data_dir). Single source of truth for video preview."""
@@ -805,17 +828,22 @@ class AssetRepository:
             ).fetchall()
         return [str(r[0]) for r in rows if r[0]]
 
-    def renew_asset_lease(self, asset_id: int, lease_seconds: int = 300) -> None:
-        """Bump the lease_expires_at for an asset currently being processed."""
+    def renew_asset_lease(
+        self, asset_id: int, lease_seconds: int = 300, *, worker_id: str
+    ) -> bool:
+        """Bump the lease_expires_at for an asset currently being processed.
+        Only renews if worker_id matches (strict lease ownership).
+        Returns True if a row was updated, False otherwise (e.g. evicted worker)."""
         with self._session_scope(write=True) as session:
-            session.execute(
+            result = session.execute(
                 text("""
                     UPDATE asset
                     SET lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval
-                    WHERE id = :id
+                    WHERE id = :id AND worker_id = :worker_id
                 """),
-                {"lease_seconds": lease_seconds, "id": asset_id},
+                {"lease_seconds": lease_seconds, "id": asset_id, "worker_id": worker_id},
             )
+            return (result.rowcount or 0) > 0
 
     def count_stale_leases(
         self,
@@ -902,28 +930,46 @@ class AssetRepository:
             )
             return result.rowcount or 0
 
-    def mark_completed(self, asset_id: int, analysis_model_id: int) -> None:
-        """Set asset to completed, set analysis_model_id, clear worker_id, lease_expires_at, reset retry_count."""
+    def mark_completed(
+        self, asset_id: int, analysis_model_id: int, *, owned_by: str
+    ) -> bool:
+        """Set asset to completed, set analysis_model_id, clear worker_id, lease_expires_at, reset retry_count.
+        Only updates if worker_id = owned_by (strict lease ownership).
+        Returns True if a row was updated, False otherwise (e.g. evicted worker)."""
         with self._session_scope(write=True) as session:
-            session.execute(
+            result = session.execute(
                 text("""
                     UPDATE asset
                     SET status = 'completed', analysis_model_id = :analysis_model_id,
                         worker_id = NULL, lease_expires_at = NULL, retry_count = 0
-                    WHERE id = :id
+                    WHERE id = :id AND worker_id = :owned_by
                 """),
-                {"analysis_model_id": analysis_model_id, "id": asset_id},
+                {
+                    "analysis_model_id": analysis_model_id,
+                    "id": asset_id,
+                    "owned_by": owned_by,
+                },
             )
+            return (result.rowcount or 0) > 0
 
-    def mark_analyzed_light(self, asset_id: int, analysis_model_id: int) -> None:
-        """Set asset to analyzed_light, set analysis_model_id, clear worker_id, lease_expires_at, reset retry_count."""
+    def mark_analyzed_light(
+        self, asset_id: int, analysis_model_id: int, *, owned_by: str
+    ) -> bool:
+        """Set asset to analyzed_light, set analysis_model_id, clear worker_id, lease_expires_at, reset retry_count.
+        Only updates if worker_id = owned_by (strict lease ownership).
+        Returns True if a row was updated, False otherwise (e.g. evicted worker)."""
         with self._session_scope(write=True) as session:
-            session.execute(
+            result = session.execute(
                 text("""
                     UPDATE asset
                     SET status = 'analyzed_light', analysis_model_id = :analysis_model_id,
                         worker_id = NULL, lease_expires_at = NULL, retry_count = 0
-                    WHERE id = :id
+                    WHERE id = :id AND worker_id = :owned_by
                 """),
-                {"analysis_model_id": analysis_model_id, "id": asset_id},
+                {
+                    "analysis_model_id": analysis_model_id,
+                    "id": asset_id,
+                    "owned_by": owned_by,
+                },
             )
+            return (result.rowcount or 0) > 0
