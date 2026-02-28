@@ -614,7 +614,15 @@
                       :src="'/api/asset/' + selected.asset_id + '/clip?ts=' + selected.best_scene_ts_seconds"
                     ></video>
                   </template>
-                  <div class="text-sm text-base-content/70" x-show="selected?.type === 'video' && selected?.best_scene_ts_seconds == null">
+                  <template x-if="selected?.type === 'video' && selected?.best_scene_ts_seconds == null && selected?.video_preview_url">
+                    <video
+                      controls
+                      autoplay
+                      class="w-full aspect-video bg-black rounded"
+                      :src="selected.video_preview_url"
+                    ></video>
+                  </template>
+                  <div class="text-sm text-base-content/70" x-show="selected?.type === 'video' && selected?.best_scene_ts_seconds == null && !selected?.video_preview_url">
                     No preview available for this video.
                   </div>
                   <div class="mt-3 text-sm" x-show="selected?.best_scene_ts">
