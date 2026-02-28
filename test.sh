@@ -4,7 +4,7 @@
 
 set -e
 
-uv sync --extra dev
+uv sync --all-extras
 
 PYTEST_M=""
 PASSTHROUGH=()

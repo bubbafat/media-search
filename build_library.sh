@@ -10,6 +10,11 @@ LIBRARY_SLUG="$1"
 
 echo "=== MediaSearch build: starting full pipeline for library '${LIBRARY_SLUG}' ==="
 
+uv sync --extra station
+
+# Start Postgres, set DATABASE_URL, wait for ready, run migrations (reusable)
+. ./pg.sh
+
 run_scan() {
   echo "--- Scanning library '${LIBRARY_SLUG}' ---"
   uv run media-search scan "${LIBRARY_SLUG}" --verbose

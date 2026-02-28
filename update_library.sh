@@ -8,6 +8,11 @@ fi
 
 LIBRARY_SLUG="$1"
 
+uv sync --extra station
+
+# Start Postgres, set DATABASE_URL, wait for ready, run migrations (reusable)
+. ./pg.sh
+
 echo "=== MediaSearch update: starting incremental pipeline for library '${LIBRARY_SLUG}' ==="
 
 run_scan() {
