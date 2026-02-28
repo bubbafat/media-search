@@ -24,10 +24,9 @@ from src.video.clip_extractor import (
 from src.video.indexing import run_video_scene_indexing
 from src.video.scene_segmenter import compute_segmentation_version
 from src.workers.base import BaseWorker
+from src.workers.constants import MAX_RETRY_COUNT_BEFORE_POISON
 
 _log = logging.getLogger(__name__)
-
-_MAX_RETRY_COUNT_BEFORE_POISON = 5
 
 
 class _PermanentVideoProxyError(RuntimeError):
@@ -244,9 +243,9 @@ class VideoProxyWorker(BaseWorker):
         temp_path = Path(temp_fd.name)
         temp_fd.close()
         try:
-            if asset.retry_count > _MAX_RETRY_COUNT_BEFORE_POISON:
+            if asset.retry_count > MAX_RETRY_COUNT_BEFORE_POISON:
                 raise _PermanentVideoProxyError(
-                    f"Retry limit exceeded (retry_count={asset.retry_count} > {_MAX_RETRY_COUNT_BEFORE_POISON})"
+                    f"Retry limit exceeded (retry_count={asset.retry_count} > {MAX_RETRY_COUNT_BEFORE_POISON})"
                 )
 
             self._current_stage = "transcode"
@@ -359,9 +358,9 @@ class VideoProxyWorker(BaseWorker):
         except _RetryableVideoProxyError as e:
             # Retryable: mark failed unless we exceeded retry limit.
             msg = str(e)
-            if asset.retry_count > _MAX_RETRY_COUNT_BEFORE_POISON:
+            if asset.retry_count > MAX_RETRY_COUNT_BEFORE_POISON:
                 msg = (
-                    f"{msg}\n\nRetry limit exceeded (retry_count={asset.retry_count} > {_MAX_RETRY_COUNT_BEFORE_POISON})"
+                    f"{msg}\n\nRetry limit exceeded (retry_count={asset.retry_count} > {MAX_RETRY_COUNT_BEFORE_POISON})"
                 )
                 self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, msg)
             else:
@@ -377,11 +376,11 @@ class VideoProxyWorker(BaseWorker):
             msg = str(e)
             if "No frames produced by decoder" in msg or "ffprobe returned no stream" in msg:
                 self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, msg)
-            elif asset.retry_count > _MAX_RETRY_COUNT_BEFORE_POISON:
+            elif asset.retry_count > MAX_RETRY_COUNT_BEFORE_POISON:
                 self.asset_repo.update_asset_status(
                     asset.id,
                     AssetStatus.poisoned,
-                    f"{msg}\n\nRetry limit exceeded (retry_count={asset.retry_count} > {_MAX_RETRY_COUNT_BEFORE_POISON})",
+                    f"{msg}\n\nRetry limit exceeded (retry_count={asset.retry_count} > {MAX_RETRY_COUNT_BEFORE_POISON})",
                 )
             else:
                 self.asset_repo.update_asset_status(asset.id, AssetStatus.failed, msg)

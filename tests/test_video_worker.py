@@ -183,8 +183,8 @@ def test_video_worker_process_task_interrupt_sets_proxied(engine, _session_facto
         session.close()
 
 
-def test_video_worker_process_task_poisons_on_exception(engine, _session_factory):
-    """process_task sets status to poisoned and error_message when pipeline raises."""
+def test_video_worker_process_task_marks_failed_on_first_exception(engine, _session_factory):
+    """On first transient exception, process_task sets status to failed (not poisoned) for retry."""
     _create_tables_and_seed(engine, _session_factory)
     session = _session_factory()
     try:
@@ -236,13 +236,113 @@ def test_video_worker_process_task_poisons_on_exception(engine, _session_factory
     try:
         row = session.execute(
             text(
-                "SELECT status, error_message FROM asset "
+                "SELECT status, retry_count, error_message FROM asset "
                 "WHERE library_id = 'poison-video' AND rel_path = 'bad.mp4'"
             )
         ).fetchone()
         assert row is not None
+        assert row[0] == "failed"
+        assert int(row[1]) == 1
+        assert "FFmpeg failed" in (row[2] or "")
+    finally:
+        session.close()
+
+
+def test_video_worker_retries_then_poisons_after_threshold(engine, _session_factory):
+    """Retryable vision errors are marked failed, then poisoned after retry_count exceeds threshold."""
+    _create_tables_and_seed(engine, _session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="retry-video-lib",
+                name="Retry Video",
+                absolute_path="/tmp/retry-video",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo = AssetRepository(_session_factory)
+    asset_repo.upsert_asset("retry-video-lib", "retry.mp4", AssetType.video, 0.0, 100)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET status = 'analyzed_light' WHERE library_id = 'retry-video-lib' AND rel_path = 'retry.mp4'"
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset = asset_repo.get_asset("retry-video-lib", "retry.mp4")
+    assert asset is not None and asset.id is not None
+    asset_id = asset.id
+
+    worker_repo = WorkerRepository(_session_factory)
+    system_repo = SystemMetadataRepository(_session_factory)
+    scene_repo = VideoSceneRepository(_session_factory)
+    worker = VideoWorker(
+        worker_id="video-retry-worker",
+        repository=worker_repo,
+        heartbeat_interval_seconds=15.0,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_repo,
+        scene_repo=scene_repo,
+        library_slug="retry-video-lib",
+    )
+
+    with patch(
+        "src.workers.video_worker.run_vision_on_scenes",
+        side_effect=RuntimeError("Transient vision error"),
+    ):
+        result = worker.process_task()
+    assert result is True
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status, retry_count FROM asset WHERE id = :id"),
+            {"id": asset_id},
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "failed"
+        assert int(row[1]) == 1
+    finally:
+        session.close()
+
+    for _ in range(10):
+        session = _session_factory()
+        try:
+            st = session.execute(
+                text("SELECT status FROM asset WHERE id = :id"),
+                {"id": asset_id},
+            ).scalar()
+        finally:
+            session.close()
+        if st == "poisoned":
+            break
+        with patch(
+            "src.workers.video_worker.run_vision_on_scenes",
+            side_effect=RuntimeError("Transient vision error"),
+        ):
+            assert worker.process_task() is True
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status, retry_count, error_message FROM asset WHERE id = :id"),
+            {"id": asset_id},
+        ).fetchone()
+        assert row is not None
         assert row[0] == "poisoned"
-        assert "FFmpeg failed" in (row[1] or "")
+        assert int(row[1]) > 5
+        assert row[2] is not None
+        assert "Transient vision error" in (row[2] or "")
     finally:
         session.close()
 

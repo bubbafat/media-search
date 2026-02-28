@@ -284,3 +284,101 @@ def test_image_proxy_worker_poisons_on_resolve_path_file_not_found(engine, _sess
     assert len(assets) == 1
     assert assets[0].status == AssetStatus.poisoned
 
+
+def test_image_proxy_worker_retries_then_poisons_after_threshold(engine, _session_factory, tmp_path):
+    """Retryable image-proxy errors are marked failed, then poisoned after retry_count exceeds threshold."""
+    asset_repo, worker_repo, system_metadata_repo = _create_tables_and_repos(
+        engine, _session_factory
+    )
+    source_dir = tmp_path / "retry-image-lib"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "photo.jpg").write_bytes(b"\xff\xd8\xff")
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="retry-image-lib",
+                name="Retry Image Lib",
+                absolute_path=str(source_dir),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("retry-image-lib", "photo.jpg", AssetType.image, 1000.0, 100)
+    asset = asset_repo.get_asset("retry-image-lib", "photo.jpg")
+    assert asset is not None and asset.id is not None
+    asset_id = asset.id
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp)
+        with patch("src.core.storage.get_config") as m:
+            m.return_value.data_dir = str(data_dir)
+            with patch(
+                "src.workers.proxy_worker.LocalMediaStore.generate_proxy_and_thumbnail_from_source",
+                side_effect=RuntimeError("Transient IO error"),
+            ):
+                worker = ImageProxyWorker(
+                    worker_id="retry-image-worker",
+                    repository=worker_repo,
+                    heartbeat_interval_seconds=15.0,
+                    asset_repo=asset_repo,
+                    system_metadata_repo=system_metadata_repo,
+                    library_slug="retry-image-lib",
+                )
+
+                # First attempt: pending -> failed
+                result = worker.process_task()
+                assert result is True
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status, retry_count FROM asset WHERE id = :id"),
+            {"id": asset_id},
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "failed"
+        assert int(row[1]) == 1
+    finally:
+        session.close()
+
+    # Retry until poisoned
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp)
+        with patch("src.core.storage.get_config") as m:
+            m.return_value.data_dir = str(data_dir)
+            with patch(
+                "src.workers.proxy_worker.LocalMediaStore.generate_proxy_and_thumbnail_from_source",
+                side_effect=RuntimeError("Transient IO error"),
+            ):
+                for _ in range(10):
+                    session = _session_factory()
+                    try:
+                        st = session.execute(
+                            text("SELECT status FROM asset WHERE id = :id"),
+                            {"id": asset_id},
+                        ).scalar()
+                    finally:
+                        session.close()
+                    if st == "poisoned":
+                        break
+                    assert worker.process_task() is True
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status, retry_count, error_message FROM asset WHERE id = :id"),
+            {"id": asset_id},
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "poisoned"
+        assert int(row[1]) > 5
+        assert row[2] is not None
+        assert "Transient IO error" in (row[2] or "")
+    finally:
+        session.close()
+

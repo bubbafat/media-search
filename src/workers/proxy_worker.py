@@ -10,6 +10,7 @@ from src.repository.asset_repo import AssetRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
+from src.workers.constants import MAX_RETRY_COUNT_BEFORE_POISON
 
 _log = logging.getLogger(__name__)
 
@@ -103,6 +104,14 @@ class ImageProxyWorker(BaseWorker):
             global_scope=self._global_mode,
         )
         if asset is None:
+            asset = self.asset_repo.claim_asset_by_status(
+                self.worker_id,
+                AssetStatus.failed,
+                IMAGE_EXTENSIONS_LIST,
+                library_slug=self._library_slug,
+                global_scope=self._global_mode,
+            )
+        if asset is None:
             return False
         assert asset.id is not None
         try:
@@ -144,7 +153,11 @@ class ImageProxyWorker(BaseWorker):
                 e,
                 exc_info=True,
             )
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, str(e))
+            msg = str(e)
+            if asset.retry_count > MAX_RETRY_COUNT_BEFORE_POISON:
+                self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, msg)
+            else:
+                self.asset_repo.update_asset_status(asset.id, AssetStatus.failed, msg)
         return True
 
 

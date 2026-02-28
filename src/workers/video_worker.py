@@ -14,6 +14,7 @@ from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
 from src.video.indexing import needs_ocr, run_vision_on_scenes
 from src.workers.base import BaseWorker
+from src.workers.constants import MAX_RETRY_COUNT_BEFORE_POISON
 
 _log = logging.getLogger(__name__)
 
@@ -80,6 +81,14 @@ class VideoWorker(BaseWorker):
             lease_seconds=300,
             **claim_kwargs,
         )
+        if asset is None:
+            asset = self.asset_repo.claim_asset_by_status(
+                self.worker_id,
+                AssetStatus.failed,
+                VIDEO_EXTENSIONS_LIST,
+                lease_seconds=300,
+                **claim_kwargs,
+            )
         if asset is None:
             return False
         assert asset.id is not None
@@ -168,5 +177,9 @@ class VideoWorker(BaseWorker):
                 e,
                 exc_info=True,
             )
-            self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, str(e))
+            msg = str(e)
+            if asset.retry_count > MAX_RETRY_COUNT_BEFORE_POISON:
+                self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, msg)
+            else:
+                self.asset_repo.update_asset_status(asset.id, AssetStatus.failed, msg)
             return True
