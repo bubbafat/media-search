@@ -322,7 +322,7 @@ def test_signal_respect_pause(engine, _session_factory, run_worker, tmp_path):
             system_metadata_repo=system_metadata_repo,
             idle_poll_interval_seconds=0.2,
         )
-        worker_repo.register_worker("scanner-pause-test", WorkerState.idle)
+        worker_repo.register_worker("scanner-pause-test", WorkerState.idle, hostname="")
 
     with run_worker(worker):
         time.sleep(0.5)
@@ -357,7 +357,7 @@ def test_scan_with_progress_interval_uses_smaller_interval(engine, _session_fact
             progress_interval=10,
         )
     assert worker._stats_interval == 10
-    worker_repo.register_worker("scanner-progress-test", WorkerState.idle)
+    worker_repo.register_worker("scanner-progress-test", WorkerState.idle, hostname="")
 
     worker.process_task(library_slug=library_slug)
 

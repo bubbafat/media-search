@@ -41,8 +41,8 @@ class WorkerRepository:
         finally:
             session.close()
 
-    def register_worker(self, worker_id: str, state: str | WorkerState) -> None:
-        """Upsert a row in worker_status (insert or update state/command for a single worker)."""
+    def register_worker(self, worker_id: str, state: str | WorkerState, hostname: str = "") -> None:
+        """Upsert a row in worker_status (insert or update state/command/hostname for a single worker)."""
         state_str = state.value if isinstance(state, WorkerState) else state
         with self._session_scope(write=True) as session:
             row = session.get(WorkerStatusEntity, worker_id)
@@ -51,6 +51,7 @@ class WorkerRepository:
                 session.add(
                     WorkerStatusEntity(
                         worker_id=worker_id,
+                        hostname=hostname,
                         last_seen_at=now,
                         state=WorkerState(state_str),
                         command=WorkerCommand.none,
@@ -59,6 +60,7 @@ class WorkerRepository:
                 )
             else:
                 row.state = WorkerState(state_str)
+                row.hostname = hostname
                 row.last_seen_at = now
 
     def update_heartbeat(self, worker_id: str, stats: dict[str, Any] | None = None) -> None:

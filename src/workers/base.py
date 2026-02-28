@@ -2,6 +2,7 @@
 
 import logging
 import signal
+import socket
 import threading
 import time
 from abc import ABC
@@ -37,6 +38,7 @@ class BaseWorker(ABC):
         self._heartbeat_interval = heartbeat_interval_seconds
         self._system_metadata_repo = system_metadata_repo
         self._idle_poll_interval = idle_poll_interval_seconds
+        self.hostname = socket.gethostname()
         self._state = WorkerState.idle
         self.should_exit = False
         self._heartbeat_thread: threading.Thread | None = None
@@ -136,7 +138,7 @@ class BaseWorker(ABC):
         """
         self._install_signal_handlers()
         self._check_compatibility()
-        self._repo.register_worker(self.worker_id, WorkerState.idle)
+        self._repo.register_worker(self.worker_id, WorkerState.idle, self.hostname)
         self._state = WorkerState.idle
 
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)

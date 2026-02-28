@@ -79,6 +79,7 @@ Scene-based video indexing (pHash + temporal ceiling + best-frame selection) is 
 
 ### 2.5 `worker_status` Table
 - `worker_id` (String, PK): Unique identifier for the worker instance (e.g., hostname + UUID).
+- `hostname` (String): Hostname of the machine the worker runs on (indexed for local-aware queries).
 - `last_seen_at` (DateTime): Heartbeat timestamp.
 - `state` (Enum): `idle`, `processing`, `paused`, `offline`.
 - `command` (Enum): `none`, `pause`, `resume`, `shutdown`, `forensic_dump`.

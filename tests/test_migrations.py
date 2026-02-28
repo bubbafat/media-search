@@ -361,6 +361,18 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             assert row is not None, "asset.segmentation_version column must exist"
             assert row[1] == "YES", "asset.segmentation_version must be nullable"
             assert row[2] == "int4", "asset.segmentation_version must be integer (udt_name=int4)"
+
+        # Assert worker_status.hostname column exists (migration 022)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT column_name, is_nullable, column_default FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'worker_status' AND column_name = 'hostname'"
+                )
+            ).fetchone()
+            assert row is not None, "worker_status.hostname column must exist"
+            assert row[1] == "NO", "worker_status.hostname must be NOT NULL"
+            assert "''" in str(row[2]), "worker_status.hostname must have server default empty string"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

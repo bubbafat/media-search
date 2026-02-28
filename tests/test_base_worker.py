@@ -121,7 +121,7 @@ def test_pause_command_transitions_state_and_stops_process_task(engine, _session
 
     session = _session_factory()
     try:
-        repo.register_worker("pause-worker", WorkerState.idle)
+        repo.register_worker("pause-worker", WorkerState.idle, hostname="")
         session.commit()
     finally:
         session.close()

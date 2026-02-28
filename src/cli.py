@@ -530,7 +530,7 @@ def scan(
     asset_repo.set_library_scan_status(library_slug, ScanStatus.full_scan_requested)
 
     worker_id = f"cli-scan-{library_slug}"
-    worker_repo.register_worker(worker_id, WorkerState.idle)
+    worker_repo.register_worker(worker_id, WorkerState.idle, hostname=socket.gethostname())
     scanner = ScannerWorker(
         worker_id,
         worker_repo,

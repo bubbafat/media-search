@@ -183,6 +183,7 @@ class WorkerStatus(SQLModel, table=True):
     __tablename__ = "worker_status"
 
     worker_id: str = Field(primary_key=True)
+    hostname: str = Field(default="", index=True)
     last_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     state: WorkerState = Field(default=WorkerState.offline)
     command: WorkerCommand = Field(default=WorkerCommand.none)
