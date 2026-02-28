@@ -392,7 +392,7 @@ class AssetRepository:
         system_default_model_id: int | None = None,
     ) -> Asset | None:
         """
-        Claim one asset with status == current_status in a non-deleted library,
+        Claim one asset with status == current_status (or expired processing lease) in a non-deleted library,
         with rel_path ending (case-insensitive) in supported_exts.
         When library_slug is set, only assets from that library are considered.
         When target_model_id and system_default_model_id are set, only claim assets whose
@@ -425,7 +425,7 @@ class AssetRepository:
                     FROM asset a
                     JOIN library l ON a.library_id = l.slug
                     WHERE l.deleted_at IS NULL
-                      AND a.status = :status
+                      AND (a.status = :status OR (a.status = 'processing' AND a.lease_expires_at < (NOW() AT TIME ZONE 'UTC')))
                       AND a.rel_path ~* :pattern
                       {library_clause}
                       {effective_target_clause}
@@ -437,23 +437,21 @@ class AssetRepository:
             if row is None:
                 return None
             asset_id = row[0]
-            updated = session.execute(
+            session.execute(
                 text("""
                     UPDATE asset
                     SET status = 'processing',
                         worker_id = :worker_id,
-                        lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval,
-                        retry_count = retry_count + 1
+                        lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval
                     WHERE id = :id
-                    RETURNING retry_count
                 """),
                 {
                     "worker_id": worker_id,
                     "lease_seconds": lease_seconds,
                     "id": asset_id,
                 },
-            ).fetchone()
-            retry_count = int(updated[0]) if updated is not None and updated[0] is not None else int(row[8] or 0) + 1
+            )
+            retry_count = int(row[8] or 0)
             lease_expires = datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
             library = Library(
                 slug=row[10],
@@ -523,7 +521,7 @@ class AssetRepository:
                     FROM asset a
                     JOIN library l ON a.library_id = l.slug
                     WHERE l.deleted_at IS NULL
-                      AND a.status = :status
+                      AND (a.status = :status OR (a.status = 'processing' AND a.lease_expires_at < (NOW() AT TIME ZONE 'UTC')))
                       AND a.rel_path ~* :pattern
                       {library_clause}
                       {effective_target_clause}
@@ -540,8 +538,7 @@ class AssetRepository:
                     UPDATE asset
                     SET status = 'processing',
                         worker_id = :worker_id,
-                        lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval,
-                        retry_count = retry_count + 1
+                        lease_expires_at = (NOW() AT TIME ZONE 'UTC') + (:lease_seconds || ' seconds')::interval
                     WHERE id = ANY(:ids)
                 """),
                 {"worker_id": worker_id, "lease_seconds": lease_seconds, "ids": ids},
@@ -549,7 +546,7 @@ class AssetRepository:
             lease_expires = datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
             assets: list[Asset] = []
             for r in rows:
-                retry_count = int(r[8] or 0) + 1
+                retry_count = int(r[8] or 0)
                 library = Library(
                     slug=r[10],
                     name="",
@@ -584,13 +581,19 @@ class AssetRepository:
         status: AssetStatus,
         error_message: str | None = None,
     ) -> None:
-        """Set asset status, clear worker_id and lease_expires_at; optionally set error_message."""
+        """Set asset status, clear worker_id and lease_expires_at; optionally set error_message.
+        Increments retry_count on failed/poisoned; resets to 0 on proxied/analyzed_light/completed."""
         with self._session_scope(write=True) as session:
             session.execute(
                 text("""
                     UPDATE asset
                     SET status = :status, worker_id = NULL, lease_expires_at = NULL,
-                        error_message = :error_message
+                        error_message = :error_message,
+                        retry_count = CASE
+                            WHEN :status IN ('failed', 'poisoned') THEN retry_count + 1
+                            WHEN :status IN ('proxied', 'analyzed_light', 'completed') THEN 0
+                            ELSE retry_count
+                        END
                     WHERE id = :id
                 """),
                 {
@@ -629,26 +632,26 @@ class AssetRepository:
             )
 
     def mark_completed(self, asset_id: int, analysis_model_id: int) -> None:
-        """Set asset to completed, set analysis_model_id, clear worker_id and lease_expires_at."""
+        """Set asset to completed, set analysis_model_id, clear worker_id, lease_expires_at, reset retry_count."""
         with self._session_scope(write=True) as session:
             session.execute(
                 text("""
                     UPDATE asset
                     SET status = 'completed', analysis_model_id = :analysis_model_id,
-                        worker_id = NULL, lease_expires_at = NULL
+                        worker_id = NULL, lease_expires_at = NULL, retry_count = 0
                     WHERE id = :id
                 """),
                 {"analysis_model_id": analysis_model_id, "id": asset_id},
             )
 
     def mark_analyzed_light(self, asset_id: int, analysis_model_id: int) -> None:
-        """Set asset to analyzed_light, set analysis_model_id, clear worker_id and lease_expires_at."""
+        """Set asset to analyzed_light, set analysis_model_id, clear worker_id, lease_expires_at, reset retry_count."""
         with self._session_scope(write=True) as session:
             session.execute(
                 text("""
                     UPDATE asset
                     SET status = 'analyzed_light', analysis_model_id = :analysis_model_id,
-                        worker_id = NULL, lease_expires_at = NULL
+                        worker_id = NULL, lease_expires_at = NULL, retry_count = 0
                     WHERE id = :id
                 """),
                 {"analysis_model_id": analysis_model_id, "id": asset_id},

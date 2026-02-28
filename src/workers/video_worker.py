@@ -93,6 +93,7 @@ class VideoWorker(BaseWorker):
                 self.analyzer,
                 mode=self._mode,
                 check_interrupt=_check_interrupt,
+                renew_lease=lambda: self.asset_repo.renew_asset_lease(asset.id, 300),
             )
             if asset.video_preview_path is None or asset.video_preview_path == "":
                 data_dir = Path(get_config().data_dir)

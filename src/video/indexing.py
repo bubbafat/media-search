@@ -40,6 +40,7 @@ def run_vision_on_scenes(
     *,
     mode: str = "full",
     check_interrupt: Callable[[], bool] | None = None,
+    renew_lease: Callable[[], None] | None = None,
 ) -> None:
     """
     Run vision analysis on existing scene rep frames.
@@ -58,6 +59,8 @@ def run_vision_on_scenes(
 
     last_written_description: str | None = None
     for scene in to_process:
+        if renew_lease is not None:
+            renew_lease()
         if check_interrupt is not None and check_interrupt():
             raise InterruptedError("Vision backfill interrupted")
         rep_path = data_dir / scene.rep_frame_path

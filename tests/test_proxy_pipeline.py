@@ -72,7 +72,7 @@ def test_claim_asset_by_status_returns_asset_with_library(engine, _session_facto
     assert claimed.id is not None
     assert claimed.status == AssetStatus.processing
     assert claimed.worker_id == "worker-1"
-    assert claimed.retry_count == 1
+    assert claimed.retry_count == 0
     assert claimed.library is not None
     assert claimed.library.slug == "proxy-lib"
     assert claimed.library.absolute_path == "/tmp/proxy-lib"
@@ -364,6 +364,132 @@ def test_update_asset_status_sets_error_message(engine, _session_factory):
         assert row is not None
         assert row.status == AssetStatus.poisoned
         assert row.error_message == "File corrupted"
+    finally:
+        session.close()
+
+
+def test_claim_asset_reclaims_expired_lease(engine, _session_factory):
+    """claim_asset_by_status can reclaim assets with processing status and expired lease."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="expired-lease-lib",
+                name="Expired Lease Lib",
+                absolute_path="/tmp/expired-lease",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("expired-lease-lib", "vid.mp4", AssetType.video, 1000.0, 5000)
+    session = _session_factory()
+    try:
+        session.execute(
+            text("""
+                UPDATE asset
+                SET status = 'processing', worker_id = 'crashed-worker',
+                    lease_expires_at = (NOW() AT TIME ZONE 'UTC') - interval '1 hour'
+                WHERE library_id = 'expired-lease-lib' AND rel_path = 'vid.mp4'
+            """)
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    claimed = asset_repo.claim_asset_by_status(
+        "worker-1", AssetStatus.pending, [".mp4", ".mov"], library_slug="expired-lease-lib"
+    )
+    assert claimed is not None
+    assert claimed.status == AssetStatus.processing
+    assert claimed.worker_id == "worker-1"
+    assert claimed.rel_path == "vid.mp4"
+
+
+def test_update_asset_status_increments_retry_on_failed(engine, _session_factory):
+    """update_asset_status(asset_id, AssetStatus.failed) increments retry_count."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="retry-inc-lib",
+                name="Retry Inc Lib",
+                absolute_path="/tmp/retry-inc",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("retry-inc-lib", "x.jpg", AssetType.image, 0.0, 0)
+    claimed = asset_repo.claim_asset_by_status("worker-1", AssetStatus.pending, [".jpg"])
+    assert claimed is not None
+    asset_id = claimed.id
+
+    asset_repo.update_asset_status(asset_id, AssetStatus.failed, "transient error")
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status, retry_count FROM asset WHERE id = :id"), {"id": asset_id}
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "failed"
+        assert int(row[1]) == 1
+    finally:
+        session.close()
+
+
+def test_update_asset_status_resets_retry_on_proxied(engine, _session_factory):
+    """update_asset_status(asset_id, AssetStatus.proxied) resets retry_count to 0."""
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="retry-reset-lib",
+                name="Retry Reset Lib",
+                absolute_path="/tmp/retry-reset",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("retry-reset-lib", "y.jpg", AssetType.image, 0.0, 0)
+    claimed = asset_repo.claim_asset_by_status("worker-1", AssetStatus.pending, [".jpg"])
+    assert claimed is not None
+    asset_id = claimed.id
+
+    session = _session_factory()
+    try:
+        session.execute(
+            text("UPDATE asset SET retry_count = 3 WHERE id = :id"), {"id": asset_id}
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.update_asset_status(asset_id, AssetStatus.proxied)
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status, retry_count FROM asset WHERE id = :id"), {"id": asset_id}
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "proxied"
+        assert int(row[1]) == 0
     finally:
         session.close()
 

@@ -219,7 +219,7 @@ A single media file (image or video) belonging to a library. Moves through pipel
 | `analysis_model_id` | int? (FK → aimodel.id) | AI model that produced current visual analysis |
 | `worker_id` | str? | Worker that has claimed this asset |
 | `lease_expires_at` | datetime? | Claim expiry for recovery |
-| `retry_count` | int | Incremented on claim; high count can lead to `poisoned` |
+| `retry_count` | int | Incremented on failure/poison; reset on success; high count can lead to `poisoned` |
 | `error_message` | str? | Last processing error if any |
 | `visual_analysis` | jsonb? | Last vision result: description, tags, ocr_text (from analysis_model_id) |
 

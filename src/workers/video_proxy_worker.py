@@ -216,6 +216,7 @@ class VideoProxyWorker(BaseWorker):
                 self._current_stage_progress = p
                 if last_reported_percent is None or (p - last_reported_percent) >= 0.05:
                     last_reported_percent = p
+                    self.asset_repo.renew_asset_lease(asset.id, 300)
                     pct = int(p * 100)
                     _log.info(
                         "[asset %s] %s%% complete (720p transcode)",
@@ -274,6 +275,7 @@ class VideoProxyWorker(BaseWorker):
                 library_slug,
                 self.scene_repo,
                 vision_analyzer=None,
+                on_scene_closed=lambda: self.asset_repo.renew_asset_lease(asset.id, 300),
                 check_interrupt=lambda: self.should_exit,
             )
             self.asset_repo.set_video_preview_path(
