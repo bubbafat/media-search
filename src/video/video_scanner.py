@@ -90,6 +90,7 @@ class VideoScanner:
         self._start_pts = start_pts
         self._hwaccel = hwaccel
         self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_MAX_LINES)
+        self._ffmpeg_returncode: int | None = None
         src_width, src_height = _get_video_dimensions(self._input_path)
         self._out_height, self._frame_byte_size = _output_height_and_frame_size(
             src_width, src_height
@@ -152,6 +153,15 @@ class VideoScanner:
     def stderr_tail(self) -> str:
         """Return the last N stderr lines observed from FFmpeg (best-effort)."""
         return "\n".join(self._stderr_tail).strip()
+
+    @property
+    def ffmpeg_returncode(self) -> int | None:
+        """FFmpeg process exit code after iter_frames completes, or None if not yet run."""
+        return self._ffmpeg_returncode
+
+    def ffmpeg_exited_cleanly(self) -> bool:
+        """True iff FFmpeg process exited with code 0. None means iterator has not run."""
+        return self._ffmpeg_returncode == 0
 
     @property
     def frame_byte_size(self) -> int:
@@ -246,3 +256,4 @@ class VideoScanner:
                 proc.wait()
             except OSError:
                 pass
+            self._ffmpeg_returncode = proc.returncode

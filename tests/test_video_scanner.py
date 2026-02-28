@@ -154,12 +154,15 @@ def test_iter_frames_eof_after_partial_stdout(tmp_path):
     mock_proc.poll = MagicMock(return_value=None)
     mock_proc.terminate = MagicMock()
     mock_proc.wait = MagicMock(return_value=0)
+    mock_proc.returncode = 0
     mock_proc.kill = MagicMock()
 
     with patch("subprocess.Popen", return_value=mock_proc):
         frames = list(scanner.iter_frames())
     # One full frame then EOF
     assert len(frames) == 1
+    assert scanner.ffmpeg_exited_cleanly() is True
+    assert scanner.ffmpeg_returncode == 0
     assert len(frames[0][0]) == scanner.frame_byte_size
     # stderr ended first so fallback PTS used (last_pts -1 + 1.0 = 0.0)
     assert frames[0][1] == 0.0
@@ -197,6 +200,7 @@ def test_iter_frames_accumulates_partial_reads(tmp_path):
     mock_proc.stderr = FakeStderr()
     mock_proc.terminate = MagicMock()
     mock_proc.wait = MagicMock(return_value=0)
+    mock_proc.returncode = 0
     mock_proc.kill = MagicMock()
 
     with patch("subprocess.Popen", return_value=mock_proc):
@@ -205,6 +209,7 @@ def test_iter_frames_accumulates_partial_reads(tmp_path):
     assert len(frames[0][0]) == frame_size
     assert frames[0][0] == first_chunk + second_chunk
     assert frames[0][1] == 0.0
+    assert scanner.ffmpeg_exited_cleanly() is True
 
 
 def test_iter_frames_sync_error_when_no_pts(tmp_path):
@@ -243,3 +248,39 @@ def test_iter_frames_sync_error_when_no_pts(tmp_path):
         with patch("subprocess.Popen", return_value=mock_proc):
             with pytest.raises(SyncError, match="no PTS from stderr within timeout"):
                 list(scanner.iter_frames())
+
+
+def test_iter_frames_records_ffmpeg_exit_code_on_crash(tmp_path):
+    """When FFmpeg exits non-zero (crash), ffmpeg_exited_cleanly() is False and ffmpeg_returncode is set."""
+    fake_video = tmp_path / "v.mp4"
+    fake_video.write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(fake_video)
+
+    first_chunk = b"x" * scanner.frame_byte_size
+    idx = [0]
+
+    class FakeStdout:
+        def readinto(self, buf):
+            idx[0] += 1
+            if idx[0] <= 1:
+                buf[: len(first_chunk)] = first_chunk
+                return len(first_chunk)
+            return 0
+
+    class FakeStderr:
+        def readline(self):
+            return b""
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = FakeStdout()
+    mock_proc.stderr = FakeStderr()
+    mock_proc.terminate = MagicMock()
+    mock_proc.wait = MagicMock(return_value=1)
+    mock_proc.returncode = 1
+    mock_proc.kill = MagicMock()
+
+    with patch("subprocess.Popen", return_value=mock_proc):
+        list(scanner.iter_frames())
+    assert scanner.ffmpeg_exited_cleanly() is False
+    assert scanner.ffmpeg_returncode == 1

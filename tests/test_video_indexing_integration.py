@@ -317,6 +317,47 @@ def test_indexing_raises_when_truncated(engine, _session_factory, tmp_path):
     assert "duration is 60.0" in str(exc_info.value)
 
 
+def test_indexing_rejects_partial_when_ffmpeg_crashed(engine, _session_factory, tmp_path):
+    """When probe returns None (missing duration header), segmenter yields scenes, but FFmpeg crashed, raises ValueError."""
+    asset_repo, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-int-ffmpeg-crash")
+    w, h = 480, 270
+    frame_size = w * h * 3
+    fake_frame = b"\x80" * frame_size
+
+    scene1 = SceneResult(
+        best_frame_bytes=fake_frame,
+        best_pts=5.0,
+        scene_start_pts=0.0,
+        scene_end_pts=300.0,
+        keep_reason=SceneKeepReason.forced,
+        sharpness_score=10.0,
+    )
+    mock_yields = [(scene1, None)]
+
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"fake")
+    mock_config = MagicMock()
+    mock_config.data_dir = str(tmp_path)
+    with patch("src.video.indexing.get_config", return_value=mock_config):
+        with patch("src.video.indexing.probe_video_duration", return_value=None):
+            with patch("src.video.indexing.VideoScanner") as MockScanner:
+                MockScanner.return_value.out_width = w
+                MockScanner.return_value.out_height = h
+                MockScanner.return_value.ffmpeg_exited_cleanly.return_value = False
+                MockScanner.return_value.ffmpeg_returncode = 1
+                MockScanner.return_value.ffmpeg_repro_command.return_value = "ffmpeg ..."
+                MockScanner.return_value.stderr_tail.return_value = ""
+                with patch("src.video.indexing.SceneSegmenter") as MockSegmenter:
+                    MockSegmenter.return_value.iter_scenes.return_value = mock_yields
+                    with pytest.raises(ValueError, match="FFmpeg exited with error") as exc_info:
+                        run_video_scene_indexing(
+                            asset_id, video_path, "vid-int-ffmpeg-crash", video_repo
+                        )
+    assert "truncated" in str(exc_info.value)
+    assert "1" in str(exc_info.value)
+
+
 def test_indexing_raises_when_no_scenes_produced(engine, _session_factory, tmp_path):
     """When segmenter yields no scenes (e.g. no frames from decoder), run_video_scene_indexing raises ValueError."""
     asset_repo, video_repo = _create_tables_and_seed(engine, _session_factory)

@@ -293,6 +293,11 @@ def run_video_scene_indexing(
             tail = scanner.stderr_tail() or str(e)
             return 0, scanner.ffmpeg_repro_command(), tail
 
+        if scenes_saved > 0 and not scanner.ffmpeg_exited_cleanly():
+            raise ValueError(
+                f"FFmpeg exited with error (code={scanner.ffmpeg_returncode}); "
+                "index may be truncated regardless of duration metadata."
+            )
         return scenes_saved, scanner.ffmpeg_repro_command(), scanner.stderr_tail()
 
     # Pass 1: hwaccel auto (default)
