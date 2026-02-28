@@ -177,3 +177,110 @@ def test_image_proxy_worker_does_not_upscale_small_images(engine, _session_facto
             with Image.open(thumb_path) as thumb_im:
                 assert thumb_im.size == (32, 32)
 
+
+def test_image_proxy_worker_poisons_on_resolve_path_value_error(engine, _session_factory, tmp_path):
+    """When resolve_path raises ValueError (path traversal), asset is marked poisoned."""
+    asset_repo, worker_repo, system_metadata_repo = _create_tables_and_repos(
+        engine, _session_factory
+    )
+    source_dir = tmp_path / "path-resolution"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="path-resolution-lib",
+                name="Path Resolution Lib",
+                absolute_path=str(source_dir),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    rel_path = "photo.jpg"
+    (source_dir / rel_path).write_bytes(b"\xff\xd8\xff")
+    asset_repo.upsert_asset(
+        "path-resolution-lib",
+        rel_path,
+        AssetType.image,
+        1000.0,
+        100,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp)
+        with patch("src.core.storage.get_config") as storage_mock:
+            storage_mock.return_value.data_dir = str(data_dir)
+            with patch("src.workers.proxy_worker.resolve_path") as resolve_mock:
+                resolve_mock.side_effect = ValueError("Path escapes library root: '../etc/passwd'")
+                worker = ImageProxyWorker(
+                    worker_id="path-resolution-worker",
+                    repository=worker_repo,
+                    heartbeat_interval_seconds=15.0,
+                    asset_repo=asset_repo,
+                    system_metadata_repo=system_metadata_repo,
+                    library_slug="path-resolution-lib",
+                )
+                result = worker.process_task()
+
+    assert result is True
+    assets = asset_repo.get_assets_by_library("path-resolution-lib", limit=1)
+    assert len(assets) == 1
+    assert assets[0].status == AssetStatus.poisoned
+
+
+def test_image_proxy_worker_poisons_on_resolve_path_file_not_found(engine, _session_factory, tmp_path):
+    """When resolve_path raises FileNotFoundError, asset is marked poisoned."""
+    asset_repo, worker_repo, system_metadata_repo = _create_tables_and_repos(
+        engine, _session_factory
+    )
+    source_dir = tmp_path / "path-resolution-missing"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="path-resolution-missing-lib",
+                name="Path Resolution Missing Lib",
+                absolute_path=str(source_dir),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    rel_path = "nonexistent.jpg"
+    asset_repo.upsert_asset(
+        "path-resolution-missing-lib",
+        rel_path,
+        AssetType.image,
+        1000.0,
+        100,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp)
+        with patch("src.core.storage.get_config") as storage_mock:
+            storage_mock.return_value.data_dir = str(data_dir)
+            with patch("src.workers.proxy_worker.resolve_path") as resolve_mock:
+                resolve_mock.side_effect = FileNotFoundError("Path does not exist")
+                worker = ImageProxyWorker(
+                    worker_id="path-resolution-missing-worker",
+                    repository=worker_repo,
+                    heartbeat_interval_seconds=15.0,
+                    asset_repo=asset_repo,
+                    system_metadata_repo=system_metadata_repo,
+                    library_slug="path-resolution-missing-lib",
+                )
+                result = worker.process_task()
+
+    assert result is True
+    assets = asset_repo.get_assets_by_library("path-resolution-missing-lib", limit=1)
+    assert len(assets) == 1
+    assert assets[0].status == AssetStatus.poisoned
+

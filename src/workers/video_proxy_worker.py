@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.core.config import get_config
 from src.core.file_extensions import VIDEO_EXTENSIONS_LIST
+from src.core.path_resolver import resolve_path
 from src.core.storage import LocalMediaStore
 from src.models.entities import AssetStatus
 from src.repository.asset_repo import AssetRepository
@@ -184,7 +185,21 @@ class VideoProxyWorker(BaseWorker):
             asset.rel_path,
         )
         library_slug = asset.library.slug
-        source_path = Path(asset.library.absolute_path) / asset.rel_path
+        try:
+            source_path = resolve_path(asset.library.slug, asset.rel_path)
+        except (ValueError, FileNotFoundError) as e:
+            _log.error(
+                "Video proxy worker path resolution failed for asset %s (%s): %s",
+                asset.id,
+                asset.rel_path,
+                e,
+            )
+            self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, str(e))
+            self._current_asset_id = None
+            self._current_asset_rel_path = None
+            self._current_stage = None
+            self._current_stage_progress = None
+            return True
         data_dir = Path(get_config().data_dir)
         tmp_dir = data_dir / "tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)

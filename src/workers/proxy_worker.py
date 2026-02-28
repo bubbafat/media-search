@@ -1,9 +1,9 @@
 """Proxy worker: claims pending image assets, generates thumbnails and WebP proxies on local SSD, updates to proxied."""
 
 import logging
-from pathlib import Path
 
 from src.core.file_extensions import IMAGE_EXTENSIONS_LIST
+from src.core.path_resolver import resolve_path
 from src.core.storage import LocalMediaStore
 from src.models.entities import AssetStatus
 from src.repository.asset_repo import AssetRepository
@@ -98,7 +98,17 @@ class ImageProxyWorker(BaseWorker):
         if asset is None:
             return False
         assert asset.id is not None
-        source_path = Path(asset.library.absolute_path) / asset.rel_path
+        try:
+            source_path = resolve_path(asset.library.slug, asset.rel_path)
+        except (ValueError, FileNotFoundError) as e:
+            _log.error(
+                "Image proxy worker path resolution failed for asset %s (%s): %s",
+                asset.id,
+                asset.rel_path,
+                e,
+            )
+            self.asset_repo.update_asset_status(asset.id, AssetStatus.poisoned, str(e))
+            return True
         try:
             # Cascade: generate proxy first, then thumbnail from that proxy image,
             # using a pyvips-first pipeline with shrink-on-load where available.

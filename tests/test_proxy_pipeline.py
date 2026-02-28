@@ -1214,3 +1214,140 @@ def test_video_proxy_worker_retries_then_poisons_after_threshold(engine, _sessio
                                     assert "Retry limit exceeded" in row[2]
                                 finally:
                                     session.close()
+
+
+def test_video_proxy_worker_poisons_on_resolve_path_value_error(engine, _session_factory, tmp_path):
+    """When resolve_path raises ValueError (path traversal), asset is marked poisoned."""
+    from src.repository.system_metadata_repo import SystemMetadataRepository
+    from src.repository.video_scene_repo import VideoSceneRepository
+    from src.repository.worker_repo import WorkerRepository
+    from src.workers.video_proxy_worker import VideoProxyWorker
+
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+
+    lib_root = tmp_path / "vid-path-resolution"
+    lib_root.mkdir()
+    (lib_root / "clip.mp4").write_bytes(b"fake-video")
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="vid-path-resolution-lib",
+                name="Vid Path Resolution Lib",
+                absolute_path=str(lib_root),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("vid-path-resolution-lib", "clip.mp4", AssetType.video, 1000.0, 100)
+    asset = asset_repo.get_asset("vid-path-resolution-lib", "clip.mp4")
+    assert asset is not None
+    assert asset.id is not None
+
+    worker_repo = WorkerRepository(_session_factory)
+    system_metadata_repo = SystemMetadataRepository(_session_factory)
+    scene_repo = VideoSceneRepository(_session_factory)
+    config_mock = MagicMock()
+    config_mock.data_dir = str(tmp_path)
+
+    with patch("src.core.config.get_config", return_value=config_mock):
+        with patch("src.workers.video_proxy_worker.get_config", return_value=config_mock):
+            with patch("src.core.storage.get_config", return_value=config_mock):
+                with patch("src.workers.video_proxy_worker.resolve_path") as resolve_mock:
+                    resolve_mock.side_effect = ValueError("Path escapes library root: '../etc/passwd'")
+                    worker = VideoProxyWorker(
+                        worker_id="vid-path-resolution-worker",
+                        repository=worker_repo,
+                        heartbeat_interval_seconds=15.0,
+                        asset_repo=asset_repo,
+                        system_metadata_repo=system_metadata_repo,
+                        scene_repo=scene_repo,
+                        library_slug="vid-path-resolution-lib",
+                    )
+                    result = worker.process_task()
+
+    assert result is True
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status FROM asset WHERE id = :id"),
+            {"id": asset.id},
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "poisoned"
+    finally:
+        session.close()
+
+
+def test_video_proxy_worker_poisons_on_resolve_path_file_not_found(engine, _session_factory, tmp_path):
+    """When resolve_path raises FileNotFoundError, asset is marked poisoned."""
+    from src.repository.system_metadata_repo import SystemMetadataRepository
+    from src.repository.video_scene_repo import VideoSceneRepository
+    from src.repository.worker_repo import WorkerRepository
+    from src.workers.video_proxy_worker import VideoProxyWorker
+
+    asset_repo = _create_tables_and_seed(engine, _session_factory)
+    _set_all_asset_statuses_to(engine, _session_factory, AssetStatus.completed)
+
+    lib_root = tmp_path / "vid-path-missing"
+    lib_root.mkdir()
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="vid-path-missing-lib",
+                name="Vid Path Missing Lib",
+                absolute_path=str(lib_root),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("vid-path-missing-lib", "nonexistent.mp4", AssetType.video, 1000.0, 100)
+    asset = asset_repo.get_asset("vid-path-missing-lib", "nonexistent.mp4")
+    assert asset is not None
+    assert asset.id is not None
+
+    worker_repo = WorkerRepository(_session_factory)
+    system_metadata_repo = SystemMetadataRepository(_session_factory)
+    scene_repo = VideoSceneRepository(_session_factory)
+    config_mock = MagicMock()
+    config_mock.data_dir = str(tmp_path)
+
+    with patch("src.core.config.get_config", return_value=config_mock):
+        with patch("src.workers.video_proxy_worker.get_config", return_value=config_mock):
+            with patch("src.core.storage.get_config", return_value=config_mock):
+                with patch("src.workers.video_proxy_worker.resolve_path") as resolve_mock:
+                    resolve_mock.side_effect = FileNotFoundError("Path does not exist")
+                    worker = VideoProxyWorker(
+                        worker_id="vid-path-missing-worker",
+                        repository=worker_repo,
+                        heartbeat_interval_seconds=15.0,
+                        asset_repo=asset_repo,
+                        system_metadata_repo=system_metadata_repo,
+                        scene_repo=scene_repo,
+                        library_slug="vid-path-missing-lib",
+                    )
+                    result = worker.process_task()
+
+    assert result is True
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status FROM asset WHERE id = :id"),
+            {"id": asset.id},
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "poisoned"
+    finally:
+        session.close()

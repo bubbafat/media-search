@@ -1,12 +1,15 @@
 """Pytest fixtures. Use testcontainers-python for PostgreSQL in tests."""
 
 import contextlib
+import os
 import threading
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.postgres import PostgresContainer
+
+from src.core.path_resolver import _reset_session_factory_for_tests
 
 
 def clear_app_db_caches() -> None:
@@ -47,7 +50,19 @@ def postgres_container():
 def engine(postgres_container):
     """Session-scoped SQLAlchemy engine bound to the Postgres testcontainer."""
     url = postgres_container.get_connection_url()
-    return create_engine(url, pool_pre_ping=True)
+    prev = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = url
+    clear_app_db_caches()
+    _reset_session_factory_for_tests()
+    try:
+        yield create_engine(url, pool_pre_ping=True)
+    finally:
+        if prev is not None:
+            os.environ["DATABASE_URL"] = prev
+        else:
+            os.environ.pop("DATABASE_URL", None)
+        clear_app_db_caches()
+        _reset_session_factory_for_tests()
 
 
 @pytest.fixture(scope="session")
