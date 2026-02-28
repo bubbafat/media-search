@@ -39,14 +39,19 @@ def clear_app_db_caches() -> None:
     _get_library_repo.cache_clear()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def postgres_container():
-    """Session-scoped PostgreSQL 16 container (testcontainers)."""
+    """Module-scoped PostgreSQL 16 container (testcontainers).
+
+    Module scope reduces container lifetime per test file, avoiding connection
+    refused errors when the session-scoped container is torn down or becomes
+    unreachable during long test runs (e.g. ./test.sh --all).
+    """
     with PostgresContainer("postgres:16-alpine") as postgres:
         yield postgres
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def engine(postgres_container):
     """Session-scoped SQLAlchemy engine bound to the Postgres testcontainer."""
     url = postgres_container.get_connection_url()
@@ -65,7 +70,7 @@ def engine(postgres_container):
         _reset_session_factory_for_tests()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def _session_factory(engine):
     """Session-scoped session factory (used to create per-test sessions)."""
     return sessionmaker(engine, autocommit=False, autoflush=False, expire_on_commit=False)
