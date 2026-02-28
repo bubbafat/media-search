@@ -246,3 +246,42 @@ def test_scene_segmenter_abrupt_eof_yields_final_scene(tmp_path):
     assert scene.keep_reason is SceneKeepReason.forced
     assert scene.scene_end_pts == 2.0
     assert next_state is None
+
+
+def test_scene_segmenter_eof_extends_to_video_duration(tmp_path):
+    """At EOF, when video_duration_sec > last_pts, the final scene's end_pts is extended to duration."""
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(tmp_path / "v.mp4")
+    w, h = scanner.out_width, scanner.out_height
+    frames = [
+        (_make_frame_bytes(w, h), float(i))
+        for i in range(6)
+    ]
+    with patch.object(scanner, "iter_frames", return_value=iter(frames)):
+        segmenter = SceneSegmenter(scanner, video_duration_sec=8.0)
+        results = list(segmenter.iter_scenes())
+    assert len(results) == 1
+    scene, next_state = results[0]
+    assert scene is not None
+    assert scene.scene_start_pts == 0.0
+    assert scene.scene_end_pts == 8.0
+
+
+def test_scene_segmenter_eof_duration_less_than_last_pts_uses_last_pts(tmp_path):
+    """When video_duration_sec < last_pts (e.g. bad metadata), use last_pts to avoid shortening."""
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch("src.video.video_scanner._get_video_dimensions", return_value=(100, 100)):
+        scanner = VideoScanner(tmp_path / "v.mp4")
+    w, h = scanner.out_width, scanner.out_height
+    frames = [
+        (_make_frame_bytes(w, h), float(i))
+        for i in range(6)
+    ]
+    with patch.object(scanner, "iter_frames", return_value=iter(frames)):
+        segmenter = SceneSegmenter(scanner, video_duration_sec=3.0)
+        results = list(segmenter.iter_scenes())
+    assert len(results) == 1
+    scene, next_state = results[0]
+    assert scene is not None
+    assert scene.scene_end_pts == 5.0

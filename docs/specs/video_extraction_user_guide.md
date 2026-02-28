@@ -26,6 +26,7 @@ We use a **Composite Comparison Strategy** to decide when a "Scene" starts and e
 * **pHash Drift (Perceptual):** We calculate a 256-bit `imagehash.phash`. A new scene is triggered if the Hamming distance between the current frame and the **Anchor Frame** (the first frame of the scene) exceeds 51 bits.
 * **Temporal Ceiling:** To prevent infinite scenes in static or slow-moving shots, a new scene is forced every **30 seconds**.
 * **Debounce Guard:** To prevent "jitter" from camera flashes or rapid movement, new scene triggers are ignored if they occur within **3 seconds** of the last cut (unless forced by the 30s ceiling).
+* **Final Scene Flush:** At EOF, the last open scene is closed and yielded with `keep_reason=forced`. When the video duration (from ffprobe) is known and exceeds the PTS of the last decoded frame, the final scene's `end_ts` is extended to the duration so the tail of the video (e.g. 2–5 seconds that fps=1 sampling may miss) remains searchable.
 
 If you change these parameters (e.g. PHASH_THRESHOLD or DEBOUNCE_SEC in `scene_segmenter.py`), the system will automatically invalidate existing proxied videos and re-segment them on the next Video Proxy Worker pass. No manual reindex is needed.
 

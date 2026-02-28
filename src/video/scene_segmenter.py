@@ -103,6 +103,7 @@ class SceneSegmenter:
         initial_scene_start_pts: float | None = None,
         initial_anchor_phash: str | None = None,
         discard_until_pts: float | None = None,
+        video_duration_sec: float | None = None,
     ) -> None:
         if isinstance(input_path, VideoScanner):
             self._scanner = input_path
@@ -113,6 +114,7 @@ class SceneSegmenter:
         self._initial_scene_start_pts = initial_scene_start_pts
         self._initial_anchor_phash = initial_anchor_phash
         self._discard_until_pts = discard_until_pts
+        self._video_duration_sec = video_duration_sec
 
     def iter_scenes(
         self, check_interrupt: Callable[[], bool] | None = None
@@ -231,4 +233,10 @@ class SceneSegmenter:
                         has_eligible_best = True
         finally:
             if seen_any_frame:
-                yield from close_scene(last_pts, SceneKeepReason.forced, None, last_pts)
+                end_pts = last_pts
+                if (
+                    self._video_duration_sec is not None
+                    and self._video_duration_sec > last_pts
+                ):
+                    end_pts = self._video_duration_sec
+                yield from close_scene(end_pts, SceneKeepReason.forced, None, last_pts)

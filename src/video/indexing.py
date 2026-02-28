@@ -212,6 +212,7 @@ def run_video_scene_indexing(
             initial_scene_start_pts=initial_scene_start_pts,
             initial_anchor_phash=initial_anchor_phash,
             discard_until_pts=discard_until_pts,
+            video_duration_sec=expected_duration,
         )
         width = scanner.out_width
         height = scanner.out_height
