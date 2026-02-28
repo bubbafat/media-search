@@ -400,7 +400,13 @@ def test_run_vision_on_scenes_strict_merge_full_preserves_light_tags(
     mock_config.data_dir = str(tmp_path)
     with patch("src.video.indexing.get_config", return_value=mock_config):
         run_vision_on_scenes(
-            asset_id, slug, video_repo, mock_analyzer, mode="full"
+            asset_id,
+            slug,
+            video_repo,
+            mock_analyzer,
+            effective_model_id=1,
+            mode="full",
+            asset_analysis_model_id=1,
         )
 
     scenes = video_repo.list_scenes(asset_id)
@@ -451,7 +457,12 @@ def test_run_vision_on_scenes_strict_merge_light_preserves_showinfo(
     mock_config.data_dir = str(tmp_path)
     with patch("src.video.indexing.get_config", return_value=mock_config):
         run_vision_on_scenes(
-            asset_id, slug, video_repo, mock_analyzer, mode="light"
+            asset_id,
+            slug,
+            video_repo,
+            mock_analyzer,
+            effective_model_id=1,
+            mode="light",
         )
 
     scenes = video_repo.list_scenes(asset_id)
@@ -460,3 +471,67 @@ def test_run_vision_on_scenes_strict_merge_light_preserves_showinfo(
     assert meta is not None
     assert meta.get("showinfo") == "pts_time:1.0 n:30"
     assert "moondream" in meta
+
+
+def test_run_vision_on_scenes_model_mismatch_full_replace(engine, _session_factory, tmp_path):
+    """When asset_analysis_model_id != effective_model_id, full mode does full replace (no merge)."""
+    _, video_repo = _create_tables_and_seed(engine, _session_factory)
+    asset_id = _ensure_library_and_asset(_session_factory, "vid-int-model-mismatch")
+    slug = "vid-int-model-mismatch"
+    rep_path_rel = f"video_scenes/{slug}/{asset_id}/0.000_5.000.jpg"
+    rep_dir = tmp_path / "video_scenes" / slug / str(asset_id)
+    rep_dir.mkdir(parents=True)
+    (tmp_path / rep_path_rel).write_bytes(SOI + b"x" + EOI)
+
+    video_repo.save_scene_and_update_state(
+        asset_id,
+        VideoSceneRow(
+            start_ts=0.0,
+            end_ts=5.0,
+            description="Old model description",
+            metadata={
+                "moondream": {
+                    "description": "Old model description",
+                    "tags": ["old"],
+                },
+            },
+            sharpness_score=10.0,
+            rep_frame_path=rep_path_rel,
+            keep_reason="phash",
+        ),
+        None,
+    )
+
+    mock_analysis = VisualAnalysis(
+        description="New model description",
+        tags=["new", "indoor"],
+        ocr_text="NEW OCR",
+    )
+    mock_analyzer = MagicMock()
+    mock_analyzer.analyze_image.return_value = mock_analysis
+
+    mock_config = MagicMock()
+    mock_config.data_dir = str(tmp_path)
+    with patch("src.video.indexing.get_config", return_value=mock_config):
+        run_vision_on_scenes(
+            asset_id,
+            slug,
+            video_repo,
+            mock_analyzer,
+            effective_model_id=1,
+            mode="full",
+            asset_analysis_model_id=99,
+        )
+
+    mock_analyzer.analyze_image.assert_called_once()
+    call_kwargs = mock_analyzer.analyze_image.call_args[1]
+    assert call_kwargs.get("mode") == "light", "Model mismatch should force mode=light (full replace)"
+
+    scenes = video_repo.list_scenes(asset_id)
+    assert len(scenes) == 1
+    meta = scenes[0].metadata
+    assert meta is not None
+    md = meta.get("moondream", {})
+    assert md.get("description") == "New model description"
+    assert md.get("tags") == ["new", "indoor"]
+    assert md.get("ocr_text") == "NEW OCR"

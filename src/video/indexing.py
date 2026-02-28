@@ -43,7 +43,10 @@ def run_vision_on_scenes(
     repo: VideoSceneRepository,
     vision_analyzer: "BaseVisionAnalyzer",
     *,
+    effective_model_id: int,
     mode: str = "full",
+    asset_analysis_model_id: int | None = None,
+    asset_tags_model_id: int | None = None,
     check_interrupt: Callable[[], bool] | None = None,
     renew_lease: Callable[[], None] | None = None,
     should_flush_memory: bool = False,
@@ -54,6 +57,10 @@ def run_vision_on_scenes(
     Light mode: process scenes with NULL description (tags/desc only, no OCR).
     Full mode: process scenes that have description but need OCR; merge OCR into existing metadata.
 
+    When the asset's analysis_model_id or tags_model_id differs from effective_model_id, the
+    full vision pass (mode=light) is run for each affected scene to ensure consistent output
+    and prevent hybrid model metadata corruption.
+
     Used by VideoWorker after VideoProxyWorker has persisted scenes from the 720p pipeline.
     """
     data_dir = Path(get_config().data_dir)
@@ -62,6 +69,11 @@ def run_vision_on_scenes(
         to_process = [s for s in scenes if s.description is None]
     else:
         to_process = [s for s in scenes if s.description is not None and needs_ocr(s)]
+
+    model_mismatch = (
+        (asset_analysis_model_id is not None and asset_analysis_model_id != effective_model_id)
+        or (asset_tags_model_id is not None and asset_tags_model_id != effective_model_id)
+    )
 
     last_written_description: str | None = None
     for scene in to_process:
@@ -72,11 +84,20 @@ def run_vision_on_scenes(
         rep_path = data_dir / scene.rep_frame_path
         if not rep_path.exists():
             continue
+
+        use_full_replace = model_mismatch
+        if use_full_replace:
+            _log.debug(
+                "Model version drift detected for asset %s scene %s, re-running full vision for consistency.",
+                asset_id,
+                scene.id,
+            )
+        analysis_mode = "light" if use_full_replace else mode
         analysis = vision_analyzer.analyze_image(
-            rep_path, mode=mode, should_flush_memory=should_flush_memory
+            rep_path, mode=analysis_mode, should_flush_memory=should_flush_memory
         )
         fresh = repo.get_scene_by_id(scene.id)
-        if mode == "light":
+        if analysis_mode == "light":
             description = analysis.description or ""
             existing = (fresh.metadata if fresh else None) or {}
             metadata = dict(existing)

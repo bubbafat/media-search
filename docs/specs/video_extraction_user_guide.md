@@ -71,7 +71,8 @@ The scene indexing pipeline verifies that indexing reached the actual end of the
 ### Strict Merge Policy
 To prevent "Incomplete Scenes" and data loss, vision backfill uses a **Strict Merge** policy:
 - **Fetch before save:** Before writing any vision data, the worker fetches the current scene metadata from the database. This avoids overwriting with stale in-memory data from a prior list.
-- **Deep merge:** When adding Full OCR to a scene, existing Light data (description, tags, top-level keys like `showinfo`) is preserved. Only `ocr_text` is added or updated.
+- **Model version check:** Before processing a scene, the worker compares the asset's `analysis_model_id` or `tags_model_id` to the current effective model. If they differ (e.g., asset was analyzed by an older model), the full vision pass (mode=light) is re-run for that scene instead of merging. This prevents hybrid model metadata corruption and ensures the library converges on the latest model's output.
+- **Deep merge:** When adding Full OCR to a scene, existing Light data (description, tags, top-level keys like `showinfo`) is preserved. Only `ocr_text` is added or updated—*provided* the asset's model IDs match the worker's effective model (see model version check).
 - **Completion safety:** Before marking an asset `completed`, the worker verifies that *all* scenes have both a description and (if applicable) OCR. If any are missing, it runs the appropriate pass (Light for missing descriptions, Full for missing OCR) before final completion.
 
 To support long-running videos, the Video Proxy Worker can be interrupted (SIGINT/SIGTERM); the asset is set back to pending so another worker can resume. The Video Worker supports graceful shutdown: on interrupt the asset is set back to proxied (or analyzed_light).
