@@ -23,6 +23,7 @@ from src.models.entities import (
 from src.models.entities import WorkerStatus as WorkerStatusEntity
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
+from src.repository.project_repo import ProjectRepository
 from src.repository.video_scene_repo import VideoSceneRow
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.video_scene_repo import VideoSceneRepository
@@ -636,7 +637,7 @@ def test_cleanup_data_dir_keeps_expected_files(engine, _session_factory, tmp_pat
 def test_get_all_asset_paths_returns_ids_in_non_deleted_libraries(
     engine, _session_factory
 ):
-    """get_all_asset_paths returns (id, library_slug, rel_path) for assets in non-deleted libs."""
+    """get_all_asset_paths returns (id, library_slug, rel_path, is_in_project) for assets in non-deleted libs."""
     asset_repo, worker_repo = _create_tables_and_repos(engine, _session_factory)
     session = _session_factory()
     try:
@@ -663,6 +664,44 @@ def test_get_all_asset_paths_returns_ids_in_non_deleted_libraries(
     rel_paths = [p[2] for p in paths if p[1] == "paths-lib"]
     assert "a.jpg" in rel_paths
     assert "b.mp4" in rel_paths
+    # Assets not in projects have is_in_project=False
+    paths_lib_rows = [p for p in paths if p[1] == "paths-lib"]
+    for row in paths_lib_rows:
+        assert row[3] is False
+
+
+def test_get_all_asset_paths_includes_is_in_project(engine, _session_factory):
+    """get_all_asset_paths returns is_in_project=True for assets in a project."""
+    asset_repo, worker_repo = _create_tables_and_repos(engine, _session_factory)
+    project_repo = ProjectRepository(_session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="project-lib",
+                name="Project Lib",
+                absolute_path="/tmp/project",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("project-lib", "in_project.jpg", AssetType.image, 1000.0, 100)
+    asset = asset_repo.get_asset("project-lib", "in_project.jpg")
+    assert asset is not None
+    project = project_repo.create_project("Test Bin")
+    project_repo.add_asset_to_project(project.id or 0, asset.id)
+
+    paths = asset_repo.get_all_asset_paths(limit=100, offset=0)
+    in_project_row = next(
+        (p for p in paths if p[0] == asset.id),
+        None,
+    )
+    assert in_project_row is not None
+    assert in_project_row[3] is True
 
 
 def test_delete_asset_cascade_removes_asset_and_dependents(
@@ -727,6 +766,48 @@ def test_delete_asset_cascade_removes_asset_and_dependents(
             {"aid": asset_id},
         ).fetchone()
         assert row2[0] == 0
+    finally:
+        session.close()
+
+
+def test_delete_asset_cascade_raises_for_project_asset(engine, _session_factory):
+    """delete_asset_cascade raises RuntimeError when asset is in a project."""
+    asset_repo, worker_repo = _create_tables_and_repos(engine, _session_factory)
+    project_repo = ProjectRepository(_session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="protected-lib",
+                name="Protected Lib",
+                absolute_path="/tmp/protected",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("protected-lib", "protected.mp4", AssetType.video, 1000.0, 100)
+    asset = asset_repo.get_asset("protected-lib", "protected.mp4")
+    assert asset is not None
+    asset_id = asset.id
+    project = project_repo.create_project("Protected Bin")
+    project_repo.add_asset_to_project(project.id or 0, asset_id)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        asset_repo.delete_asset_cascade(asset_id)
+    assert "linked to a project" in str(exc_info.value)
+    assert str(asset_id) in str(exc_info.value)
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT COUNT(*) FROM asset WHERE id = :aid"),
+            {"aid": asset_id},
+        ).fetchone()
+        assert row[0] == 1
     finally:
         session.close()
 
@@ -842,6 +923,74 @@ def test_reap_missing_source_files_deletes_assets_with_missing_source(
         assert row[0] == 0
     finally:
         session.close()
+
+
+def test_reap_missing_source_files_skips_project_assets(
+    engine, _session_factory, tmp_path
+):
+    """reap_missing_source_files skips assets in projects: no DB delete, no proxy delete, logs warning."""
+    asset_repo, worker_repo, library_repo, video_scene_repo = (
+        _create_tables_and_all_repos(engine, _session_factory)
+    )
+    project_repo = ProjectRepository(_session_factory)
+    lib_slug = f"reap-protected-lib-{uuid.uuid4().hex[:8]}"
+    lib_path = tmp_path / lib_slug
+    lib_path.mkdir()
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=lib_slug,
+                name="Reap Protected Lib",
+                absolute_path=str(lib_path.resolve()),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset(lib_slug, "protected_missing.mp4", AssetType.video, 1000.0, 100)
+    asset = asset_repo.get_asset(lib_slug, "protected_missing.mp4")
+    assert asset is not None
+    asset_id = asset.id
+    project = project_repo.create_project("Protected Bin")
+    project_repo.add_asset_to_project(project.id or 0, asset_id)
+
+    from src.core.storage import LocalMediaStore
+
+    mock_cfg = MagicMock()
+    mock_cfg.data_dir = str(tmp_path)
+    with patch("src.core.storage.get_config", return_value=mock_cfg):
+        store = LocalMediaStore()
+        proxy_path = (
+            tmp_path / lib_slug / "proxies" / str(asset_id % 1000) / f"{asset_id}.webp"
+        )
+        proxy_path.parent.mkdir(parents=True, exist_ok=True)
+        proxy_path.write_text("proxy")
+
+        service = MaintenanceService(
+            asset_repo=asset_repo,
+            worker_repo=worker_repo,
+            data_dir=tmp_path,
+            library_repo=library_repo,
+            video_scene_repo=video_scene_repo,
+            storage=store,
+        )
+        would_delete, deleted = service.reap_missing_source_files(dry_run=False)
+    assert deleted == 0
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT COUNT(*) FROM asset WHERE id = :aid"),
+            {"aid": asset_id},
+        ).fetchone()
+        assert row[0] == 1, "Asset should remain in DB"
+    finally:
+        session.close()
+    assert proxy_path.exists(), "Proxy should remain on disk"
 
 
 def test_maintenance_run_dry_run_shows_preview(engine, _session_factory, tmp_path):

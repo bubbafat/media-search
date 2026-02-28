@@ -309,15 +309,17 @@ class AssetRepository:
         self,
         limit: int = 1000,
         offset: int = 0,
-    ) -> Sequence[tuple[int, str, str]]:
+    ) -> Sequence[tuple[int, str, str, bool]]:
         """
-        Return (id, library_slug, rel_path) for all assets in non-deleted libraries.
+        Return (id, library_slug, rel_path, is_in_project) for all assets in non-deleted libraries.
         Ordered by id for stable batching.
+        is_in_project is True when the asset is linked to at least one project.
         """
         with self._session_scope(write=False) as session:
             rows = session.execute(
                 text("""
-                    SELECT a.id, a.library_id, a.rel_path
+                    SELECT a.id, a.library_id, a.rel_path,
+                           EXISTS(SELECT 1 FROM project_assets pa WHERE pa.asset_id = a.id) AS is_in_project
                     FROM asset a
                     JOIN library l ON a.library_id = l.slug
                     WHERE l.deleted_at IS NULL
@@ -326,14 +328,23 @@ class AssetRepository:
                 """),
                 {"limit": limit, "offset": offset},
             ).fetchall()
-        return [(int(r[0]), str(r[1]), str(r[2])) for r in rows]
+        return [(int(r[0]), str(r[1]), str(r[2]), bool(r[3])) for r in rows]
 
     def delete_asset_cascade(self, asset_id: int) -> None:
         """
         Delete an asset and all dependent rows in strict FK order:
         video_active_state, video_scenes, videoframe, project_assets, asset.
+        Raises RuntimeError if the asset is linked to a project (prevents maintenance from deleting).
         """
         with self._session_scope(write=True) as session:
+            is_in_project = session.execute(
+                text("SELECT EXISTS(SELECT 1 FROM project_assets WHERE asset_id = :asset_id)"),
+                {"asset_id": asset_id},
+            ).scalar()
+            if is_in_project:
+                raise RuntimeError(
+                    f"Asset {asset_id} is linked to a project and cannot be cascade-deleted."
+                )
             session.execute(
                 text("DELETE FROM video_active_state WHERE asset_id = :asset_id"),
                 {"asset_id": asset_id},

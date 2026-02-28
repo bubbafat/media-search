@@ -320,11 +320,16 @@ class MaintenanceService:
             )
             if not batch:
                 break
-            for asset_id, library_slug, rel_path in batch:
+            for asset_id, library_slug, rel_path, is_in_project in batch:
                 try:
                     source_path = resolve_path(library_slug, rel_path)
                 except (ValueError, FileNotFoundError):
-                    if dry_run:
+                    if is_in_project:
+                        _log.warning(
+                            "Asset %s missing source but protected by project membership.",
+                            asset_id,
+                        )
+                    elif dry_run:
                         would_delete += 1
                     else:
                         self._storage.delete_asset_files(library_slug, asset_id)
@@ -332,7 +337,12 @@ class MaintenanceService:
                         deleted += 1
                     continue
                 if not source_path.exists():
-                    if dry_run:
+                    if is_in_project:
+                        _log.warning(
+                            "Asset %s missing source but protected by project membership.",
+                            asset_id,
+                        )
+                    elif dry_run:
                         would_delete += 1
                     else:
                         self._storage.delete_asset_files(library_slug, asset_id)
