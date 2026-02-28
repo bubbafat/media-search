@@ -19,7 +19,7 @@ uv run media-search --help
 | `library`       | Add, remove, restore, list libraries, force video reindex (reindex-videos)                                  |
 | `trash`         | Manage soft-deleted libraries (list, empty one, empty all)                                                  |
 | `repair`        | Repair database consistency (e.g. orphan-assets: remove assets whose library no longer exists)              |
-| `maintenance`   | System maintenance and housekeeping (run: prune stale workers, reclaim leases, cleanup temp files, reap assets with missing source files; retry-poisoned: rescue poisoned assets; cleanup-data-dir: remove orphaned files)   |
+| `maintenance`   | System maintenance and housekeeping (run: prune stale workers, reclaim leases, cleanup temp files, reap assets with missing source files; retry-poisoned: rescue poisoned assets; cleanup-data-dir: remove orphaned files; purge-deleted: permanently delete trashed libraries and wipe disk) |
 | `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)           |
 | `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                   |
 | `scan`          | Run a one-shot scan for a library (no daemon)                                                               |
@@ -157,7 +157,7 @@ uv run media-search trash list
 
 ### trash empty library_slug
 
-Permanently delete a single trashed library and all its assets. Uses chunked deletion to avoid long DB locks. Cannot be undone. Prompts for confirmation unless `--force` is used.
+Permanently delete a trashed library: wipes its generated files on disk (thumbnails, proxies, tmp, video_clips, video_scenes) and removes all DB rows. Uses chunked deletion to avoid long DB locks. Cannot be undone. Prompts for confirmation unless `--force` is used.
 
 
 | Argument       | Description                        |
@@ -182,7 +182,7 @@ uv run media-search trash empty nas-old --force
 
 ### trash empty-all
 
-Permanently delete all trashed libraries and their assets. Cannot be undone. Prompts for confirmation unless `--force` is used.
+Permanently delete all trashed libraries: wipes their generated files on disk and removes all DB rows. Cannot be undone. Prompts for confirmation unless `--force` is used.
 
 With `--verbose` / `-v`, prints progress (e.g. `Emptying 1/3: slug`) before each library.
 
@@ -276,6 +276,25 @@ uv run media-search maintenance cleanup-data-dir --dry-run
 ```
 
 Output reports: `Deleted N orphaned files from data directory.` With `--dry-run`, prints a preview and exits without applying changes.
+
+---
+
+### maintenance purge-deleted
+
+Permanently delete all trashed libraries: wipe their generated files on disk (thumbnails, proxies, tmp, video_clips, video_scenes) and remove their DB rows. Equivalent to `trash empty-all` but runnable separately for automation or cron.
+
+| Option       | Description                                                         |
+| ------------ | ------------------------------------------------------------------- |
+| `--dry-run`  | Show how many trashed libraries would be purged without deleting.   |
+
+**Example:**
+
+```bash
+uv run media-search maintenance purge-deleted
+uv run media-search maintenance purge-deleted --dry-run
+```
+
+Output reports: `Purged N trashed library(ies).` With `--dry-run`, prints the count that would be purged and exits without changes.
 
 ---
 

@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from src.models.entities import WorkerCommand, WorkerState
@@ -139,17 +139,30 @@ class WorkerRepository:
             return result or 0
 
     def has_active_local_transcodes(self, hostname: str) -> bool:
-        """Return True if any worker on this host is actively transcoding (seen in last 120s)."""
+        """
+        Return True if any worker on this host is actively transcoding (seen in last 120s)
+        AND holds a valid, unexpired lease on an asset.
+        Cross-references asset to avoid ghost workers (crashed workers whose status row
+        lingers) from blocking tmp cleanup indefinitely.
+        """
         now = _utcnow()
         cutoff = now - timedelta(seconds=120)
         with self._session_scope(write=False) as session:
-            result = session.scalar(
-                select(func.count()).select_from(WorkerStatusEntity).where(
-                    WorkerStatusEntity.hostname == hostname,
-                    WorkerStatusEntity.state != WorkerState.offline,
-                    WorkerStatusEntity.last_seen_at >= cutoff,
-                    WorkerStatusEntity.stats.isnot(None),
-                    WorkerStatusEntity.stats["current_stage"].astext == "transcode",
-                )
-            )
-            return (result or 0) > 0
+            result = session.execute(
+                text("""
+                    SELECT EXISTS(
+                        SELECT 1
+                        FROM worker_status ws
+                        JOIN asset a ON a.worker_id = ws.worker_id
+                        WHERE ws.hostname = :hostname
+                          AND ws.state != 'offline'
+                          AND ws.last_seen_at >= :cutoff
+                          AND ws.stats IS NOT NULL
+                          AND ws.stats->>'current_stage' = 'transcode'
+                          AND a.status = 'processing'
+                          AND a.lease_expires_at > (NOW() AT TIME ZONE 'UTC')
+                    )
+                """),
+                {"hostname": hostname, "cutoff": cutoff},
+            ).scalar()
+            return result is True

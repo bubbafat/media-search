@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlmodel import SQLModel
 
-from src.models.entities import SystemMetadata, WorkerState
+from src.models.entities import Asset, AssetStatus, Library, SystemMetadata, WorkerState
 from src.models.entities import WorkerStatus as WorkerStatusEntity
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.worker_repo import WorkerRepository
@@ -157,12 +157,33 @@ def test_get_active_local_worker_count_excludes_other_hosts(engine, _session_fac
 
 
 def test_has_active_local_transcodes_returns_true_when_transcoding(engine, _session_factory):
-    """Returns True when a worker on this host has current_stage transcode and recent heartbeat."""
+    """Returns True when a worker has current_stage transcode, recent heartbeat, and valid lease."""
     repo = _create_repo_and_tables(engine, _session_factory)
     now = _utcnow()
+    lease_expires = now + timedelta(minutes=5)
     host = "host-transcode-test"
     session = _session_factory()
     try:
+        session.add(
+            Library(
+                slug="transcode-lib",
+                name="Transcode Lib",
+                absolute_path="/tmp/transcode-lib",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.flush()
+        session.add(
+            Asset(
+                library_id="transcode-lib",
+                rel_path="video.mp4",
+                type="video",
+                status=AssetStatus.processing,
+                worker_id="worker-transcoding",
+                lease_expires_at=lease_expires,
+            )
+        )
         session.add(
             WorkerStatusEntity(
                 worker_id="worker-transcoding",
@@ -233,6 +254,29 @@ def test_has_active_local_transcodes_excludes_stale(engine, _session_factory):
                 worker_id="worker-stale-transcode",
                 hostname=host,
                 last_seen_at=stale,
+                state=WorkerState.processing,
+                stats={"current_stage": "transcode"},
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    assert repo.has_active_local_transcodes(host) is False
+
+
+def test_has_active_local_transcodes_returns_false_when_ghost(engine, _session_factory):
+    """Returns False when transcode worker has no valid lease (ghost/crashed worker)."""
+    repo = _create_repo_and_tables(engine, _session_factory)
+    now = _utcnow()
+    host = "host-ghost-transcode-test"
+    session = _session_factory()
+    try:
+        session.add(
+            WorkerStatusEntity(
+                worker_id="worker-ghost-transcode",
+                hostname=host,
+                last_seen_at=now,
                 state=WorkerState.processing,
                 stats={"current_stage": "transcode"},
             )

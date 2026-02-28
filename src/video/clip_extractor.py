@@ -96,6 +96,9 @@ def run_ffmpeg_with_progress(
                     on_progress(percent)
         process.wait()
     finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
         if process.stderr is not None:
             process.stderr.close()
     stderr = "".join(stderr_lines).strip()
@@ -505,7 +508,15 @@ async def extract_clip(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    _, stderr_bytes = await process.communicate()
+    try:
+        _, stderr_bytes = await process.communicate()
+    finally:
+        if process.returncode is None:
+            process.kill()
+            try:
+                await process.wait()
+            except (asyncio.CancelledError, OSError):
+                pass
 
     if process.returncode == 0:
         if not file_non_empty(dest_path):

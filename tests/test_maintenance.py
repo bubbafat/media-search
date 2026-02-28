@@ -716,6 +716,104 @@ def test_cleanup_data_dir_skips_trashed_libraries(engine, _session_factory, tmp_
     assert orphan_file.exists()
 
 
+def test_purge_deleted_library_wipes_disk_and_hard_deletes(engine, _session_factory, tmp_path):
+    """purge_deleted_library wipes generated dirs on disk and removes library from DB."""
+    from datetime import datetime, timezone
+
+    asset_repo, worker_repo, library_repo, video_scene_repo = _create_tables_and_all_repos(
+        engine, _session_factory
+    )
+    slug = "purge-me-lib"
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug=slug,
+                name="Purge Me",
+                absolute_path="/tmp/purge-me",
+                is_active=True,
+                sampling_limit=100,
+                deleted_at=datetime.now(timezone.utc),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    (tmp_path / slug / "thumbnails" / "0").mkdir(parents=True)
+    (tmp_path / slug / "thumbnails" / "0" / "1.jpg").write_text("thumb")
+    (tmp_path / slug / "proxies" / "0").mkdir(parents=True)
+    (tmp_path / slug / "proxies" / "0" / "1.webp").write_text("proxy")
+    (tmp_path / "tmp" / slug).mkdir(parents=True)
+    (tmp_path / "tmp" / slug / "part.webp").write_text("partial")
+    (tmp_path / "video_clips" / slug).mkdir(parents=True)
+    (tmp_path / "video_clips" / slug / "1").mkdir()
+    (tmp_path / "video_clips" / slug / "1" / "clip.mp4").write_text("clip")
+    (tmp_path / "video_scenes" / slug).mkdir(parents=True)
+    (tmp_path / "video_scenes" / slug / "1").mkdir()
+    (tmp_path / "video_scenes" / slug / "1" / "frame.jpg").write_text("scene")
+
+    service = MaintenanceService(
+        asset_repo=asset_repo,
+        worker_repo=worker_repo,
+        data_dir=tmp_path,
+        library_repo=library_repo,
+        video_scene_repo=video_scene_repo,
+    )
+    ok = service.purge_deleted_library(slug)
+    assert ok is True
+
+    assert not (tmp_path / slug).exists()
+    assert not (tmp_path / "tmp" / slug).exists()
+    assert not (tmp_path / "video_clips" / slug).exists()
+    assert not (tmp_path / "video_scenes" / slug).exists()
+    assert library_repo.get_by_slug(slug, include_deleted=True) is None
+
+
+def test_purge_deleted_libraries_purges_all_trashed(engine, _session_factory, tmp_path):
+    """purge_deleted_libraries wipes and hard_deletes all trashed libraries."""
+    from datetime import datetime, timezone
+
+    asset_repo, worker_repo, library_repo, video_scene_repo = _create_tables_and_all_repos(
+        engine, _session_factory
+    )
+    session = _session_factory()
+    try:
+        for slug in ("trash-a", "trash-b"):
+            session.add(
+                Library(
+                    slug=slug,
+                    name=slug,
+                    absolute_path=f"/tmp/{slug}",
+                    is_active=True,
+                    sampling_limit=100,
+                    deleted_at=datetime.now(timezone.utc),
+                )
+            )
+        session.commit()
+    finally:
+        session.close()
+
+    (tmp_path / "trash-a" / "thumbnails" / "0").mkdir(parents=True)
+    (tmp_path / "trash-a" / "thumbnails" / "0" / "1.jpg").write_text("a")
+    (tmp_path / "trash-b" / "proxies" / "0").mkdir(parents=True)
+    (tmp_path / "trash-b" / "proxies" / "0" / "2.webp").write_text("b")
+
+    service = MaintenanceService(
+        asset_repo=asset_repo,
+        worker_repo=worker_repo,
+        data_dir=tmp_path,
+        library_repo=library_repo,
+        video_scene_repo=video_scene_repo,
+    )
+    purged = service.purge_deleted_libraries()
+    assert purged == 2
+    assert not (tmp_path / "trash-a").exists()
+    assert not (tmp_path / "trash-b").exists()
+    assert library_repo.get_by_slug("trash-a", include_deleted=True) is None
+    assert library_repo.get_by_slug("trash-b", include_deleted=True) is None
+
+
 def test_cleanup_data_dir_skips_recent_files(engine, _session_factory, tmp_path):
     """cleanup_data_dir does not delete orphan files newer than 15 min."""
     asset_repo, worker_repo, library_repo, video_scene_repo = _create_tables_and_all_repos(

@@ -1,6 +1,7 @@
 """Maintenance service: prune stale workers, reclaim expired leases, cleanup temp files."""
 
 import logging
+import shutil
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -339,6 +340,47 @@ class MaintenanceService:
                 _log.warning("Could not remove empty dir %s: %s", d, e)
 
         return deleted
+
+    def purge_deleted_library(self, slug: str, *, dry_run: bool = False) -> bool:
+        """
+        Permanently delete a trashed library: wipe its generated directories from disk
+        and remove its DB rows. Returns True if purged successfully. The library must
+        be in trash (soft-deleted) first.
+        """
+        dirs_to_wipe: list[Path] = [
+            self._data_dir / slug,
+            self._data_dir / "tmp" / slug,
+            self._data_dir / "video_clips" / slug,
+            self._data_dir / "video_scenes" / slug,
+        ]
+        if dry_run:
+            _log.info("Would purge library '%s' (wipe %s dirs, hard_delete)", slug, dirs_to_wipe)
+            return True
+        for d in dirs_to_wipe:
+            if d.is_dir():
+                try:
+                    shutil.rmtree(d)
+                    _log.info("Wiped %s for purged library '%s'", d, slug)
+                except (PermissionError, OSError) as e:
+                    _log.warning("Could not wipe %s for library '%s': %s", d, slug, e)
+        try:
+            self._library_repo.hard_delete(slug)
+            return True
+        except ValueError as e:
+            _log.warning("Could not hard_delete library '%s': %s", slug, e)
+            return False
+
+    def purge_deleted_libraries(self, *, dry_run: bool = False) -> int:
+        """
+        Permanently delete all trashed libraries: wipe their generated directories from
+        disk and remove their DB rows. Returns the number of libraries purged.
+        """
+        trashed = self._library_repo.list_trashed()
+        purged = 0
+        for lib in trashed:
+            if self.purge_deleted_library(lib.slug, dry_run=dry_run):
+                purged += 1
+        return purged
 
     def reap_missing_source_files(
         self, *, dry_run: bool = False

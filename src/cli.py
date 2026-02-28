@@ -138,7 +138,7 @@ def trash_empty(
     library_slug: str = typer.Argument(..., help="Library slug to permanently delete"),
     force: bool = typer.Option(False, "--force", help="Skip confirmation"),
 ) -> None:
-    """Permanently delete a trashed library and all its assets. Cannot be undone."""
+    """Permanently delete a trashed library, its assets, and its generated files on disk. Cannot be undone."""
     if not force:
         typer.confirm(
             "Are you sure you want to permanently delete this library and ALL its assets? This cannot be undone.",
@@ -146,11 +146,24 @@ def trash_empty(
         )
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
-    try:
-        lib_repo.hard_delete(library_slug)
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    video_scene_repo = VideoSceneRepository(session_factory)
+    cfg = get_config()
+    service = MaintenanceService(
+        asset_repo,
+        worker_repo,
+        cfg.data_dir,
+        library_repo=lib_repo,
+        video_scene_repo=video_scene_repo,
+    )
+    ok = service.purge_deleted_library(library_slug)
+    if ok:
         typer.secho(f"Permanently deleted library '{library_slug}'.", fg=typer.colors.GREEN)
-    except ValueError as e:
-        typer.secho(str(e), fg=typer.colors.RED)
+    else:
+        typer.secho(
+            f"Library '{library_slug}' not found or not in trash.", fg=typer.colors.RED
+        )
         raise typer.Exit(1)
 
 
@@ -159,18 +172,31 @@ def trash_empty_all(
     force: bool = typer.Option(False, "--force", help="Skip confirmation"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (Emptying 1/N: slug)."),
 ) -> None:
-    """Permanently delete all trashed libraries and their assets. Cannot be undone."""
+    """Permanently delete all trashed libraries, their assets, and generated files on disk. Cannot be undone."""
     if not force:
         typer.confirm("Permanently delete ALL trashed libraries?", abort=True)
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    video_scene_repo = VideoSceneRepository(session_factory)
+    cfg = get_config()
+    service = MaintenanceService(
+        asset_repo,
+        worker_repo,
+        cfg.data_dir,
+        library_repo=lib_repo,
+        video_scene_repo=video_scene_repo,
+    )
     trashed = lib_repo.list_trashed()
     n = len(trashed)
+    purged = 0
     for i, lib in enumerate(trashed, 1):
         if verbose:
             typer.echo(f"Emptying {i}/{n}: {lib.slug}")
-        lib_repo.hard_delete(lib.slug)
-    typer.secho(f"Permanently deleted {n} library(ies).", fg=typer.colors.GREEN)
+        if service.purge_deleted_library(lib.slug):
+            purged += 1
+    typer.secho(f"Permanently deleted {purged} library(ies).", fg=typer.colors.GREEN)
 
 
 @repair_app.command("orphan-assets")
@@ -1150,6 +1176,35 @@ def maintenance_cleanup_data_dir(
         return
     deleted = service.cleanup_data_dir()
     typer.echo(f"Deleted {deleted} orphaned files from data directory.")
+
+
+@maintenance_app.command("purge-deleted")
+def maintenance_purge_deleted(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show trashed libraries that would be purged without deleting",
+    ),
+) -> None:
+    """Permanently delete all trashed libraries: wipe their generated files on disk and remove DB rows."""
+    session_factory = _get_session_factory()
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    library_repo = LibraryRepository(session_factory)
+    video_scene_repo = VideoSceneRepository(session_factory)
+    cfg = get_config()
+    service = MaintenanceService(
+        asset_repo,
+        worker_repo,
+        cfg.data_dir,
+        library_repo=library_repo,
+        video_scene_repo=video_scene_repo,
+    )
+    purged = service.purge_deleted_libraries(dry_run=dry_run)
+    if dry_run:
+        typer.echo(f"Would purge {purged} trashed library(ies). Run without --dry-run to apply.")
+    else:
+        typer.echo(f"Purged {purged} trashed library(ies).")
 
 
 def main() -> None:
