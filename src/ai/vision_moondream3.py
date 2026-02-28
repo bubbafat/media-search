@@ -12,7 +12,7 @@ def _parse_tags(tags_str: str) -> list[str]:
 
 
 class Moondream3Analyzer(BaseVisionAnalyzer):
-    """Vision analyzer using moondream/moondream3-preview.
+    """Vision analyzer using moondream/moondream3-preview (revision 1dae073c).
 
     This class keeps Pillow as a boundary type for model inputs: callers should
     prefer passing proxy file paths, but when an in-memory image object is used
@@ -43,6 +43,7 @@ class Moondream3Analyzer(BaseVisionAnalyzer):
             dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
             self.model = AutoModelForCausalLM.from_pretrained(
                 "moondream/moondream3-preview",
+                revision="1dae073c11761588126e4bf439ff918ba77ac6c1",
                 trust_remote_code=True,
                 device_map={"": self.device},
                 dtype=dtype,
@@ -56,7 +57,7 @@ class Moondream3Analyzer(BaseVisionAnalyzer):
                 torch.backends.mps.is_available = _orig
 
     def get_model_card(self) -> ModelCard:
-        return ModelCard(name="moondream3", version="preview")
+        return ModelCard(name="moondream3", version="1dae073c")
 
     def analyze_image(
         self,

@@ -212,7 +212,14 @@ def test_load_source_image_uses_pyvips_thumbnail_when_pillow_fails_and_previews_
     path.write_bytes(b"not-a-real-raw")
 
     # Fake vips image that returns a small RGB array.
+    # Must support autorot() (called by _normalize_vips_image) and interpretation/format for normalization.
     class _FakeVipsImage:
+        interpretation = "srgb"
+        format = "uchar"
+
+        def autorot(self):
+            return self
+
         def numpy(self):
             return (np.ones((8, 6, 3)) * 255).astype("uint8")
 

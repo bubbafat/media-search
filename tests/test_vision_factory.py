@@ -33,7 +33,7 @@ def test_get_vision_analyzer_moondream2_returns_moondream_analyzer():
     assert isinstance(analyzer, MoondreamAnalyzer)
     assert isinstance(analyzer, BaseVisionAnalyzer)
     assert analyzer.get_model_card().name == "moondream2"
-    assert analyzer.get_model_card().version == "2025-01-09"
+    assert analyzer.get_model_card().version == "6b714b26"
 
 
 @pytest.mark.ai
@@ -50,7 +50,7 @@ def test_get_vision_analyzer_moondream3_returns_moondream3_analyzer():
     assert isinstance(analyzer, Moondream3Analyzer)
     assert isinstance(analyzer, BaseVisionAnalyzer)
     assert analyzer.get_model_card().name == "moondream3"
-    assert analyzer.get_model_card().version == "preview"
+    assert analyzer.get_model_card().version == "1dae073c"
 
 
 @pytest.mark.ai

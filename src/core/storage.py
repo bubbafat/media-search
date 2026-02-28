@@ -71,7 +71,9 @@ def _load_raw_preview_rawpy(path: Path) -> Image.Image | None:
 def _normalize_vips_image(vips_img: "pyvips.Image") -> "pyvips.Image":
     """
     Ensure a pyvips image is in 8-bit sRGB for consistent output.
+    Applies EXIF orientation so portrait smartphone photos render correctly.
     """
+    vips_img = vips_img.autorot()
     interp = getattr(vips_img, "interpretation", None)
     if interp != "srgb" and hasattr(vips_img, "colourspace"):
         vips_img = vips_img.colourspace("srgb")

@@ -12,7 +12,7 @@ def _parse_tags(tags_str: str) -> list[str]:
 
 
 class MoondreamAnalyzer(BaseVisionAnalyzer):
-    """Vision analyzer using vikhyatk/moondream2 (revision 2025-01-09).
+    """Vision analyzer using vikhyatk/moondream2 (revision 6b714b26).
 
     This class keeps Pillow as a boundary type for model inputs: callers should
     prefer passing proxy file paths, but when an in-memory image object is used
@@ -35,7 +35,7 @@ class MoondreamAnalyzer(BaseVisionAnalyzer):
         dtype = torch.float16 if self.device == "mps" else torch.bfloat16
         self.model = AutoModelForCausalLM.from_pretrained(
             "vikhyatk/moondream2",
-            revision="2025-01-09",
+            revision="6b714b26eea5cbd9f31e4edb2541c170afa935ba",
             trust_remote_code=True,
             device_map={"": self.device},
             dtype=dtype,
@@ -46,7 +46,7 @@ class MoondreamAnalyzer(BaseVisionAnalyzer):
             pass  # fallback to eager mode (e.g. MPS compile often fails)
 
     def get_model_card(self) -> ModelCard:
-        return ModelCard(name="moondream2", version="2025-01-09")
+        return ModelCard(name="moondream2", version="6b714b26")
 
     def analyze_image(
         self,

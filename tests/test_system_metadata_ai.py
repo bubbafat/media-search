@@ -160,7 +160,7 @@ def test_save_visual_analysis_with_model_stamp(engine, _session_factory):
         session.close()
 
     analysis = VisualAnalysis(description="D", tags=["t"], ocr_text="O")
-    repo.save_visual_analysis(asset_id, analysis, model_name="moondream2", model_version="2025-01-09")
+    repo.save_visual_analysis(asset_id, analysis, model_name="moondream2", model_version="6b714b26")
 
     session = _session_factory()
     try:
@@ -168,6 +168,6 @@ def test_save_visual_analysis_with_model_stamp(engine, _session_factory):
         assert row is not None
         va = row[0]
         assert va.get("model_name") == "moondream2"
-        assert va.get("model_version") == "2025-01-09"
+        assert va.get("model_version") == "6b714b26"
     finally:
         session.close()
