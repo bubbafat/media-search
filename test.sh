@@ -12,7 +12,7 @@ PASSTHROUGH=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --all)
-      PYTEST_M='fast or slow or ai or migration'
+      PYTEST_M='fast or slow or ai or migration or quickwit'
       shift
       ;;
     --fast)

@@ -5,10 +5,12 @@ import os
 import threading
 
 import pytest
+import requests
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.postgres import PostgresContainer
 
+from src.core.config import get_config, reset_config
 from src.core.path_resolver import _reset_session_factory_for_tests
 
 
@@ -108,3 +110,43 @@ def run_worker():
             thread.join(timeout=5.0)
 
     return _run
+
+
+# Dev Quickwit URL for tests. Prod stays on 7280; tests never touch it.
+QUICKWIT_TEST_URL = "http://127.0.0.1:7281"
+
+
+@pytest.fixture
+def require_quickwit():
+    """
+    Point config at dev Quickwit (7281), check liveness, skip if unreachable.
+    Restore env and config after the test. Use for Stage 5 / Quickwit-backed tests only.
+    """
+    prev_url = os.environ.get("QUICKWIT_URL")
+    prev_worker_config = os.environ.get("WORKER_CONFIG")
+    os.environ["QUICKWIT_URL"] = QUICKWIT_TEST_URL
+    os.environ.pop("WORKER_CONFIG", None)
+    reset_config()
+    clear_app_db_caches()
+    try:
+        cfg = get_config()
+        url = (cfg.quickwit_url or "").rstrip("/")
+        health = f"{url}/health/livez"
+        try:
+            r = requests.get(health, timeout=2)
+            if not r.ok:
+                pytest.skip("Quickwit dev not reachable at 7281")
+        except requests.RequestException:
+            pytest.skip("Quickwit dev not reachable at 7281")
+        yield
+    finally:
+        if prev_url is not None:
+            os.environ["QUICKWIT_URL"] = prev_url
+        else:
+            os.environ.pop("QUICKWIT_URL", None)
+        if prev_worker_config is not None:
+            os.environ["WORKER_CONFIG"] = prev_worker_config
+        else:
+            os.environ.pop("WORKER_CONFIG", None)
+        reset_config()
+        clear_app_db_caches()

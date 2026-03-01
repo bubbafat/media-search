@@ -1,0 +1,22 @@
+# Dev/test Quickwit only. Isolated from prod (docker-compose.yml).
+# Start with: docker-compose -f docker-compose.dev.yml up -d
+# Tests use http://127.0.0.1:7281 (prod stays on 7280).
+services:
+  quickwit-dev:
+    image: quickwit/quickwit:0.8.1
+    container_name: media-search-quickwit-dev
+    ports:
+      - "127.0.0.1:7281:7280"
+    volumes:
+      - quickwit_dev_data:/quickwit/qwdata
+    environment:
+      QW_ENABLE_OTLP_ENDPOINT: "false"
+    command: run
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7280/health/livez || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  quickwit_dev_data:

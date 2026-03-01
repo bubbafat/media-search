@@ -61,6 +61,7 @@ markers = [
     "fast: no DB, no AI; unit tests, mocks, tmp_path only",
     "slow: need DB (testcontainers Postgres)",
     "ai: need real AI (e.g. moondream)",
+    "quickwit: need dev Quickwit at 7281 (use require_quickwit fixture)",
 ]
 addopts = ["-m", "not migration and (fast or slow)"]
 filterwarnings = [

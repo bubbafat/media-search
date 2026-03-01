@@ -32,6 +32,8 @@ MediaSearch v2 is a highly concurrent, distributed media discovery and AI-proces
 
 * **Strict Requirement:** Quickwit 0.8.1+ running as a Docker service.
 
+* **Configuration:** The Quickwit API base URL is set via `quickwit_url` in `worker_config.yml` (default `http://127.0.0.1:7280`) or the `QUICKWIT_URL` environment variable. A separate dev/test instance runs on port 7281 (`docker-compose -f docker-compose.dev.yml`); tests use only 7281 and never prod (7280).
+
 * **Append-Optimized:** Quickwit acts as a disposable, append-optimized index that scales to 100M+ documents. We append new versions on re-analysis and never overwrite in-place.
 
 * **Multi-Index Pattern:** Search is dynamically routed to isolated indexes (e.g., media\_scenes\_moondream\_v2) to eliminate query-time filter penalties and allow garbage collection by simply dropping superseded indexes.

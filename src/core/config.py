@@ -35,6 +35,8 @@ class Settings(BaseModel):
     worker_id: str | None = None
     log_level: str = "INFO"
     forensics_dir: str = "/logs/forensics"
+    # Quickwit API base URL. Prod default 7280; tests use QUICKWIT_URL=http://127.0.0.1:7281.
+    quickwit_url: str = "http://127.0.0.1:7280"
 
     @field_validator("worker_id", mode="before")
     @classmethod
@@ -76,6 +78,8 @@ class ConfigLoader:
                 data["export_root_path"] = self._env["EXPORT_ROOT_PATH"]
             if self._env.get("MEDIA_SEARCH_USE_RAW_PREVIEWS"):
                 data["use_raw_previews"] = self._env["MEDIA_SEARCH_USE_RAW_PREVIEWS"]
+            if self._env.get("QUICKWIT_URL"):
+                data["quickwit_url"] = self._env["QUICKWIT_URL"]
         settings = Settings.model_validate(data)
         if settings.worker_id is None or settings.worker_id == "":
             settings = settings.model_copy(update={"worker_id": socket.gethostname()})
@@ -103,6 +107,8 @@ class ConfigLoader:
             overrides["export_root_path"] = self._env["EXPORT_ROOT_PATH"]
         if self._env.get("MEDIA_SEARCH_USE_RAW_PREVIEWS"):
             overrides["use_raw_previews"] = self._env["MEDIA_SEARCH_USE_RAW_PREVIEWS"]
+        if self._env.get("QUICKWIT_URL"):
+            overrides["quickwit_url"] = self._env["QUICKWIT_URL"]
         if overrides:
             settings = settings.model_copy(update=overrides)
         return settings

@@ -5,6 +5,8 @@
 
 **Execution Strategy (JIT Prompting):** Stages must be executed linearly. [cite_start]Do not start Stage N+1 until Stage N passes verification[cite: 10]. Instead of hardcoding all prompt code here, the executing engineer or AI agent must use a Just-In-Time (JIT) prompting strategy: read the intent of the stage, verify the current codebase state, and write the specific code for that stage, adhering strictly to the constraints below.
 
+**Dev/Test Quickwit:** A separate Quickwit instance for development and tests runs on port 7281 so tests never touch prod (7280). Start it with `docker-compose -f docker-compose.dev.yml up -d`. Quickwit-backed tests expect Quickwit at `http://127.0.0.1:7281` and use the `require_quickwit` fixture (see test config and index naming below).
+
 ---
 
 ### [cite_start]STAGE 1: Infrastructure Initialization [cite: 39]
@@ -54,3 +56,12 @@
     * **Stateless Routing:** Do NOT use `@lru_cache` for the repository injection. Query Postgres for the active policy on every request.
     * **No Silent Failures:** The `try/except` block falling back to PostgreSQL MUST log a `CRITICAL` or `ERROR` traceback before falling back.
 * **Success Criteria:** Live API requests hit Quickwit. Disabling the Quickwit container forces the API to log an explicit error and seamlessly fall back to Postgres FTS.
+
+---
+
+### Prod vs test Quickwit and index naming
+
+* **URLs:** Production uses Quickwit at `http://127.0.0.1:7280` (from `worker_config.yml` or default). Tests use **only** the dev instance at `http://127.0.0.1:7281`, set via `QUICKWIT_URL` in the `require_quickwit` fixture. Tests never touch 7280.
+* **Prod index names:** `media_scenes_{library_slug}_{timestamp}` (or equivalent from policy). Used by the app and Search Sync Worker.
+* **Test index names:** Stage 5 tests must create and delete only indexes with the prefix `test_scenes_` (e.g. `test_scenes_{uuid}`). This keeps test data obvious and cleanup straightforward; if tests ever pointed at prod by mistake, the naming would make it visible.
+* **Running Quickwit tests:** Start dev Quickwit with `docker-compose -f docker-compose.dev.yml up -d`. Tests that need Quickwit request the `require_quickwit` fixture and should be marked `@pytest.mark.quickwit`. To run all tests including Quickwit-backed ones: `./test.sh --all` (or `pytest -m "fast or slow or ai or migration or quickwit"`). If dev Quickwit is not up, those tests are skipped.
