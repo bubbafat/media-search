@@ -594,8 +594,12 @@ def search_sync(
         quickwit_base_url=qw_url,
         system_metadata_repo=SystemMetadataRepository(session_factory),
         library_slug=library,
+        idle_poll_interval_seconds=5.0,
     )
-    worker.run(once=once)
+    try:
+        worker.run(once=once)
+    except KeyboardInterrupt:
+        typer.secho(f"Worker {worker_id} shutting down...")
 
 
 @app.command()

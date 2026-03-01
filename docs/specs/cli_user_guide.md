@@ -476,7 +476,7 @@ uv run media-search search "sunset" --library nas-main --library nas-backup
 
 ### search-sync
 
-Sync completed assets (images and videos with scene data) from PostgreSQL to Quickwit. The worker streams append-only documents to the search index; documents are never updated or deleted. Index name per library is resolved from `library_model_policy`. Use this when Quickwit is enabled so search results reflect completed assets. Runs until interrupted (Ctrl+C) unless `--once` is used.
+Sync completed assets (images and videos with scene data) from PostgreSQL to Quickwit. The worker streams append-only documents to the search index; documents are never updated or deleted. Index name per library is resolved from `library_model_policy`. Use this when Quickwit is enabled so search results reflect completed assets. Runs until interrupted (Ctrl+C) unless `--once` is used. When there is no work, it polls every 5 seconds and logs "No work, entering polling mode" / "Checking for work..."; Ctrl+C is handled gracefully and prints a shutdown message.
 
 With `--once`, the worker runs one batch and exits. If no assets remain to sync, it exits immediately. Use this for scripting or periodic syncs.
 
