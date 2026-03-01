@@ -777,6 +777,16 @@ def test_purge_deleted_libraries_purges_all_trashed(engine, _session_factory, tm
     asset_repo, worker_repo, library_repo, video_scene_repo = _create_tables_and_all_repos(
         engine, _session_factory
     )
+    # Clear any trashed libraries left by other tests (shared module-scoped DB)
+    service_for_cleanup = MaintenanceService(
+        asset_repo=asset_repo,
+        worker_repo=worker_repo,
+        data_dir=tmp_path,
+        library_repo=library_repo,
+        video_scene_repo=video_scene_repo,
+    )
+    service_for_cleanup.purge_deleted_libraries()
+
     session = _session_factory()
     try:
         for slug in ("trash-a", "trash-b"):
