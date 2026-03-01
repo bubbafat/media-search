@@ -1086,6 +1086,7 @@ def test_cli_proxy_respects_ignore_previews_flag(monkeypatch):
         all_libraries=True,
         verbose=False,
         repair=False,
+        reset_orientation=False,
         once=True,
         ignore_previews=False,
     )
@@ -1103,11 +1104,57 @@ def test_cli_proxy_respects_ignore_previews_flag(monkeypatch):
         all_libraries=True,
         verbose=False,
         repair=False,
+        reset_orientation=False,
         once=True,
         ignore_previews=True,
     )
     _, kwargs2 = worker_mock.call_args
     assert kwargs2["use_previews"] is False
+
+
+@pytest.mark.fast
+def test_cli_proxy_reset_orientation_sets_image_assets_to_pending_then_exits(monkeypatch):
+    """proxy --reset-orientation resets only image assets that have proxy/thumbnail to pending, then exits without starting worker."""
+    from src import cli
+    from src.models.entities import AssetStatus
+
+    fake_session_factory = MagicMock(name="session_factory")
+    monkeypatch.setattr(cli, "_get_session_factory", lambda: fake_session_factory)
+
+    fake_lib_repo = MagicMock(name="LibraryRepository")
+    fake_lib_repo.return_value.get_by_slug.return_value = MagicMock(slug="orient-lib")
+    fake_asset_repo = MagicMock(name="AssetRepository")
+    monkeypatch.setattr(cli, "LibraryRepository", fake_lib_repo)
+    monkeypatch.setattr(cli, "AssetRepository", fake_asset_repo)
+
+    # First batch: one image (has proxy/thumb) and one video (should be skipped)
+    fake_asset_repo.return_value.get_asset_ids_expecting_proxy.side_effect = [
+        [(101, "orient-lib", "image"), (102, "orient-lib", "video")],
+        [],  # second batch empty
+    ]
+
+    fake_storage_class = MagicMock(name="LocalMediaStore")
+    fake_storage_class.return_value.proxy_and_thumbnail_exist.side_effect = (
+        lambda lib, aid: (lib, aid) == ("orient-lib", 101)
+    )
+    monkeypatch.setattr("src.core.storage.LocalMediaStore", fake_storage_class)
+
+    worker_mock = MagicMock(name="ImageProxyWorker")
+    monkeypatch.setattr(cli, "ImageProxyWorker", worker_mock)
+
+    cli.proxy(
+        library_slug="orient-lib",
+        all_libraries=False,
+        reset_orientation=True,
+    )
+
+    # Worker must not be started
+    worker_mock.assert_not_called()
+    # Only the image asset 101 should be set to pending (video 102 skipped; 101 has proxy/thumb)
+    calls = fake_asset_repo.return_value.update_asset_status.call_args_list
+    assert len(calls) == 1
+    assert calls[0][0][0] == 101
+    assert calls[0][0][1] == AssetStatus.pending
 
 
 def test_proxy_worker_video_720p_pipeline(engine, _session_factory, tmp_path):

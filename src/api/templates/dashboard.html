@@ -1,6 +1,14 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
+  <script>
+    (function() {
+      var stored = localStorage.getItem('nle_color_scheme');
+      var dark = stored === 'dark' || (stored !== 'light' && typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      document.documentElement.classList.toggle('dark', dark);
+    })();
+  </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MediaSearch – Search</title>
@@ -20,6 +28,16 @@
             </nav>
           </div>
           <div class="flex items-center gap-3">
+            <button
+              type="button"
+              class="btn btn-sm btn-ghost btn-square"
+              @click="toggleColorScheme()"
+              :aria-label="colorScheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+              :title="colorScheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+            >
+              <svg x-show="colorScheme === 'light'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+              <svg x-show="colorScheme === 'dark'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" x-cloak><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+            </button>
             <button
               type="button"
               class="btn btn-sm btn-secondary"
@@ -296,10 +314,10 @@
                     <svg class="w-12 h-12 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                   </template>
                   <template x-if="!showErrorPlaceholder(item) && item.type === 'image'">
-                    <svg class="w-12 h-12 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <svg class="w-12 h-12 text-blue-400 dark:text-blue-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                   </template>
                   <template x-if="!showErrorPlaceholder(item) && item.type === 'video'">
-                    <svg class="w-12 h-12 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+                    <svg class="w-12 h-12 text-slate-500 dark:text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
                   </template>
                   <span class="text-xs mt-2 text-base-content/70" x-text="placeholderLabel(item)"></span>
                 </div>
@@ -375,10 +393,10 @@
                     <svg class="w-12 h-12 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                   </template>
                   <template x-if="!showErrorPlaceholder(item) && item.type === 'image'">
-                    <svg class="w-12 h-12 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <svg class="w-12 h-12 text-blue-400 dark:text-blue-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                   </template>
                   <template x-if="!showErrorPlaceholder(item) && item.type === 'video'">
-                    <svg class="w-12 h-12 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+                    <svg class="w-12 h-12 text-slate-500 dark:text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
                   </template>
                   <span class="text-xs mt-2 text-base-content/70" x-text="placeholderLabel(item)"></span>
                 </div>
@@ -445,10 +463,10 @@
                     <svg class="w-8 h-8 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                   </template>
                   <template x-if="!showErrorPlaceholder(item) && item.type === 'image'">
-                    <svg class="w-8 h-8 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <svg class="w-8 h-8 text-blue-400 dark:text-blue-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                   </template>
                   <template x-if="!showErrorPlaceholder(item) && item.type === 'video'">
-                    <svg class="w-8 h-8 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+                    <svg class="w-8 h-8 text-slate-500 dark:text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
                   </template>
                   <span class="text-[10px] mt-0.5 text-base-content/70" x-text="placeholderLabel(item)"></span>
                 </div>
@@ -515,10 +533,10 @@
                             <svg class="w-10 h-10 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                           </template>
                           <template x-if="!showErrorPlaceholder(item) && item.type === 'image'">
-                            <svg class="w-10 h-10 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            <svg class="w-10 h-10 text-blue-400 dark:text-blue-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                           </template>
                           <template x-if="!showErrorPlaceholder(item) && item.type === 'video'">
-                            <svg class="w-10 h-10 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+                            <svg class="w-10 h-10 text-slate-500 dark:text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
                           </template>
                           <span class="text-[10px] mt-1 text-base-content/70" x-text="placeholderLabel(item)"></span>
                         </div>
@@ -639,10 +657,10 @@
                         <svg class="w-12 h-12 text-error shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                       </template>
                       <template x-if="!showErrorPlaceholder(selected) && selected?.type === 'image'">
-                        <svg class="w-12 h-12 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        <svg class="w-12 h-12 text-blue-400 dark:text-blue-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                       </template>
                       <template x-if="!showErrorPlaceholder(selected) && selected?.type === 'video'">
-                        <svg class="w-12 h-12 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+                        <svg class="w-12 h-12 text-slate-500 dark:text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
                       </template>
                       <span class="text-xs mt-2 text-base-content/70" x-text="placeholderLabel(selected)"></span>
                     </div>
@@ -721,6 +739,7 @@
         const allowedLayouts = ['masonry', 'bento', 'list', 'filmstrip'];
         const saved = typeof localStorage !== 'undefined' && allowedLayouts.includes(localStorage.getItem('mediaSearchLayout'));
         const NLE_SELECTED_PROJECT_KEY = 'nle_selected_project_slug';
+        const GRID_MIN_KEY = 'mediaSearchGridMinPx';
         const savedGridMinRaw = typeof localStorage !== 'undefined' ? localStorage.getItem(GRID_MIN_KEY) : null;
         const savedGridMin = savedGridMinRaw != null ? Number(savedGridMinRaw) : NaN;
         const initialGridMin = Number.isFinite(savedGridMin) ? Math.min(500, Math.max(100, savedGridMin)) : 200;
@@ -755,6 +774,14 @@
           statusPayload: null,
           statusError: false,
           statusPanelOpen: false,
+          colorScheme: typeof document !== 'undefined' ? (document.documentElement.getAttribute('data-theme') || 'light') : 'light',
+
+          toggleColorScheme() {
+            this.colorScheme = this.colorScheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', this.colorScheme);
+            document.documentElement.classList.toggle('dark', this.colorScheme === 'dark');
+            try { localStorage.setItem('nle_color_scheme', this.colorScheme); } catch (_) {}
+          },
 
           get someLibrariesAnalyzing() {
             const inScope = this.libraryFilters.length
@@ -833,8 +860,8 @@
             return item?.preview_url || item?.thumbnail_url || null;
           },
           placeholderBg(item) {
-            if (['failed','poisoned'].includes(item?.status)) return 'bg-red-50';
-            return item?.type === 'video' ? 'bg-slate-200' : 'bg-blue-50';
+            if (['failed','poisoned'].includes(item?.status)) return 'bg-red-50 dark:bg-red-900/40';
+            return item?.type === 'video' ? 'bg-slate-200 dark:bg-slate-700' : 'bg-blue-50 dark:bg-blue-900/40';
           },
           placeholderClasses(item) {
             const bg = this.placeholderBg(item);

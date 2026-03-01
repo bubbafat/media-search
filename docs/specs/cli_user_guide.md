@@ -552,6 +552,10 @@ With `--verbose` / `-v`, each proxied asset is printed with a running count (e.g
 
 With `--repair`, before the main loop the worker runs a one-time check: it finds **image** assets that are supposed to have proxy and thumbnail files (status proxied, completed, etc.) but are missing them on disk (e.g. after deleting the data directory), sets their status to pending, then runs the normal loop so they are regenerated. Combine with `--library` to repair only one library.
 
+With `--reset-orientation`, the command does **not** start the worker. It finds all **image** assets that already have proxy and thumbnail files (status proxied, completed, etc.) and sets their status to pending so the proxy worker will regenerate thumbnails and proxies with EXIF orientation applied (portrait and other non-standard orientations display correctly). Use this after upgrading to a version that bakes EXIF rotation into generated images. Then run `proxy --library <slug>` (or `proxy --all`) to regenerate. Video assets are not affected.
+
+Thumbnail and proxy generation applies EXIF orientation at generation time (via libvips `autorot` or Pillow `exif_transpose`) so portrait and rotated images display upright without CSS. Existing thumbnails created before this fix can be corrected using `--reset-orientation` then re-running the proxy worker.
+
 By default, RAW/DNG files may use an embedded or fast-path libvips preview (long edge ≈1280px) for proxy generation to reduce memory usage; the resulting thumbnail (320px JPEG) and proxy (768px WebP) remain standardized. Use `--ignore-previews` to force full RAW decoding instead of using previews when in-camera effects or picture styles are not desired.
 
 
@@ -563,6 +567,7 @@ By default, RAW/DNG files may use an embedded or fast-path libvips preview (long
 | `--all`             | Process all libraries (global mode). Cannot be combined with `--library`.                        |
 | `--verbose`, `-v`   | Print progress (each asset and N/total)                                                         |
 | `--repair`          | Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated |
+| `--reset-orientation` | Set image assets that already have thumbnails to pending so they are regenerated with EXIF orientation; then exit (do not start worker) |
 | `--once`            | Process one batch then exit; exit immediately if no work                                        |
 | `--ignore-previews` | Always perform full RAW decoding instead of using embedded/fast-path RAW previews               |
 
@@ -576,6 +581,7 @@ uv run media-search proxy --heartbeat 10 --library disneyland
 uv run media-search proxy --worker-name my-proxy-1 --library disneyland
 uv run media-search proxy --library disneyland --verbose
 uv run media-search proxy --library disneyland --repair
+uv run media-search proxy --library disneyland --reset-orientation
 uv run media-search proxy --once --library disneyland
 uv run media-search proxy --library disneyland --ignore-previews
 ```

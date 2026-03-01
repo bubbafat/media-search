@@ -81,9 +81,31 @@ repair_and_drain_ai() {
   done
 }
 
+drain_search_sync() {
+  echo "--- Syncing search index for '${LIBRARY_SLUG}' ---"
+  local output exitcode
+  while true; do
+    set +e
+    output=$(uv run media-search search-sync --library "${LIBRARY_SLUG}" --once --verbose 2>&1)
+    exitcode=$?
+    set -e
+    echo "$output"
+    if [ $exitcode -ne 0 ]; then
+      exit $exitcode
+    fi
+    if echo "$output" | grep -q "No more assets"; then
+      break
+    fi
+    if ! echo "$output" | grep -q "Batch complete"; then
+      break
+    fi
+  done
+}
+
 run_scan
 repair_and_drain_proxies
 repair_and_drain_ai
+drain_search_sync
 
 echo "=== MediaSearch update: completed incremental pipeline for library '${LIBRARY_SLUG}' ==="
 

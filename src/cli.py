@@ -713,6 +713,11 @@ def proxy(
     all_libraries: bool = typer.Option(False, "--all", help="Process all libraries (global mode). Requires explicit flag."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
     repair: bool = typer.Option(False, "--repair", help="Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated."),
+    reset_orientation: bool = typer.Option(
+        False,
+        "--reset-orientation",
+        help="Reset completed image assets that already have thumbnails to pending so thumbnails are regenerated with EXIF orientation applied; then exit (do not start worker).",
+    ),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
     ignore_previews: bool = typer.Option(
         False,
@@ -744,6 +749,37 @@ def proxy(
             raise typer.Exit(1)
 
     asset_repo = AssetRepository(session_factory)
+    if reset_orientation:
+        from src.core.storage import LocalMediaStore
+
+        storage = LocalMediaStore()
+        batch_size = 500
+        offset = 0
+        total_reset = 0
+        while True:
+            batch = asset_repo.get_asset_ids_expecting_proxy(
+                library_slug=effective_library,
+                limit=batch_size,
+                offset=offset,
+                global_scope=(effective_library is None),
+            )
+            if not batch:
+                break
+            for asset_id, lib_slug, type_str in batch:
+                if type_str != "image":
+                    continue
+                if storage.proxy_and_thumbnail_exist(lib_slug, asset_id):
+                    asset_repo.update_asset_status(asset_id, AssetStatus.pending)
+                    total_reset += 1
+            offset += len(batch)
+            if len(batch) < batch_size:
+                break
+        typer.echo(
+            f"Reset {total_reset} image asset(s) to pending for thumbnail/proxy regeneration (EXIF orientation). "
+            "Run 'proxy --library <slug>' (or 'proxy --all') to regenerate."
+        )
+        return
+
     worker_repo = WorkerRepository(session_factory)
     system_metadata_repo = SystemMetadataRepository(session_factory)
 

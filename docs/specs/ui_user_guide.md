@@ -46,6 +46,10 @@ The main page is **GET /dashboard**. It returns server-rendered HTML (Jinja2) an
 - **DB Status** — Connection status: **Connected** (green) or **Error** (red), depending on whether a simple DB check succeeds.
 - **System status indicator** — The UI calls **GET /api/status** on load and polls every 30 seconds. When all components are healthy, a subtle green dot is shown; you can click it to open a panel listing all component statuses. When any component is degraded or unavailable (e.g. Quickwit not reachable), a warning appears with the component name and its detail message. Clicking the warning opens the same panel with all components. If the status endpoint cannot be reached (network error), "System status unknown" is shown. The panel closes when you click outside it.
 
+### Appearance (dark mode)
+
+A **dark/light mode toggle** (moon/sun icon) appears in the header next to the Bin button. Click it to switch between light and dark theme. The choice is stored in `localStorage` under the key **`nle_color_scheme`** (`light` or `dark`) and is restored on reload and in new tabs. If no preference is saved, the UI follows the system preference (**System Preferences → Appearance** on macOS). The script that applies the saved or system preference runs in the document `<head>` before any CSS so the correct theme is applied on first paint and avoids a flash of the wrong theme.
+
 ### Search
 
 - **Mode toggle** — Semantic (full-text on analysis text) vs OCR (full-text on OCR text).
@@ -72,9 +76,9 @@ When using **Bento**, a **Grid** slider appears. It controls the minimum tile si
 
 When a file is discovered but not yet proxied (e.g. `status` is `pending` or `processing`), the UI shows a distinct placeholder instead of a broken image box. This gives immediate visual feedback on library composition (images vs videos) while the system works in the background.
 
-- **Image placeholder** — Blue-tinted background (`bg-blue-50`), photograph icon, "Pending Proxy..." label.
-- **Video placeholder** — Slate background (`bg-slate-200`), film-strip icon, "Pending Proxy..." label. The **Video** badge remains visible on the placeholder.
-- **Error placeholder** — Red-tinted background (`bg-red-50`), error icon, "Error" label. For assets with `status` `failed` or `poisoned`, a tooltip shows the `error_message`.
+- **Image placeholder** — Blue-tinted background (light: `bg-blue-50`, dark: `dark:bg-blue-900/40`), photograph icon, "Pending Proxy..." label.
+- **Video placeholder** — Slate background (light: `bg-slate-200`, dark: `dark:bg-slate-700`), film-strip icon, "Pending Proxy..." label. The **Video** badge remains visible on the placeholder.
+- **Error placeholder** — Red-tinted background (light: `bg-red-50`, dark: `dark:bg-red-900/40`), error icon, "Error" label. For assets with `status` `failed` or `poisoned`, a tooltip shows the `error_message`.
 
 Placeholders use `animate-pulse` to indicate background processing for pending/progressing assets. Error placeholders are intentionally non-pulsing to communicate that processing has stopped. The UI relies on the API returning `thumbnail_url: null` when the asset has not yet been proxied or has errored.
 

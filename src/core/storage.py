@@ -51,6 +51,7 @@ def _load_raw_preview_rawpy(path: Path) -> Image.Image | None:
             return None
         if isinstance(data, bytes):
             pil_img = Image.open(io.BytesIO(data)).convert("RGB")
+            pil_img = ImageOps.exif_transpose(pil_img)
             return pil_img
         # ndarray (h, w, c)
         import numpy as np
@@ -66,7 +67,7 @@ def _load_raw_preview_rawpy(path: Path) -> Image.Image | None:
                 pil_img = Image.fromarray(arr, "RGB")
             else:
                 pil_img = Image.fromarray(arr).convert("RGB")
-        return pil_img
+        return ImageOps.exif_transpose(pil_img)
     except Exception:
         return None
 
