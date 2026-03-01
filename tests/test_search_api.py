@@ -1,14 +1,14 @@
 """Search API: /api/search returns structured results for semantic and OCR modes."""
 
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from tests.conftest import clear_app_db_caches
-from src.api.main import app, _get_search_repo, _get_ui_repo
+from src.api.main import app, _get_quickwit_search_repo, _get_search_repo, _get_ui_repo
 from src.core.config import get_config
 from src.repository.search_repo import SearchRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
@@ -302,6 +302,120 @@ def test_api_search_quickwit_fallback_when_disabled(search_api_postgres):
             assert res.status_code == 200
             data = res.json()
             assert isinstance(data, list)
+        finally:
+            app.dependency_overrides.pop(_get_search_repo, None)
+            app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_search_returns_503_when_quickwit_down_and_fallback_disabled(search_api_postgres):
+    """Returns 503 when Quickwit is down and quickwit_fallback_to_postgres is False."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    cfg = get_config()
+    patched_config = cfg.model_copy(
+        update={"quickwit_enabled": True, "quickwit_fallback_to_postgres": False}
+    )
+    mock_policy = MagicMock(active_index_name="test_index")
+    mock_policy_repo = MagicMock()
+    mock_policy_repo.get.return_value = mock_policy
+    mock_qw_repo = MagicMock()
+    mock_qw_repo.is_healthy.return_value = False
+    with (
+        patch("src.api.main.get_config", return_value=patched_config),
+        patch("src.api.main._get_library_model_policy_repo", return_value=mock_policy_repo),
+        patch("src.api.main._get_quickwit_search_repo", return_value=mock_qw_repo),
+    ):
+        try:
+            client = TestClient(app)
+            res = client.get("/api/search", params={"q": "test", "library": "tuta"})
+            assert res.status_code == 503
+            assert "Search service unavailable" in res.text
+        finally:
+            app.dependency_overrides.pop(_get_search_repo, None)
+            app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_search_falls_back_to_postgres_when_quickwit_down_and_fallback_enabled(search_api_postgres):
+    """Falls back silently to PostgreSQL when Quickwit is down and quickwit_fallback_to_postgres is True."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    cfg = get_config()
+    patched_config = cfg.model_copy(
+        update={"quickwit_enabled": True, "quickwit_fallback_to_postgres": True}
+    )
+    mock_policy = MagicMock(active_index_name="test_index")
+    mock_policy_repo = MagicMock()
+    mock_policy_repo.get.return_value = mock_policy
+    mock_qw_repo = MagicMock()
+    mock_qw_repo.is_healthy.return_value = False
+    with (
+        patch("src.api.main.get_config", return_value=patched_config),
+        patch("src.api.main._get_library_model_policy_repo", return_value=mock_policy_repo),
+        patch("src.api.main._get_quickwit_search_repo", return_value=mock_qw_repo),
+    ):
+        try:
+            client = TestClient(app)
+            res = client.get("/api/search", params={"q": "test", "library": "tuta"})
+            assert res.status_code == 200
+            data = res.json()
+            assert isinstance(data, list)
+        finally:
+            app.dependency_overrides.pop(_get_search_repo, None)
+            app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_search_returns_503_on_quickwit_exception_when_fallback_disabled(search_api_postgres):
+    """Returns 503 on Quickwit exception when quickwit_fallback_to_postgres is False."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    cfg = get_config()
+    patched_config = cfg.model_copy(
+        update={"quickwit_enabled": True, "quickwit_fallback_to_postgres": False}
+    )
+    mock_policy = MagicMock(active_index_name="test_index")
+    mock_policy_repo = MagicMock()
+    mock_policy_repo.get.return_value = mock_policy
+    mock_qw_repo = MagicMock()
+    mock_qw_repo.is_healthy.return_value = True
+    mock_qw_repo.search.side_effect = Exception("Quickwit error")
+    with (
+        patch("src.api.main.get_config", return_value=patched_config),
+        patch("src.api.main._get_library_model_policy_repo", return_value=mock_policy_repo),
+        patch("src.api.main._get_quickwit_search_repo", return_value=mock_qw_repo),
+    ):
+        try:
+            client = TestClient(app)
+            res = client.get("/api/search", params={"q": "test", "library": "tuta"})
+            assert res.status_code == 503
+            assert "Search service unavailable" in res.text
+        finally:
+            app.dependency_overrides.pop(_get_search_repo, None)
+            app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_search_quickwit_disabled_always_uses_postgres_no_quickwit_calls(search_api_postgres):
+    """quickwit_enabled=False always uses PostgreSQL; no Quickwit calls are made."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    cfg = get_config()
+    patched_config = cfg.model_copy(
+        update={"quickwit_enabled": False, "quickwit_fallback_to_postgres": False}
+    )
+    with (
+        patch("src.api.main.get_config", return_value=patched_config),
+        patch("src.api.main._get_quickwit_search_repo", MagicMock()) as mock_get_qw,
+    ):
+        try:
+            client = TestClient(app)
+            res = client.get("/api/search", params={"q": "test"})
+            assert res.status_code == 200
+            data = res.json()
+            assert isinstance(data, list)
+            mock_get_qw.assert_not_called()
         finally:
             app.dependency_overrides.pop(_get_search_repo, None)
             app.dependency_overrides.pop(_get_ui_repo, None)

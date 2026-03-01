@@ -260,7 +260,22 @@ def api_search(
             policy = policy_repo.get(library[0])
             if policy and policy.active_index_name:
                 quickwit_repo = _get_quickwit_search_repo(policy.active_index_name)
-                if quickwit_repo.is_healthy():
+                if not quickwit_repo.is_healthy():
+                    if get_config().quickwit_fallback_to_postgres:
+                        _log.warning(
+                            "Quickwit is not healthy — falling back to PostgreSQL FTS "
+                            "(quickwit_fallback_to_postgres=True)"
+                        )
+                        # Fall through to PostgreSQL path
+                    else:
+                        raise HTTPException(
+                            status_code=503,
+                            detail="Search service unavailable. Quickwit is not reachable. "
+                                   "Check that the Quickwit container is running, or set "
+                                   "quickwit_fallback_to_postgres: true in your config to "
+                                   "fall back to PostgreSQL automatically.",
+                        )
+                else:
                     results = quickwit_repo.search(
                         query_string=query_string,
                         library_slugs=library,
@@ -273,8 +288,27 @@ def api_search(
                     for r in enriched:
                         r.asset = asset_map[r.asset.id]
                     return _build_search_response(enriched, ui_repo, library)
+        except HTTPException:
+            raise
         except Exception as e:
-            _log.warning("Quickwit search failed, falling back to PostgreSQL: %s", e)
+            if get_config().quickwit_fallback_to_postgres:
+                _log.warning(
+                    "Quickwit error — falling back to PostgreSQL FTS "
+                    "(quickwit_fallback_to_postgres=True): %s", e
+                )
+                # Fall through to the PostgreSQL path below
+            else:
+                _log.error(
+                    "Quickwit error and fallback is disabled "
+                    "(quickwit_fallback_to_postgres=False): %s", e
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Search service unavailable. Quickwit is not reachable. "
+                           "Check that the Quickwit container is running, or set "
+                           "quickwit_fallback_to_postgres: true in your config to "
+                           "fall back to PostgreSQL automatically.",
+                )
 
     results = search_repo.search_assets(
         query_string=q,

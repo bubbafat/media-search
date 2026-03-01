@@ -38,6 +38,11 @@ class Settings(BaseModel):
     # Quickwit API base URL. Prod default 7280; tests use QUICKWIT_URL=http://127.0.0.1:7281.
     quickwit_url: str = "http://127.0.0.1:7280"
     quickwit_enabled: bool = True
+    quickwit_fallback_to_postgres: bool = False
+    # When False (default): if quickwit_enabled=True and Quickwit is unreachable
+    # or returns an error, the search endpoint returns HTTP 503.
+    # When True: silently fall back to PostgreSQL FTS on any Quickwit error.
+    # Has no effect when quickwit_enabled=False (PostgreSQL is always used).
     admin_key: str = ""
 
     @field_validator("worker_id", mode="before")
