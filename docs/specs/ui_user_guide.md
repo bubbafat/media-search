@@ -21,7 +21,7 @@ uv run uvicorn src.api.main:app --reload
 
 Default URL: **http://127.0.0.1:8000**
 
-**Requirements:** A running PostgreSQL instance and applied migrations (`alembic upgrade head`). The app reads from the same database as the CLI and workers.
+**Requirements:** A running PostgreSQL instance and applied migrations (`alembic upgrade head`). The app reads from the same database as the CLI and workers. When Quickwit is enabled in config and a library has an active Quickwit index, search results may be served from Quickwit; otherwise (or on Quickwit unavailability) search uses PostgreSQL full-text.
 
 ### Building the dashboard CSS
 

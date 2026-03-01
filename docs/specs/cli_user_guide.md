@@ -439,6 +439,8 @@ You must specify which libraries to search: provide **either** at least one `--l
 
 When a query is provided, results are ordered by **relevance** (best match first), with videos boosted by **match density** (the fraction of the video's duration that matched). Results are limited by `--limit`. Without a query, no results are returned.
 
+**Note:** This CLI command always uses PostgreSQL full-text search. The web dashboard search (`GET /api/search`) may use Quickwit when it is enabled in config and a single library is selected; the CLI does not call the web API.
+
 Results are shown in a Rich table: **Library**, **Relative Path**, **Type**, **Status**, **Best Timestamp**, **Match Density**, **Confidence**. **Best Timestamp** is the time (MM:SS) to jump to for videos, or "N/A" for images. **Match Density** is the percentage of the asset that matched: 100% for images, or for videos the percentage of total duration covered by matching scenes. The **Confidence** column shows match strength as a percentage of the top result’s relevance score (100% for the best match). It is color-coded: green for high (>80%), yellow for medium (>50%), red for lower (≤50%). When there is no search query or when scores are not comparable, confidence is shown as "—".
 
 If no assets match, a yellow message is printed.
