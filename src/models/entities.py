@@ -197,3 +197,26 @@ class SystemMetadata(SQLModel, table=True):
 
     key: str = Field(primary_key=True)
     value: str = ""
+
+
+class LibraryModelPolicy(SQLModel, table=True):
+    """Controls which Quickwit index is actively served per library.
+
+    active_index_name: the Quickwit index currently serving search queries.
+    shadow_index_name: the Quickwit index being built in the background (null when not upgrading).
+    locked: when True, the system serves active_index_name exclusively even if shadow is present.
+    locked_since: timestamp when the lock was set (for observability).
+    promotion_progress: float 0.0 to 1.0 indicating shadow indexing completion.
+    previous_index_name: the index that was active before the last promotion (enables one-step rollback).
+    """
+    __tablename__ = "library_model_policy"
+
+    library_slug: str = Field(
+        primary_key=True, foreign_key="library.slug"
+    )
+    active_index_name: str = Field(nullable=False)
+    shadow_index_name: str | None = Field(default=None)
+    previous_index_name: str | None = Field(default=None)
+    locked: bool = Field(default=False)
+    locked_since: datetime | None = Field(default=None)
+    promotion_progress: float = Field(default=0.0)

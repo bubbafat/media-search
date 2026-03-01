@@ -12,6 +12,7 @@ EXPECTED_TABLES = [
     "aimodel",
     "asset",
     "library",
+    "library_model_policy",
     "project",
     "project_assets",
     "system_metadata",
@@ -58,7 +59,7 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status', 'project', 'project_assets') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'library_model_policy', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status', 'project', 'project_assets') "
                     "ORDER BY table_name"
                 )
             )
@@ -373,6 +374,34 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             assert row is not None, "worker_status.hostname column must exist"
             assert row[1] == "NO", "worker_status.hostname must be NOT NULL"
             assert "''" in str(row[2]), "worker_status.hostname must have server default empty string"
+
+        # Assert library_model_policy table exists with correct columns (migration 023)
+        with migration_engine.connect() as conn:
+            cols = conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'library_model_policy' "
+                    "ORDER BY column_name"
+                )
+            ).fetchall()
+            column_names = [c[0] for c in cols]
+            assert column_names == [
+                "active_index_name",
+                "library_slug",
+                "locked",
+                "locked_since",
+                "previous_index_name",
+                "promotion_progress",
+                "shadow_index_name",
+            ], f"library_model_policy must have expected columns (got {column_names})"
+            row = conn.execute(
+                text(
+                    "SELECT constraint_name FROM information_schema.table_constraints "
+                    "WHERE table_schema = 'public' AND table_name = 'library_model_policy' "
+                    "AND constraint_type = 'FOREIGN KEY'"
+                )
+            ).fetchone()
+            assert row is not None, "library_model_policy must have FK to library.slug"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev
@@ -403,7 +432,7 @@ def test_migration_02_downgrade_base(migration_postgres, migration_engine):
                 text(
                     "SELECT table_name FROM information_schema.tables "
                     "WHERE table_schema = 'public' "
-                    "AND table_name IN ('aimodel', 'library', 'asset', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status', 'project', 'project_assets') "
+                    "AND table_name IN ('aimodel', 'library', 'asset', 'library_model_policy', 'system_metadata', 'videoframe', 'video_active_state', 'video_scenes', 'worker_status', 'project', 'project_assets') "
                     "ORDER BY table_name"
                 )
             )
