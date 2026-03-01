@@ -209,3 +209,66 @@ def test_update_progress_clamps_below_zero(engine, _session_factory):
     retrieved = policy_repo.get("test-library")
     assert retrieved is not None
     assert retrieved.promotion_progress == 0.0
+
+
+def test_list_all_returns_all_policies(engine, _session_factory):
+    """list_all returns all library_model_policy rows."""
+    policy_repo = _create_tables_and_policy_repo(engine, _session_factory)
+    lib_repo = LibraryRepository(_session_factory)
+    # Ensure we have a second library for FK
+    if lib_repo.get_by_slug("other-library") is None:
+        lib_repo.add("Other Library", "/tmp/other-lib")
+    assert policy_repo.list_all() == []
+    policy_repo.upsert(
+        LibraryModelPolicy(
+            library_slug="test-library",
+            active_index_name="idx_a",
+            shadow_index_name=None,
+            previous_index_name=None,
+            locked=False,
+            locked_since=None,
+            promotion_progress=0.0,
+        )
+    )
+    policy_repo.upsert(
+        LibraryModelPolicy(
+            library_slug="other-library",
+            active_index_name="idx_b",
+            shadow_index_name=None,
+            previous_index_name=None,
+            locked=False,
+            locked_since=None,
+            promotion_progress=0.0,
+        )
+    )
+    all_policies = policy_repo.list_all()
+    assert len(all_policies) == 2
+    slugs = {p.library_slug for p in all_policies}
+    assert slugs == {"test-library", "other-library"}
+
+
+def test_delete_removes_row_returns_true(engine, _session_factory):
+    """delete on an existing slug removes the row and returns True."""
+    policy_repo = _create_tables_and_policy_repo(engine, _session_factory)
+    policy_repo.upsert(
+        LibraryModelPolicy(
+            library_slug="test-library",
+            active_index_name="idx_v1",
+            shadow_index_name=None,
+            previous_index_name=None,
+            locked=False,
+            locked_since=None,
+            promotion_progress=0.0,
+        )
+    )
+    assert policy_repo.get("test-library") is not None
+    result = policy_repo.delete("test-library")
+    assert result is True
+    assert policy_repo.get("test-library") is None
+
+
+def test_delete_unknown_slug_returns_false(engine, _session_factory):
+    """delete on a slug with no policy returns False."""
+    policy_repo = _create_tables_and_policy_repo(engine, _session_factory)
+    result = policy_repo.delete("nonexistent-slug")
+    assert result is False

@@ -51,6 +51,15 @@ class SystemMetadataRepository:
             else:
                 session.add(SystemMetadataEntity(key=key, value=value))
 
+    def delete_value(self, key: str) -> bool:
+        """Delete the row for key. Return True if a row was deleted, False if key was not present."""
+        with self._session_scope(write=True) as session:
+            row = session.get(SystemMetadataEntity, key)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
+
     def get_schema_version(self) -> str | None:
         """Return the schema_version value, or None if missing."""
         return self.get_value(self.SCHEMA_VERSION_KEY)

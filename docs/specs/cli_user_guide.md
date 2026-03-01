@@ -482,13 +482,16 @@ With `--once`, the worker runs one batch and exits. If no assets remain to sync,
 
 With `--verbose` / `-v`, enables DEBUG logging to stdout so you can see library, cursor, per-batch and per-asset progress (e.g. "Asset 120732 (image) → wrote 1 document", "Asset 120733 (video) → 14 scenes → wrote 14 documents", "No more assets. Sync complete."). Without `-v`, output is minimal and only batch summaries are visible.
 
+With `--reset`, the command performs a **full reset** and then exits without starting the sync worker. It removes the `search_sync_last_asset_id` cursor and, for each library in scope (one if `--library` is set, otherwise all libraries that have a policy), deletes the Quickwit index and the `library_model_policy` row. The next run of `search-sync` without `--reset` will create new index(es) and re-sync from scratch, with no duplicates or stale documents. Run `search-sync --reset` (optionally with `--library`) to clean up, then run `search-sync` again to re-index.
 
-| Option             | Description                                      |
-| ------------------ | ------------------------------------------------ |
-| `--once`           | Run one batch then exit; exit immediately if no work |
-| `--library`        | Restrict sync to one library slug. Omit for all. |
-| `--quickwit-url`   | Override Quickwit base URL.                      |
-| `--verbose`, `-v`  | Enable verbose DEBUG logging to stdout           |
+
+| Option             | Description                                                                 |
+| ------------------ | --------------------------------------------------------------------------- |
+| `--once`           | Run one batch then exit; exit immediately if no work                        |
+| `--library`        | Restrict sync to one library slug. Omit for all.                             |
+| `--quickwit-url`   | Override Quickwit base URL.                                                 |
+| `--verbose`, `-v`  | Enable verbose DEBUG logging to stdout                                      |
+| `--reset`          | Full reset: clear cursor, delete Quickwit index(s) and policy row(s), exit  |
 
 
 **Example:**
@@ -498,6 +501,8 @@ uv run media-search search-sync --library nas-main
 uv run media-search search-sync --library nas-main --once
 uv run media-search search-sync --library nas-main -v
 uv run media-search search-sync --once --verbose
+uv run media-search search-sync --reset --library nas-main
+uv run media-search search-sync --reset
 ```
 
 ---

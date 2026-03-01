@@ -560,6 +560,11 @@ def search_sync(
         None, "--quickwit-url", help="Override Quickwit base URL."
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging output."),
+    reset: bool = typer.Option(
+        False,
+        "--reset",
+        help="Full reset: clear cursor, delete Quickwit index(s) and policy row(s), then exit without syncing.",
+    ),
 ) -> None:
     """Sync completed assets from PostgreSQL to Quickwit."""
     import socket
@@ -576,10 +581,59 @@ def search_sync(
     qw_url = quickwit_url or cfg.quickwit_url
     session_factory = _get_session_factory()
 
-    from src.repository.asset_repo import AssetRepository
     from src.repository.library_model_policy_repo import LibraryModelPolicyRepository
     from src.repository.quickwit_search_repo import QuickwitSearchRepository
     from src.repository.system_metadata_repo import SystemMetadataRepository
+    from src.workers.search_sync_worker import PROGRESS_KEY
+
+    policy_repo = LibraryModelPolicyRepository(session_factory)
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+
+    if reset:
+        import httpx
+
+        qw = QuickwitSearchRepository(base_url=qw_url, active_index_name="")
+        if library is not None:
+            scope_policies = []
+            policy = policy_repo.get(library)
+            if policy is not None:
+                scope_policies.append(policy)
+        else:
+            scope_policies = policy_repo.list_all()
+
+        deleted_cursor = False
+        for policy in scope_policies:
+            try:
+                qw.delete_index(policy.active_index_name)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    pass
+                else:
+                    typer.secho(
+                        f"Failed to delete Quickwit index '{policy.active_index_name}' for library '{policy.library_slug}': {e}",
+                        err=True,
+                        fg=typer.colors.RED,
+                    )
+                    raise typer.Exit(1)
+            policy_repo.delete(policy.library_slug)
+            typer.echo(
+                f"Deleted Quickwit index {policy.active_index_name} for library {policy.library_slug}. "
+                f"Deleted library_model_policy for {policy.library_slug}."
+            )
+
+        deleted_cursor = system_metadata_repo.delete_value(PROGRESS_KEY)
+        if deleted_cursor:
+            typer.echo("Removed search_sync_last_asset_id.")
+        else:
+            typer.echo("search_sync_last_asset_id was not set.")
+
+        if library is not None and not scope_policies:
+            typer.echo(f"No policy for library '{library}'; only cursor was cleared.")
+        elif not scope_policies and not deleted_cursor:
+            typer.echo("No library policies to reset; cursor was not set.")
+        return
+
+    from src.repository.asset_repo import AssetRepository
     from src.repository.video_scene_repo import VideoSceneRepository
     from src.repository.worker_repo import WorkerRepository
     from src.workers.search_sync_worker import SearchSyncWorker
@@ -590,9 +644,9 @@ def search_sync(
         repository=WorkerRepository(session_factory),
         asset_repo=AssetRepository(session_factory),
         scene_repo=VideoSceneRepository(session_factory),
-        policy_repo=LibraryModelPolicyRepository(session_factory),
+        policy_repo=policy_repo,
         quickwit_base_url=qw_url,
-        system_metadata_repo=SystemMetadataRepository(session_factory),
+        system_metadata_repo=system_metadata_repo,
         library_slug=library,
         idle_poll_interval_seconds=5.0,
     )

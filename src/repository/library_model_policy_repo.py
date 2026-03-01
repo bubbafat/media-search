@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Callable, Iterator
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from src.models.entities import LibraryModelPolicy
@@ -28,6 +28,21 @@ class LibraryModelPolicyRepository:
         """Return the policy for a library, or None if not found."""
         with self._session_scope() as s:
             return s.get(LibraryModelPolicy, library_slug)
+
+    def list_all(self) -> list[LibraryModelPolicy]:
+        """Return all library_model_policy rows."""
+        with self._session_scope() as s:
+            result = s.execute(select(LibraryModelPolicy))
+            return list(result.scalars().all())
+
+    def delete(self, library_slug: str) -> bool:
+        """Delete the policy row for the given library_slug. Return True if deleted, False if not found."""
+        with self._session_scope(write=True) as s:
+            row = s.get(LibraryModelPolicy, library_slug)
+            if row is None:
+                return False
+            s.delete(row)
+            return True
 
     def upsert(self, policy: LibraryModelPolicy) -> None:
         """Insert or fully replace the policy for a library."""
