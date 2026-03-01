@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import text
 
 from src.core.config import get_config
 from src.core.io_utils import file_non_empty
@@ -95,6 +96,12 @@ def _get_library_repo() -> LibraryRepository:
 @lru_cache(maxsize=1)
 def _get_project_repo() -> ProjectRepository:
     return ProjectRepository(_get_session_factory())
+
+
+@lru_cache(maxsize=1)
+def _get_worker_repo():
+    from src.repository.worker_repo import WorkerRepository
+    return WorkerRepository(_get_session_factory())
 
 
 @lru_cache(maxsize=1)
@@ -234,6 +241,83 @@ def _build_search_response(
         content=[item.model_dump(mode="json") for item in out],
         headers={"X-Search-Incomplete": "true" if is_incomplete else "false"},
     )
+
+
+@app.get("/api/status")
+def api_status():
+    """System health check. Always returns HTTP 200. Check 'status' field for health."""
+    from datetime import datetime, timezone, timedelta
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    cfg = get_config()
+    components = {}
+
+    # PostgreSQL check
+    try:
+        with _get_session_factory()() as s:
+            s.execute(text("SELECT 1"))
+        components["postgres"] = {"status": "healthy", "detail": None}
+    except Exception as e:
+        components["postgres"] = {"status": "unavailable", "detail": str(e)}
+
+    # Quickwit check
+    if not cfg.quickwit_enabled:
+        components["quickwit"] = {
+            "status": "disabled",
+            "detail": "quickwit_enabled is false in config"
+        }
+    else:
+        try:
+            qw = QuickwitSearchRepository(cfg.quickwit_url, "")
+            if qw.is_healthy():
+                components["quickwit"] = {"status": "healthy", "detail": None}
+            else:
+                components["quickwit"] = {
+                    "status": "unavailable",
+                    "detail": f"Quickwit is not reachable at {cfg.quickwit_url}"
+                }
+        except Exception as e:
+            components["quickwit"] = {"status": "unavailable", "detail": str(e)}
+
+    # Workers check
+    try:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=60)
+        all_workers = _get_worker_repo().list_all()
+        active = [w for w in all_workers if w.last_seen_at >= cutoff]
+        stale = [w for w in all_workers if w.last_seen_at < cutoff]
+        if active:
+            components["workers"] = {
+                "status": "healthy",
+                "detail": f"{len(active)} worker{'s' if len(active) != 1 else ''} active",
+                "active_count": len(active),
+                "stale_count": len(stale),
+            }
+        elif stale:
+            last_seen = max(w.last_seen_at for w in stale)
+            seconds_ago = int((now - last_seen).total_seconds())
+            components["workers"] = {
+                "status": "degraded",
+                "detail": f"No active workers — last heartbeat was {seconds_ago}s ago",
+                "active_count": 0,
+                "stale_count": len(stale),
+            }
+        else:
+            components["workers"] = {
+                "status": "degraded",
+                "detail": "No workers have ever registered",
+                "active_count": 0,
+                "stale_count": 0,
+            }
+    except Exception as e:
+        components["workers"] = {"status": "unavailable", "detail": str(e)}
+
+    overall = "healthy" if all(
+        c.get("status") in ("healthy", "disabled")
+        for c in components.values()
+    ) else "degraded"
+
+    return {"status": overall, "components": components}
 
 
 @app.get("/api/search", response_model=list[SearchResultOut])

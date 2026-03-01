@@ -50,6 +50,22 @@ Response: JSON object with `items` (array of asset objects shaped like search re
 
 Returns non-deleted libraries for the filter dropdown and library selector. Response: JSON array of objects with `slug`, `name`, and `is_analyzing` (boolean). `is_analyzing` is true when the library has assets not yet `completed`/`failed`/`poisoned` or when the library's `scan_status` is `scanning`. Used to show "Processing AI…" badges and the search-completeness banner.
 
+### GET /api/status
+
+System health check. **Always returns HTTP 200**; health is indicated in the response body, not via status codes. Used by the UI for a system health indicator and actionable error messages when search or other features fail.
+
+No query parameters.
+
+Response: JSON object with:
+
+- `status` (str): `"healthy"` if all components are healthy or disabled; otherwise `"degraded"`.
+- `components` (object): Per-component status:
+  - `postgres`: `status` (`"healthy"` | `"unavailable"`), `detail` (null or error message).
+  - `quickwit`: `status` (`"healthy"` | `"unavailable"` | `"disabled"`), `detail` (null or message; when disabled, explains that `quickwit_enabled` is false).
+  - `workers`: `status` (`"healthy"` | `"degraded"` | `"unavailable"`), `detail` (e.g. "3 workers active" or "No active workers — last heartbeat was Ns ago"), `active_count`, `stale_count`.
+
+Workers are considered *active* when `last_seen_at` is within the last 60 seconds; otherwise *stale*. If at least one worker is active, workers status is healthy. If none are active but some stale exist, status is degraded. If no workers have ever registered, status is degraded with a corresponding detail.
+
 ### GET /api/search
 
 Search endpoint used by the UI result grid. Query parameters:

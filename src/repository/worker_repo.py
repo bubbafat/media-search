@@ -103,6 +103,14 @@ class WorkerRepository:
             if row is not None:
                 session.delete(row)
 
+    def list_all(self) -> list[WorkerStatusEntity]:
+        """Return all worker_status rows ordered by last_seen_at descending."""
+        with self._session_scope(write=False) as session:
+            result = session.execute(
+                select(WorkerStatusEntity).order_by(WorkerStatusEntity.last_seen_at.desc())
+            )
+            return list(result.scalars().all())
+
     def count_stale_workers(self, max_age_hours: int = 24) -> int:
         """Count worker_status rows with last_seen_at older than max_age_hours. Read-only."""
         cutoff = _utcnow() - timedelta(hours=max_age_hours)
