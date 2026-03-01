@@ -44,11 +44,13 @@ The main page is **GET /dashboard**. It returns server-rendered HTML (Jinja2) an
 
 - **System Version** — Schema version from `system_metadata` (e.g. `V1`). Shown as “V{schema_version}”.
 - **DB Status** — Connection status: **Connected** (green) or **Error** (red), depending on whether a simple DB check succeeds.
+- **System status indicator** — The UI calls **GET /api/status** on load and polls every 30 seconds. When all components are healthy, a subtle green dot is shown; you can click it to open a panel listing all component statuses. When any component is degraded or unavailable (e.g. Quickwit not reachable), a warning appears with the component name and its detail message. Clicking the warning opens the same panel with all components. If the status endpoint cannot be reached (network error), "System status unknown" is shown. The panel closes when you click outside it.
 
 ### Search
 
 - **Mode toggle** — Semantic (full-text on analysis text) vs OCR (full-text on OCR text).
 - **Search input** — Search runs only when you press **Enter** or click the **Search** button (no search-while-typing).
+- **Search errors** — If the search request fails, the UI shows an actionable message: on HTTP 503 (e.g. Quickwit unavailable), the backend detail message is shown; on other non-200 responses, a generic message with the status code; on network errors, a message to check the network connection. The error can be dismissed with the × button and is cleared when a subsequent search succeeds.
 - **Results** — Each result shows library name, filename, and **Match %** (relevance). For videos, a **Jump** badge shows the best match timestamp (MM:SS) and a density bar along the bottom of the card. Images and videos both show a Match percentage (e.g. 100% for images, or scene density for videos). **Click a result** to open the **detail modal**: thumbnail (and video preview) on the left; on the right, **description**, **tags** (click a tag to see all assets with that tag), and **OCR text**. For video results with a best-match timestamp, the modal shows a playable 10-second clip for verification (extracted on demand).
 
 ### Layout selector

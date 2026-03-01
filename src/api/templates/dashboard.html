@@ -28,10 +28,43 @@
               <span>Bin</span>
               <span class="badge badge-sm badge-neutral ml-2" x-text="binAssets.length"></span>
             </button>
-            <div class="text-sm text-base-content/70">
+            <div class="text-sm text-base-content/70 flex items-center gap-3 flex-wrap relative" @click.outside="statusPanelOpen = false">
               <span class="font-semibold">V{{ schema_version }}</span>
               <span class="mx-2">•</span>
               <span class="{{ 'text-success' if db_status == 'connected' else 'text-error' }}">{{ db_status | capitalize }}</span>
+              <template x-if="statusError">
+                <button type="button" class="flex items-center gap-1 text-warning hover:underline" @click="statusPanelOpen = !statusPanelOpen" aria-label="System status">
+                  <span>⚠</span>
+                  <span>System status unknown</span>
+                </button>
+              </template>
+              <template x-if="!statusError && statusPayload && statusPayload.status === 'healthy'">
+                <button type="button" class="text-success hover:opacity-80" title="All systems operational" @click="statusPanelOpen = !statusPanelOpen" aria-label="System status">●</button>
+              </template>
+              <template x-if="!statusError && statusFirstUnhealthy">
+                <button type="button" class="flex items-center gap-1 text-warning hover:underline text-left max-w-xs truncate" @click="statusPanelOpen = !statusPanelOpen" :title="statusFirstUnhealthy.detail || ''">
+                  <span>⚠</span>
+                  <span x-text="statusFirstUnhealthy.name.charAt(0).toUpperCase() + statusFirstUnhealthy.name.slice(1) + ' unavailable'"></span>
+                  <span class="opacity-90" x-show="statusFirstUnhealthy.detail" x-text="'— ' + (statusFirstUnhealthy.detail || '')"></span>
+                </button>
+              </template>
+              <div x-show="statusPanelOpen" x-cloak x-transition class="absolute right-0 top-full mt-2 p-4 shadow-lg bg-base-100 rounded-box border border-base-300 z-50 min-w-72 max-w-md">
+                <div class="font-semibold mb-2">System status</div>
+                <template x-if="statusError">
+                  <p class="text-warning text-sm">Could not reach /api/status. Check your connection.</p>
+                </template>
+                <template x-if="!statusError && statusPayload && statusPayload.components">
+                  <ul class="space-y-2 text-sm">
+                    <template x-for="(comp, key) in (statusPayload && statusPayload.components) || {}" :key="key">
+                      <li class="flex flex-wrap items-baseline gap-2">
+                        <span class="font-medium capitalize" x-text="key"></span>
+                        <span class="badge badge-sm" :class="comp.status === 'healthy' || comp.status === 'disabled' ? 'badge-success' : 'badge-warning'" x-text="comp.status"></span>
+                        <span class="text-base-content/70" x-show="comp.detail" x-text="comp.detail"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </template>
+              </div>
             </div>
           </div>
         </div>
@@ -125,7 +158,10 @@
                 Tag: <span x-text="tagFilter"></span>
                 <button type="button" class="btn btn-ghost btn-xs" @click="clearTag()" aria-label="Clear tag">×</button>
               </span>
-              <span class="text-sm text-error" x-show="error" x-text="error"></span>
+              <span class="text-sm text-error flex items-center gap-2 flex-wrap" x-show="error" x-cloak>
+                <span x-text="error"></span>
+                <button type="button" class="btn btn-ghost btn-xs" @click="error = ''" aria-label="Dismiss error">×</button>
+              </span>
               <span class="text-sm text-base-content/70" x-show="!error && results.length === 0 && query.trim().length === 0 && !tagFilter && !loading">Enter a search or use a tag link.</span>
               <span class="text-sm text-base-content/70" x-show="!error && results.length === 0 && (query.trim().length > 0 || tagFilter) && !loading">No results.</span>
               <span class="text-sm text-base-content/70" x-show="results.length > 0" x-text="`${results.length} results`"></span>
@@ -705,6 +741,9 @@
           binSidebarOpen: false,
           exportPath: '',
           exportError: '',
+          statusPayload: null,
+          statusError: false,
+          statusPanelOpen: false,
 
           get someLibrariesAnalyzing() {
             const inScope = this.libraryFilters.length
@@ -732,10 +771,40 @@
             try {
               await this.loadProjects();
             } catch (_) {}
+            this.fetchStatus();
+            setInterval(() => this.fetchStatus(), 30000);
             if ((this.tagFilter || this.query.trim()) && !this.loading && this.results.length === 0) {
               if (this.query.trim()) await this.runSearch();
               else await this.runTagSearch();
             }
+          },
+
+          async fetchStatus() {
+            try {
+              const res = await fetch('/api/status', { headers: { 'Accept': 'application/json' } });
+              if (res.ok) {
+                this.statusPayload = await res.json();
+                this.statusError = false;
+              } else {
+                this.statusError = true;
+                this.statusPayload = null;
+              }
+            } catch (_) {
+              this.statusError = true;
+              this.statusPayload = null;
+            }
+          },
+
+          get statusUnhealthyComponents() {
+            if (!this.statusPayload || !this.statusPayload.components) return [];
+            const comp = this.statusPayload.components;
+            return Object.entries(comp)
+              .filter(([, c]) => c && c.status && !['healthy', 'disabled'].includes(c.status))
+              .map(([name, c]) => ({ name, status: c.status, detail: c.detail }));
+          },
+          get statusFirstUnhealthy() {
+            const list = this.statusUnhealthyComponents;
+            return list.length ? list[0] : null;
           },
 
           setLayout(layout) {
@@ -965,6 +1034,19 @@
             return p;
           },
 
+          async searchErrorMessage(res) {
+            if (res.status === 503) {
+              try {
+                const body = await res.json();
+                const d = body && typeof body.detail === 'string' ? body.detail : null;
+                return d || 'Search is currently unavailable. Check that the Quickwit container is running, or contact your administrator.';
+              } catch (_) {
+                return 'Search is currently unavailable. Check that the Quickwit container is running, or contact your administrator.';
+              }
+            }
+            return `Search failed (error ${res.status}). Please try again.`;
+          },
+
           async runTagSearch() {
             if (!this.tagFilter) return;
             this.loading = true;
@@ -973,10 +1055,14 @@
               const params = this.buildSearchParams();
               params.set('tag', this.tagFilter);
               const res = await fetch(`/api/search?${params.toString()}`, { headers: { 'Accept': 'application/json' } });
-              if (!res.ok) throw new Error(`Search failed (${res.status})`);
-              this.results = await res.json();
+              if (res.ok) {
+                this.results = await res.json();
+              } else {
+                this.error = await this.searchErrorMessage(res);
+                this.results = [];
+              }
             } catch (e) {
-              this.error = e && e.message ? e.message : 'Search failed';
+              this.error = 'Search could not connect to the server. Check your network connection.';
               this.results = [];
             } finally {
               this.loading = false;
@@ -994,10 +1080,14 @@
                 else params.set('ocr', q);
                 if (this.tagFilter) params.set('tag', this.tagFilter);
                 const res = await fetch(`/api/search?${params.toString()}`, { headers: { 'Accept': 'application/json' } });
-                if (!res.ok) throw new Error(`Search failed (${res.status})`);
-                this.results = await res.json();
+                if (res.ok) {
+                  this.results = await res.json();
+                } else {
+                  this.error = await this.searchErrorMessage(res);
+                  this.results = [];
+                }
               } catch (e) {
-                this.error = e && e.message ? e.message : 'Search failed';
+                this.error = 'Search could not connect to the server. Check your network connection.';
                 this.results = [];
               } finally {
                 this.loading = false;
