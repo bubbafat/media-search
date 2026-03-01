@@ -16,5 +16,22 @@ services:
       timeout: 5s
       retries: 5
 
+  quickwit:
+    image: quickwit/quickwit:0.8.1
+    container_name: media-search-quickwit
+    ports:
+      - "127.0.0.1:7280:7280"
+    volumes:
+      - quickwit_data:/quickwit/qwdata
+    environment:
+      QW_ENABLE_OTLP_ENDPOINT: "false"
+    command: run
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7280/health/livez || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
+  quickwit_data:
