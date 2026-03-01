@@ -1,0 +1,225 @@
+{
+  "version": "0.8",
+  "index_id": "media_scenes",
+  "doc_mapping": {
+    "field_mappings": [
+      {
+        "name": "id",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": false,
+        "tokenizer": "raw"
+      },
+      {
+        "name": "scene_id",
+        "type": "u64",
+        "indexed": true,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "asset_id",
+        "type": "u64",
+        "indexed": true,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "library_slug",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "tokenizer": "raw"
+      },
+      {
+        "name": "capture_ts",
+        "type": "datetime",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "input_formats": ["unix_timestamp"],
+        "precision": "seconds"
+      },
+      {
+        "name": "country",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "tokenizer": "raw"
+      },
+      {
+        "name": "region",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "tokenizer": "raw"
+      },
+      {
+        "name": "city",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "tokenizer": "raw"
+      },
+      {
+        "name": "camera_make",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "tokenizer": "raw"
+      },
+      {
+        "name": "camera_model",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "tokenizer": "raw"
+      },
+      {
+        "name": "color_space",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "tokenizer": "raw"
+      },
+      {
+        "name": "generation_hint",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "tokenizer": "raw"
+      },
+      {
+        "name": "resolution_w",
+        "type": "u64",
+        "indexed": true,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "resolution_h",
+        "type": "u64",
+        "indexed": true,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "duration_sec",
+        "type": "f64",
+        "indexed": false,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "frame_rate",
+        "type": "f64",
+        "indexed": false,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "scene_start_ts",
+        "type": "f64",
+        "indexed": false,
+        "stored": true,
+        "fast": false
+      },
+      {
+        "name": "scene_end_ts",
+        "type": "f64",
+        "indexed": false,
+        "stored": true,
+        "fast": false
+      },
+      {
+        "name": "description",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": false,
+        "tokenizer": "default"
+      },
+      {
+        "name": "ocr_text",
+        "type": "text",
+        "indexed": true,
+        "stored": true,
+        "fast": false,
+        "tokenizer": "default"
+      },
+      {
+        "name": "tags",
+        "type": "array<text>",
+        "indexed": true,
+        "stored": true
+      },
+      {
+        "name": "rep_frame_path",
+        "type": "text",
+        "indexed": false,
+        "stored": true,
+        "fast": false
+      },
+      {
+        "name": "head_clip_path",
+        "type": "text",
+        "indexed": false,
+        "stored": true,
+        "fast": false
+      },
+      {
+        "name": "preview_ready",
+        "type": "bool",
+        "indexed": true,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "playable",
+        "type": "bool",
+        "indexed": true,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "searchable",
+        "type": "bool",
+        "indexed": true,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "offline_ready",
+        "type": "bool",
+        "indexed": true,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "indexed_at",
+        "type": "datetime",
+        "indexed": true,
+        "stored": true,
+        "fast": true,
+        "input_formats": ["unix_timestamp"],
+        "precision": "seconds"
+      }
+    ],
+    "timestamp_field": "indexed_at"
+  },
+  "search_settings": {
+    "default_search_fields": ["description", "ocr_text", "tags"]
+  },
+  "indexing_settings": {
+    "commit_timeout_secs": 10
+  }
+}
