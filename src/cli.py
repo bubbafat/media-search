@@ -550,6 +550,46 @@ def search(
     console.print(table)
 
 
+@app.command("search-sync")
+def search_sync(
+    once: bool = typer.Option(False, "--once", help="Run one batch and exit."),
+    library: str | None = typer.Option(
+        None, "--library", help="Restrict sync to one library slug."
+    ),
+    quickwit_url: str | None = typer.Option(
+        None, "--quickwit-url", help="Override Quickwit base URL."
+    ),
+) -> None:
+    """Sync completed assets from PostgreSQL to Quickwit."""
+    import socket
+    import uuid as _uuid
+
+    cfg = get_config()
+    qw_url = quickwit_url or cfg.quickwit_url
+    session_factory = _get_session_factory()
+
+    from src.repository.asset_repo import AssetRepository
+    from src.repository.library_model_policy_repo import LibraryModelPolicyRepository
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+    from src.repository.system_metadata_repo import SystemMetadataRepository
+    from src.repository.video_scene_repo import VideoSceneRepository
+    from src.repository.worker_repo import WorkerRepository
+    from src.workers.search_sync_worker import SearchSyncWorker
+
+    worker_id = f"search-sync-{socket.gethostname()}-{_uuid.uuid4().hex[:8]}"
+    worker = SearchSyncWorker(
+        worker_id=worker_id,
+        repository=WorkerRepository(session_factory),
+        asset_repo=AssetRepository(session_factory),
+        scene_repo=VideoSceneRepository(session_factory),
+        policy_repo=LibraryModelPolicyRepository(session_factory),
+        quickwit_base_url=qw_url,
+        system_metadata_repo=SystemMetadataRepository(session_factory),
+        library_slug=library,
+    )
+    worker.run(once=once)
+
+
 @app.command()
 def scan(
     library_slug: str = typer.Argument(..., help="Library slug to scan once"),

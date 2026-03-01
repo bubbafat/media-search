@@ -474,6 +474,33 @@ class AssetRepository:
                 for r in rows
             ]
 
+    def list_completed_assets_after(
+        self,
+        last_asset_id: int | None,
+        limit: int,
+        library_slug: str | None = None,
+    ) -> Sequence[Asset]:
+        """Return completed assets with id > last_asset_id, ordered by id ASC.
+
+        Used by SearchSyncWorker for cursor-based batch processing.
+        When last_asset_id is None, returns from the beginning (id >= 1).
+        Optionally filtered to a single library. Only returns assets whose
+        library has deleted_at IS NULL.
+        """
+        with self._session_scope() as s:
+            query = (
+                select(Asset)
+                .join(Library, Asset.library_id == Library.slug)
+                .where(Asset.status == AssetStatus.completed)
+                .where(Library.deleted_at.is_(None))
+            )
+            if last_asset_id is not None:
+                query = query.where(Asset.id > last_asset_id)
+            if library_slug is not None:
+                query = query.where(Asset.library_id == library_slug)
+            query = query.order_by(Asset.id.asc()).limit(limit)
+            return s.execute(query).scalars().unique().all()
+
     def get_asset(self, library_id: str, rel_path: str) -> Asset | None:
         """
         Return a single asset by library_id and rel_path, or None if not found.
