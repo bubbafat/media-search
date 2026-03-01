@@ -530,6 +530,24 @@ class AssetRepository:
             )
             return session.execute(query).scalars().unique().one_or_none()
 
+    def get_by_ids(self, asset_ids: list[int]) -> dict[int, Asset]:
+        """Fetch multiple assets by id in a single query.
+
+        Returns a dict keyed by asset id. Missing ids are absent from the dict.
+        Used by the search API to enrich Quickwit results with full asset data.
+        """
+        if not asset_ids:
+            return {}
+        with self._session_scope() as s:
+            query = (
+                select(Asset)
+                .join(Library, Asset.library_id == Library.slug)
+                .where(Asset.id.in_(asset_ids))
+                .where(Library.deleted_at.is_(None))
+            )
+            results = s.execute(query).scalars().unique().all()
+            return {a.id: a for a in results if a.id is not None}
+
     def get_video_asset_ids_by_library(self, library_slug: str) -> list[int]:
         """
         Return asset IDs for all video assets in the library (non-deleted libraries only).

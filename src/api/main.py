@@ -1,6 +1,7 @@
 """Mission Control API: dashboard and dependencies."""
 
 import errno
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -18,12 +19,14 @@ from src.core.io_utils import file_non_empty
 from src.core.path_resolver import resolve_path
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
-from src.repository.search_repo import SearchRepository
+from src.repository.search_repo import SearchRepository, SearchResultItem
 from src.repository.project_repo import ProjectRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.ui_repo import UIRepository
 from src.repository.video_scene_repo import VideoSceneRepository
 from src.video.clip_extractor import extract_clip
+
+_log = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -93,6 +96,35 @@ def _get_library_repo() -> LibraryRepository:
 def _get_project_repo() -> ProjectRepository:
     return ProjectRepository(_get_session_factory())
 
+
+@lru_cache(maxsize=1)
+def _get_library_model_policy_repo():
+    from src.repository.library_model_policy_repo import LibraryModelPolicyRepository
+    return LibraryModelPolicyRepository(_get_session_factory())
+
+
+@lru_cache(maxsize=32)
+def _get_quickwit_search_repo(active_index_name: str):
+    """Cached per index name. Call cache_clear() after promote or rollback."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+    return QuickwitSearchRepository(
+        base_url=get_config().quickwit_url,
+        active_index_name=active_index_name,
+    )
+
+
+def _require_admin_key(admin_key: str = Query(default="", alias="admin_key")) -> None:
+    """Validates the admin_key query parameter.
+
+    Returns 403 if:
+    - Settings.admin_key is empty (admin access is disabled)
+    - The provided key does not match Settings.admin_key
+    """
+    cfg = get_config()
+    if not cfg.admin_key or admin_key != cfg.admin_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing admin key")
+
+
 NO_THUMB_STATUSES = frozenset({"pending", "processing", "failed", "poisoned"})
 
 
@@ -144,26 +176,12 @@ def _format_mmss(seconds: float) -> str:
     return f"{mm:02d}:{ss:02d}"
 
 
-@app.get("/api/search", response_model=list[SearchResultOut])
-def api_search(
-    q: str | None = Query(default=None, description="Semantic (vibe) full-text search query"),
-    ocr: str | None = Query(default=None, description="OCR-only full-text search query"),
-    library: list[str] | None = Query(default=None, description="Filter to these library slugs (repeatable)"),
-    type_: list[Literal["image", "video"]] | None = Query(default=None, alias="type", description="Filter to asset types"),
-    tag: str | None = Query(default=None, description="Filter by tag (tag-only search when q/ocr omitted)"),
-    limit: int = Query(default=50, ge=1, le=500),
-    search_repo: SearchRepository = Depends(_get_search_repo),
-    ui_repo: UIRepository = Depends(_get_ui_repo),
+def _build_search_response(
+    results: list[SearchResultItem],
+    ui_repo: UIRepository,
+    library: list[str] | None,
 ) -> JSONResponse:
-    results = search_repo.search_assets(
-        query_string=q,
-        ocr_query=ocr,
-        library_slugs=library,
-        asset_types=type_,
-        tag=tag,
-        limit=limit,
-    )
-
+    """Build JSONResponse for search results (shared by main search and shadow endpoint)."""
     library_ids = list({r.asset.library_id for r in results})
     names = ui_repo.get_library_names(library_ids)
 
@@ -216,6 +234,124 @@ def api_search(
         content=[item.model_dump(mode="json") for item in out],
         headers={"X-Search-Incomplete": "true" if is_incomplete else "false"},
     )
+
+
+@app.get("/api/search", response_model=list[SearchResultOut])
+def api_search(
+    q: str | None = Query(default=None, description="Semantic (vibe) full-text search query"),
+    ocr: str | None = Query(default=None, description="OCR-only full-text search query"),
+    library: list[str] | None = Query(default=None, description="Filter to these library slugs (repeatable)"),
+    type_: list[Literal["image", "video"]] | None = Query(default=None, alias="type", description="Filter to asset types"),
+    tag: str | None = Query(default=None, description="Filter by tag (tag-only search when q/ocr omitted)"),
+    limit: int = Query(default=50, ge=1, le=500),
+    search_repo: SearchRepository = Depends(_get_search_repo),
+    ui_repo: UIRepository = Depends(_get_ui_repo),
+) -> JSONResponse:
+    query_string = (q or "").strip() or (ocr or "").strip() or None
+    use_quickwit = (
+        get_config().quickwit_enabled
+        and library is not None
+        and len(library) == 1
+        and query_string
+    )
+    if use_quickwit:
+        try:
+            policy_repo = _get_library_model_policy_repo()
+            policy = policy_repo.get(library[0])
+            if policy and policy.active_index_name:
+                quickwit_repo = _get_quickwit_search_repo(policy.active_index_name)
+                if quickwit_repo.is_healthy():
+                    results = quickwit_repo.search(
+                        query_string=query_string,
+                        library_slugs=library,
+                        asset_types=type_,
+                        limit=limit,
+                    )
+                    asset_ids = [r.asset.id for r in results if r.asset.id is not None]
+                    asset_map = _get_asset_repo().get_by_ids(asset_ids)
+                    enriched = [r for r in results if r.asset.id in asset_map]
+                    for r in enriched:
+                        r.asset = asset_map[r.asset.id]
+                    return _build_search_response(enriched, ui_repo, library)
+        except Exception as e:
+            _log.warning("Quickwit search failed, falling back to PostgreSQL: %s", e)
+
+    results = search_repo.search_assets(
+        query_string=q,
+        ocr_query=ocr,
+        library_slugs=library,
+        asset_types=type_,
+        tag=tag,
+        limit=limit,
+    )
+    return _build_search_response(results, ui_repo, library)
+
+
+@app.get("/api/admin/search/shadow", dependencies=[Depends(_require_admin_key)])
+def api_search_shadow(
+    q: str = Query(...),
+    index_name: str = Query(...),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """Query a specific Quickwit index directly, bypassing the active policy.
+
+    FOR DIAGNOSTIC USE ONLY. Used to compare result quality between model
+    versions before promotion. Response shape is identical to /api/search.
+    """
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+    repo = _get_quickwit_search_repo(index_name)
+    results = repo.search_shadow(
+        index_name=index_name,
+        query_string=q,
+        limit=limit,
+    )
+    asset_ids = [r.asset.id for r in results if r.asset.id is not None]
+    asset_map = _get_asset_repo().get_by_ids(asset_ids)
+    enriched = [r for r in results if r.asset.id in asset_map]
+    for r in enriched:
+        r.asset = asset_map[r.asset.id]
+    ui_repo = _get_ui_repo()
+    return _build_search_response(enriched, ui_repo, None)
+
+
+@app.post("/api/admin/libraries/{slug}/model/promote",
+          dependencies=[Depends(_require_admin_key)])
+def api_promote_model(
+    slug: str,
+    shadow_index_name: str = Query(...),
+):
+    """Promote the shadow index to active for a library.
+
+    Clears the lock and resets promotion_progress to 1.0.
+    Invalidates the Quickwit repo cache so the next search uses the new index.
+    """
+    policy_repo = _get_library_model_policy_repo()
+    policy_repo.promote(slug, shadow_index_name)
+    _get_quickwit_search_repo.cache_clear()
+    return {"status": "promoted", "library_slug": slug,
+            "active_index_name": shadow_index_name}
+
+
+@app.post("/api/admin/libraries/{slug}/model/rollback",
+          dependencies=[Depends(_require_admin_key)])
+def api_rollback_model(slug: str):
+    """Restore the previous index to active for a library.
+
+    Returns 400 if no previous index exists (previous_index_name is NULL).
+    Invalidates the Quickwit repo cache on success.
+    """
+    policy_repo = _get_library_model_policy_repo()
+    try:
+        policy_repo.rollback(slug)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _get_quickwit_search_repo.cache_clear()
+    policy = policy_repo.get(slug)
+    return {
+        "status": "rolled_back",
+        "library_slug": slug,
+        "active_index_name": policy.active_index_name if policy else None,
+    }
 
 
 class ProjectExportOut(BaseModel):

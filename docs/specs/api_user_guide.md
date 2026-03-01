@@ -77,6 +77,50 @@ Response headers:
 
 - `X-Search-Incomplete`: `true` when any library in the search scope (the `library` filter if provided, else all non-deleted libraries) has `is_analyzing` true; otherwise `false`. Clients can use this to display a warning that results may be incomplete.
 
+**Quickwit integration:** When `quickwit_enabled` is true in config, exactly one library is in the filter, and that library has a non-empty `active_index_name` in `library_model_policy`, search may be served from Quickwit. On any Quickwit error or unavailability, the API falls back to PostgreSQL search silently. Query string for Quickwit: when both `q` and `ocr` are present, `q` is used; when only `ocr` is present, `ocr` is used.
+
+### GET /api/admin/search/shadow
+
+**Admin only.** Query a specific Quickwit index by name, bypassing the active policy. For diagnostic use (e.g. comparing result quality between model versions before promotion). Requires `admin_key` query parameter matching `Settings.admin_key`; returns 403 if missing or invalid.
+
+Query parameters:
+
+- `q` (required): Search query string.
+- `index_name` (required): Quickwit index name to query.
+- `limit` (optional, default 50): Max results (1–200).
+- `admin_key` (required): Must match `Settings.admin_key`.
+
+Response: Same shape as `GET /api/search` (JSON array of search result items).
+
+### POST /api/admin/libraries/{slug}/model/promote
+
+**Admin only.** Promote a shadow Quickwit index to active for a library. Clears the lock and sets `promotion_progress` to 1.0. Invalidates the Quickwit repo cache so the next search uses the new index. Requires `admin_key` query parameter.
+
+Path parameters:
+
+- `slug`: Library slug.
+
+Query parameters:
+
+- `shadow_index_name` (required): Name of the shadow index to promote to active.
+- `admin_key` (required): Must match `Settings.admin_key`.
+
+Response: JSON object with `status` (`"promoted"`), `library_slug`, and `active_index_name`. Returns 403 if admin key is missing or invalid.
+
+### POST /api/admin/libraries/{slug}/model/rollback
+
+**Admin only.** Restore the previous Quickwit index to active for a library. Returns 400 if the library has no previous index (`previous_index_name` is NULL). Invalidates the Quickwit repo cache on success. Requires `admin_key` query parameter.
+
+Path parameters:
+
+- `slug`: Library slug.
+
+Query parameters:
+
+- `admin_key` (required): Must match `Settings.admin_key`.
+
+Response: JSON object with `status` (`"rolled_back"`), `library_slug`, and `active_index_name` (the index that is now active). Returns 400 with a detail message when no previous index exists. Returns 403 if admin key is missing or invalid.
+
 ### GET /api/asset/{asset_id}
 
 Returns description, tags, and OCR text for a single asset (used by the detail modal). Query parameters:

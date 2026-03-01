@@ -37,6 +37,8 @@ class Settings(BaseModel):
     forensics_dir: str = "/logs/forensics"
     # Quickwit API base URL. Prod default 7280; tests use QUICKWIT_URL=http://127.0.0.1:7281.
     quickwit_url: str = "http://127.0.0.1:7280"
+    quickwit_enabled: bool = True
+    admin_key: str = ""
 
     @field_validator("worker_id", mode="before")
     @classmethod

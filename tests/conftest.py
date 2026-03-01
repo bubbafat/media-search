@@ -22,7 +22,9 @@ def clear_app_db_caches() -> None:
     """
     from src.api.main import (
         _get_asset_repo,
+        _get_library_model_policy_repo,
         _get_library_repo,
+        _get_quickwit_search_repo,
         _get_search_repo,
         _get_session_factory,
         _get_system_metadata_repo,
@@ -39,6 +41,8 @@ def clear_app_db_caches() -> None:
     _get_asset_repo.cache_clear()
     _get_video_scene_repo.cache_clear()
     _get_library_repo.cache_clear()
+    _get_library_model_policy_repo.cache_clear()
+    _get_quickwit_search_repo.cache_clear()
 
 
 @pytest.fixture(scope="module")

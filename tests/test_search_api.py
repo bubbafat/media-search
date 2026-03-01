@@ -1,6 +1,7 @@
 """Search API: /api/search returns structured results for semantic and OCR modes."""
 
 import os
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ from sqlalchemy import text
 
 from tests.conftest import clear_app_db_caches
 from src.api.main import app, _get_search_repo, _get_ui_repo
+from src.core.config import get_config
 from src.repository.search_repo import SearchRepository
 from src.repository.system_metadata_repo import SystemMetadataRepository
 from src.repository.ui_repo import UIRepository
@@ -284,4 +286,23 @@ def test_api_search_x_search_incomplete_header_true(search_api_postgres):
     finally:
         app.dependency_overrides.pop(_get_search_repo, None)
         app.dependency_overrides.pop(_get_ui_repo, None)
+
+
+def test_api_search_quickwit_fallback_when_disabled(search_api_postgres):
+    """When quickwit_enabled=False, GET /api/search uses PostgreSQL and returns 200 with valid JSON list."""
+    search_repo, ui_repo = search_api_postgres
+    app.dependency_overrides[_get_search_repo] = lambda: search_repo
+    app.dependency_overrides[_get_ui_repo] = lambda: ui_repo
+    cfg = get_config()
+    patched_config = cfg.model_copy(update={"quickwit_enabled": False})
+    with patch("src.api.main.get_config", return_value=patched_config):
+        try:
+            client = TestClient(app)
+            res = client.get("/api/search", params={"q": "test"})
+            assert res.status_code == 200
+            data = res.json()
+            assert isinstance(data, list)
+        finally:
+            app.dependency_overrides.pop(_get_search_repo, None)
+            app.dependency_overrides.pop(_get_ui_repo, None)
 
