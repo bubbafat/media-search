@@ -136,12 +136,20 @@
         <button class="btn btn-sm btn-ghost" @click="binSidebarOpen = false">Close</button>
       </div>
       <div class="p-3 border-b border-base-300 flex items-center gap-2">
-        <select class="select select-sm select-bordered flex-1" x-model.number="selectedProjectId" @change="onSelectedProjectChanged">
-          <option :value="null">No project selected</option>
-          <template x-for="p in projects" :key="p.id">
-            <option :value="p.id" x-text="p.name"></option>
-          </template>
-        </select>
+        <template x-if="!projectsLoaded">
+          <div class="flex-1 flex items-center gap-2 text-base-content/70 text-sm">
+            <span class="loading loading-spinner loading-sm"></span>
+            <span>Loading…</span>
+          </div>
+        </template>
+        <template x-if="projectsLoaded">
+          <select class="select select-sm select-bordered flex-1" x-model.number="selectedProjectId" @change="onSelectedProjectChanged">
+            <option :value="null">No project selected</option>
+            <template x-for="p in projects" :key="p.id">
+              <option :value="p.id" x-text="p.name"></option>
+            </template>
+          </select>
+        </template>
       </div>
       <div class="flex-1 overflow-y-auto">
         <template x-if="projects.length === 0">
@@ -679,6 +687,7 @@
           layout: savedLayout ? localStorage.getItem('mediaSearchLayout') : 'masonry',
           gridMinPx: initialGridMin,
           projects: [],
+          projectsLoaded: false,
           selectedProjectId: null,
           binAssets: [],
           binToast: '',
@@ -732,6 +741,7 @@
               this.projects = [];
             }
             this.ensureSelectedProject();
+            this.projectsLoaded = true;
           },
 
           ensureSelectedProject() {
@@ -749,8 +759,12 @@
             } else {
               this.selectedProjectId = null;
             }
-            if (this.selectedProjectId != null) {
+            if (fromStorage != null && fromStorage !== '' && !existing) {
+              try { localStorage.removeItem(key); } catch (_) {}
+            } else if (this.selectedProjectId != null) {
               try { localStorage.setItem(key, String(this.selectedProjectId)); } catch (_) {}
+            } else {
+              try { localStorage.removeItem(key); } catch (_) {}
             }
           },
 
