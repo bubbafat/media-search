@@ -80,6 +80,10 @@ class SearchSyncWorker(BaseWorker):
         raw = self._system_metadata_repo.get_value(PROGRESS_KEY)
         last_asset_id = int(raw) if raw else None
 
+        if self._library_slug:
+            _log.debug("[search-sync] Library: %s", self._library_slug)
+        _log.debug("[search-sync] Last synced asset id: %s", last_asset_id or "none")
+
         # 2. Fetch batch
         assets = self._asset_repo.list_completed_assets_after(
             last_asset_id=last_asset_id,
@@ -87,7 +91,17 @@ class SearchSyncWorker(BaseWorker):
             library_slug=self._library_slug,
         )
         if not assets:
+            _log.debug("[search-sync] No more assets. Sync complete.")
             return False
+
+        min_id = min(a.id for a in assets)
+        max_id = max(a.id for a in assets)
+        _log.debug(
+            "[search-sync] Fetched batch of %d assets (ids %s–%s)",
+            len(assets),
+            min_id,
+            max_id,
+        )
 
         # 3. Process each asset
         docs_written = 0
@@ -96,17 +110,34 @@ class SearchSyncWorker(BaseWorker):
                 index_name = self._resolve_index(asset)
                 written = self._index_asset(asset, index_name)
                 docs_written += written
+                if asset.type == AssetType.image:
+                    _log.debug(
+                        "[search-sync] Asset %s (image) → wrote 1 document to %s",
+                        asset.id,
+                        index_name,
+                    )
+                elif written > 0:
+                    _log.debug(
+                        "[search-sync] Asset %s (video) → %d scenes → wrote %d documents",
+                        asset.id,
+                        written,
+                        written,
+                    )
+                else:
+                    _log.debug(
+                        "[search-sync] Asset %s (video) → 0 scenes → skipped",
+                        asset.id,
+                    )
             except Exception:
                 _log.exception(
                     "Failed to index asset %s — skipping", asset.id
                 )
 
         # 4. Advance cursor to the highest asset id in the batch
-        max_id = max(a.id for a in assets)
         self._system_metadata_repo.set_value(PROGRESS_KEY, str(max_id))
 
         _log.info(
-            "Synced batch: %d assets, %d documents written, cursor now %s",
+            "[search-sync] Batch complete: %d assets, %d documents written, cursor → %s",
             len(assets),
             docs_written,
             max_id,

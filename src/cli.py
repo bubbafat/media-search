@@ -559,10 +559,18 @@ def search_sync(
     quickwit_url: str | None = typer.Option(
         None, "--quickwit-url", help="Override Quickwit base URL."
     ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging output."),
 ) -> None:
     """Sync completed assets from PostgreSQL to Quickwit."""
     import socket
     import uuid as _uuid
+
+    if verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+            force=True,
+        )
 
     cfg = get_config()
     qw_url = quickwit_url or cfg.quickwit_url

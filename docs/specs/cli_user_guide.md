@@ -22,6 +22,7 @@ uv run media-search --help
 | `maintenance`   | System maintenance and housekeeping (run: prune stale workers, reclaim leases, cleanup temp files, reap assets with missing source files; retry-poisoned: rescue poisoned assets; cleanup-data-dir: remove orphaned files; purge-deleted: permanently delete trashed libraries and wipe disk) |
 | `asset`         | List assets, show one asset, list video scenes, force video reindex (list, show, scenes, reindex)           |
 | `search`        | Full-text search over asset visual analysis (vibe or OCR)                                                   |
+| `search-sync`   | Sync completed assets from PostgreSQL to Quickwit (search index worker)                                     |
 | `scan`          | Run a one-shot scan for a library (no daemon)                                                               |
 | `proxy`         | Start the image proxy worker (thumbnails and WebP proxies for pending image assets)                         |
 | `video-proxy`   | Start the video proxy worker (720p pipeline: thumbnail, head-clip, scene indexing for pending video assets) |
@@ -467,6 +468,36 @@ uv run media-search search "man in blue shirt" --all
 uv run media-search search "hamburger" --ocr --all
 uv run media-search search "beach" --library nas-main --limit 20
 uv run media-search search "sunset" --library nas-main --library nas-backup
+```
+
+---
+
+## search-sync
+
+### search-sync
+
+Sync completed assets (images and videos with scene data) from PostgreSQL to Quickwit. The worker streams append-only documents to the search index; documents are never updated or deleted. Index name per library is resolved from `library_model_policy`. Use this when Quickwit is enabled so search results reflect completed assets. Runs until interrupted (Ctrl+C) unless `--once` is used.
+
+With `--once`, the worker runs one batch and exits. If no assets remain to sync, it exits immediately. Use this for scripting or periodic syncs.
+
+With `--verbose` / `-v`, enables DEBUG logging to stdout so you can see library, cursor, per-batch and per-asset progress (e.g. "Asset 120732 (image) → wrote 1 document", "Asset 120733 (video) → 14 scenes → wrote 14 documents", "No more assets. Sync complete."). Without `-v`, output is minimal and only batch summaries are visible.
+
+
+| Option             | Description                                      |
+| ------------------ | ------------------------------------------------ |
+| `--once`           | Run one batch then exit; exit immediately if no work |
+| `--library`        | Restrict sync to one library slug. Omit for all. |
+| `--quickwit-url`   | Override Quickwit base URL.                      |
+| `--verbose`, `-v`  | Enable verbose DEBUG logging to stdout           |
+
+
+**Example:**
+
+```bash
+uv run media-search search-sync --library nas-main
+uv run media-search search-sync --library nas-main --once
+uv run media-search search-sync --library nas-main -v
+uv run media-search search-sync --once --verbose
 ```
 
 ---
