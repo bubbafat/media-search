@@ -136,7 +136,7 @@
         <button class="btn btn-sm btn-ghost" @click="binSidebarOpen = false">Close</button>
       </div>
       <div class="p-3 border-b border-base-300 flex items-center gap-2">
-        <select class="select select-sm select-bordered flex-1" x-model.number="selectedProjectId">
+        <select class="select select-sm select-bordered flex-1" x-model.number="selectedProjectId" @change="onSelectedProjectChanged">
           <option :value="null">No project selected</option>
           <template x-for="p in projects" :key="p.id">
             <option :value="p.id" x-text="p.name"></option>
@@ -730,6 +730,36 @@
               this.projects = await res.json();
             } catch (_) {
               this.projects = [];
+            }
+            this.ensureSelectedProject();
+          },
+
+          ensureSelectedProject() {
+            const key = 'nle_selected_project_slug';
+            let fromStorage = null;
+            try {
+              const raw = localStorage.getItem(key);
+              if (raw != null && raw !== '') fromStorage = Number(raw);
+            } catch (_) {}
+            const existing = Number.isFinite(fromStorage) ? this.projects.find((p) => p.id === fromStorage) : null;
+            if (existing) {
+              this.selectedProjectId = existing.id;
+            } else if (this.projects.length > 0) {
+              this.selectedProjectId = this.projects[0].id;
+            } else {
+              this.selectedProjectId = null;
+            }
+            if (this.selectedProjectId != null) {
+              try { localStorage.setItem(key, String(this.selectedProjectId)); } catch (_) {}
+            }
+          },
+
+          onSelectedProjectChanged() {
+            const key = 'nle_selected_project_slug';
+            if (this.selectedProjectId != null) {
+              try { localStorage.setItem(key, String(this.selectedProjectId)); } catch (_) {}
+            } else {
+              try { localStorage.setItem(key, ''); } catch (_) {}
             }
           },
 

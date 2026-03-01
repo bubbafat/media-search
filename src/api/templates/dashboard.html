@@ -710,7 +710,7 @@
       function mediaSearchDashboard(initialTag, initialLibraries, initialTypes) {
         const allowedLayouts = ['masonry', 'bento', 'list', 'filmstrip'];
         const saved = typeof localStorage !== 'undefined' && allowedLayouts.includes(localStorage.getItem('mediaSearchLayout'));
-        const GRID_MIN_KEY = 'mediaSearchGridMinPx';
+        const NLE_SELECTED_PROJECT_KEY = 'nle_selected_project_slug';
         const savedGridMinRaw = typeof localStorage !== 'undefined' ? localStorage.getItem(GRID_MIN_KEY) : null;
         const savedGridMin = savedGridMinRaw != null ? Number(savedGridMinRaw) : NaN;
         const initialGridMin = Number.isFinite(savedGridMin) ? Math.min(500, Math.max(100, savedGridMin)) : 200;
@@ -910,13 +910,12 @@
           },
 
           ensureSelectedProject() {
-            const key = 'mediaSearchSelectedProjectId';
             let fromStorage = null;
             try {
-              const raw = localStorage.getItem(key);
-              if (raw != null) fromStorage = Number(raw);
+              const raw = localStorage.getItem(NLE_SELECTED_PROJECT_KEY);
+              if (raw != null && raw !== '') fromStorage = Number(raw);
             } catch (_) {}
-            const existing = this.projects.find((p) => p.id === fromStorage);
+            const existing = Number.isFinite(fromStorage) ? this.projects.find((p) => p.id === fromStorage) : null;
             if (existing) {
               this.selectedProjectId = existing.id;
             } else if (this.projects.length > 0) {
@@ -925,14 +924,15 @@
               this.selectedProjectId = null;
             }
             if (this.selectedProjectId != null) {
-              try { localStorage.setItem(key, String(this.selectedProjectId)); } catch (_) {}
+              try { localStorage.setItem(NLE_SELECTED_PROJECT_KEY, String(this.selectedProjectId)); } catch (_) {}
             }
           },
 
           onSelectedProjectChanged() {
-            const key = 'mediaSearchSelectedProjectId';
             if (this.selectedProjectId != null) {
-              try { localStorage.setItem(key, String(this.selectedProjectId)); } catch (_) {}
+              try { localStorage.setItem(NLE_SELECTED_PROJECT_KEY, String(this.selectedProjectId)); } catch (_) {}
+            } else {
+              try { localStorage.setItem(NLE_SELECTED_PROJECT_KEY, ''); } catch (_) {}
             }
           },
 
