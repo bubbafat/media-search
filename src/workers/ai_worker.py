@@ -36,7 +36,6 @@ class AIWorker(BaseWorker):
         asset_repo: AssetRepository,
         system_metadata_repo: SystemMetadataRepository,
         library_slug: str | None = None,
-        verbose: bool = False,
         analyzer_name: str = "mock",
         system_default_model_id: int | None = None,
         repair: bool = False,
@@ -58,7 +57,6 @@ class AIWorker(BaseWorker):
         )
         self._library_slug = library_slug
         self._global_mode = library_slug is None
-        self._verbose = verbose
         self._system_default_model_id = system_default_model_id
         self._repair = repair
         self._library_repo = library_repo
@@ -107,8 +105,7 @@ class AIWorker(BaseWorker):
                 offset += len(batch)
                 if len(batch) < batch_size:
                     break
-        if self._verbose or total_reset:
-            _log.info("AI repair: set %s assets to proxied for re-analysis", total_reset)
+        _log.info("AI repair: set %s assets to proxied for re-analysis", total_reset)
 
     def run(self, once: bool = False) -> None:
         """Run repair pass once if --repair, then the normal worker loop."""
@@ -183,8 +180,7 @@ class AIWorker(BaseWorker):
                 asset_id, slug, rel_path, err = future.result()
                 if err is None:
                     completed += 1
-                    if self._verbose:
-                        _log.info("Completed asset %s (%s/%s)", asset_id, slug, rel_path)
+                    _log.info("Completed asset %s (%s/%s)", asset_id, slug, rel_path)
                 else:
                     failed += 1
                     if isinstance(err, MoondreamUnavailableError):
@@ -215,7 +211,7 @@ class AIWorker(BaseWorker):
                         asset_id, AssetStatus.poisoned, str(err), owned_by=self.worker_id
                     )
         elapsed = time.perf_counter() - started
-        if self._verbose and completed:
+        if completed:
             _log.info(
                 "Batch: %s completed, %s failed in %.1fs",
                 completed,

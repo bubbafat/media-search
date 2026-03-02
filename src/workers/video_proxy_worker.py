@@ -73,7 +73,6 @@ class VideoProxyWorker(BaseWorker):
         system_metadata_repo: SystemMetadataRepository,
         scene_repo: VideoSceneRepository,
         library_slug: str | None = None,
-        verbose: bool = False,
         initial_pending_count: int | None = None,
         repair: bool = False,
     ) -> None:
@@ -88,7 +87,6 @@ class VideoProxyWorker(BaseWorker):
         self.storage = LocalMediaStore()
         self._library_slug = library_slug
         self._global_mode = library_slug is None
-        self._verbose = verbose
         self._initial_pending = initial_pending_count
         self._processed_count = 0
         self._repair = repair
@@ -132,21 +130,19 @@ class VideoProxyWorker(BaseWorker):
             offset += len(batch)
             if len(batch) < batch_size:
                 break
-        if self._verbose or total_reset or total_checked:
-            _log.info(
-                "Repair: checked %s video assets (proxied/completed), reset %s to pending",
-                total_checked,
-                total_reset,
-            )
+        _log.info(
+            "Repair: checked %s video assets (proxied/completed), reset %s to pending",
+            total_checked,
+            total_reset,
+        )
 
     def run(self, once: bool = False) -> None:
         """Run repair pass once if --repair, then the normal worker loop."""
         if self._repair:
             self._run_repair_pass()
-            if self._verbose:
-                self._initial_pending = self.asset_repo.count_pending_proxyable(
-                    self._library_slug, global_scope=self._global_mode
-                )
+            self._initial_pending = self.asset_repo.count_pending_proxyable(
+                self._library_slug, global_scope=self._global_mode
+            )
         super().run(once=once)
 
     def get_heartbeat_stats(self) -> dict[str, object] | None:
@@ -348,15 +344,14 @@ class VideoProxyWorker(BaseWorker):
             self._processed_count += 1
             self._current_stage = "completed"
             self._current_stage_progress = 1.0
-            if self._verbose:
-                total = self._initial_pending if self._initial_pending is not None else "?"
-                _log.info(
-                    "Proxied video %s (%s) %s/%s",
-                    asset.id,
-                    asset.rel_path,
-                    self._processed_count,
-                    total,
-                )
+            total = self._initial_pending if self._initial_pending is not None else "?"
+            _log.info(
+                "Proxied video %s (%s) %s/%s",
+                asset.id,
+                asset.rel_path,
+                self._processed_count,
+                total,
+            )
         except InterruptedError:
             self.asset_repo.update_asset_status(
                 asset.id, AssetStatus.pending, owned_by=self.worker_id

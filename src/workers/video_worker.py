@@ -37,7 +37,6 @@ class VideoWorker(BaseWorker):
         system_metadata_repo: SystemMetadataRepository,
         scene_repo: VideoSceneRepository,
         library_slug: str | None = None,
-        verbose: bool = False,
         analyzer_name: str = "mock",
         system_default_model_id: int | None = None,
         mode: str = "full",
@@ -56,7 +55,6 @@ class VideoWorker(BaseWorker):
         )
         self._library_slug = library_slug
         self._global_mode = library_slug is None
-        self._verbose = verbose
         self._system_default_model_id = system_default_model_id
         self._mode = mode
 

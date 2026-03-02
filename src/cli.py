@@ -193,7 +193,6 @@ def trash_empty(
 @trash_app.command("empty-all")
 def trash_empty_all(
     force: bool = typer.Option(False, "--force", help="Skip confirmation"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (Emptying 1/N: slug)."),
 ) -> None:
     """Permanently delete all trashed libraries, their assets, and generated files on disk. Cannot be undone."""
     if not force:
@@ -215,8 +214,7 @@ def trash_empty_all(
     n = len(trashed)
     purged = 0
     for i, lib in enumerate(trashed, 1):
-        if verbose:
-            typer.echo(f"Emptying {i}/{n}: {lib.slug}")
+        typer.echo(f"Emptying {i}/{n}: {lib.slug}")
         if service.purge_deleted_library(lib.slug):
             purged += 1
     typer.secho(f"Permanently deleted {purged} library(ies).", fg=typer.colors.GREEN)
@@ -582,7 +580,6 @@ def search_sync(
     quickwit_url: str | None = typer.Option(
         None, "--quickwit-url", help="Override Quickwit base URL."
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging output."),
     reset: bool = typer.Option(
         False,
         "--reset",
@@ -593,12 +590,11 @@ def search_sync(
     import socket
     import uuid as _uuid
 
-    if verbose:
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format="%(asctime)s %(levelname)s %(name)s — %(message)s",
-            force=True,
-        )
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+        force=True,
+    )
 
     cfg = get_config()
     qw_url = quickwit_url or cfg.quickwit_url
@@ -682,15 +678,13 @@ def search_sync(
 @app.command()
 def scan(
     library_slug: str = typer.Argument(..., help="Library slug to scan once"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable DEBUG logging to stdout"),
 ) -> None:
     """Run a one-shot scan for the given library. Does not start the worker loop."""
-    if verbose:
-        root = logging.getLogger()
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.DEBUG)
-        root.addHandler(handler)
-        root.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG)
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
 
     session_factory = _get_session_factory()
     lib_repo = LibraryRepository(session_factory)
@@ -716,7 +710,7 @@ def scan(
         heartbeat_interval_seconds=15.0,
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
-        progress_interval=100 if verbose else None,
+        progress_interval=100,
     )
     scanner.process_task(library_slug=library_slug)
     stats = scanner.get_heartbeat_stats()
@@ -734,7 +728,6 @@ def proxy(
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     all_libraries: bool = typer.Option(False, "--all", help="Process all libraries (global mode). Requires explicit flag."),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
     repair: bool = typer.Option(False, "--repair", help="Check for missing proxy/thumbnail files and set those assets to pending so they are regenerated."),
     reset_orientation: bool = typer.Option(
         False,
@@ -806,19 +799,14 @@ def proxy(
     worker_repo = WorkerRepository(session_factory)
     system_metadata_repo = SystemMetadataRepository(session_factory)
 
-    if verbose:
-        root = logging.getLogger("src.workers")
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.INFO)
-        root.addHandler(handler)
-        root.setLevel(logging.INFO)
+    root = logging.getLogger("src.workers")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
-    initial_pending = (
-        asset_repo.count_pending_proxyable(
-            effective_library, global_scope=(effective_library is None)
-        )
-        if verbose
-        else None
+    initial_pending = asset_repo.count_pending_proxyable(
+        effective_library, global_scope=(effective_library is None)
     )
 
     use_previews = cfg.use_raw_previews and not ignore_previews
@@ -838,7 +826,6 @@ def proxy(
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
         library_slug=effective_library,
-        verbose=verbose,
         initial_pending_count=initial_pending,
         repair=repair,
         use_previews=use_previews,
@@ -855,7 +842,6 @@ def video_proxy(
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     all_libraries: bool = typer.Option(False, "--all", help="Process all libraries (global mode). Requires explicit flag."),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress (each asset and N/total)."),
     repair: bool = typer.Option(False, "--repair", help="Check for missing video thumbnail files and set those assets to pending."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
 ) -> None:
@@ -886,19 +872,14 @@ def video_proxy(
     system_metadata_repo = SystemMetadataRepository(session_factory)
     scene_repo = VideoSceneRepository(session_factory)
 
-    if verbose:
-        root = logging.getLogger("src.workers")
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.INFO)
-        root.addHandler(handler)
-        root.setLevel(logging.INFO)
+    root = logging.getLogger("src.workers")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
-    initial_pending = (
-        asset_repo.count_pending_proxyable(
-            effective_library, global_scope=(effective_library is None)
-        )
-        if verbose
-        else None
+    initial_pending = asset_repo.count_pending_proxyable(
+        effective_library, global_scope=(effective_library is None)
     )
 
     worker = VideoProxyWorker(
@@ -909,7 +890,6 @@ def video_proxy(
         system_metadata_repo=system_metadata_repo,
         scene_repo=scene_repo,
         library_slug=effective_library,
-        verbose=verbose,
         initial_pending_count=initial_pending,
         repair=repair,
     )
@@ -986,7 +966,6 @@ def ai_start(
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     all_libraries: bool = typer.Option(False, "--all", help="Process all libraries (global mode). Requires explicit flag."),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
     repair: bool = typer.Option(False, "--repair", help="Before the main loop, set assets that need re-analysis (effective model changed) to proxied."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
@@ -1084,12 +1063,11 @@ def ai_start(
     )
     typer.secho(f"Starting AI Worker: {worker_id} (analyzer: {resolved_analyzer})")
 
-    if verbose:
-        root = logging.getLogger("src.workers")
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.INFO)
-        root.addHandler(handler)
-        root.setLevel(logging.INFO)
+    root = logging.getLogger("src.workers")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
     worker = AIWorker(
         worker_id=worker_id,
@@ -1098,7 +1076,6 @@ def ai_start(
         asset_repo=asset_repo,
         system_metadata_repo=system_metadata_repo,
         library_slug=effective_library,
-        verbose=verbose,
         analyzer_name=resolved_analyzer,
         system_default_model_id=system_default_model_id,
         repair=repair,
@@ -1118,7 +1095,6 @@ def ai_video(
     worker_name: str | None = typer.Option(None, "--worker-name", help="Force a specific worker ID. Defaults to auto-generated."),
     library_slug: str | None = typer.Option(None, "--library", help="Limit to this library slug only."),
     all_libraries: bool = typer.Option(False, "--all", help="Process all libraries (global mode). Requires explicit flag."),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print progress for each completed asset."),
     analyzer: str | None = typer.Option(None, "--analyzer", help="AI model to use (e.g. mock, moondream2). If omitted, uses library or system default."),
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
     mode: str = typer.Option("full", "--mode", help="Processing tier: 'light' (fast tags/desc) or 'full' (OCR)."),
@@ -1194,7 +1170,6 @@ def ai_video(
         system_metadata_repo=system_metadata_repo,
         scene_repo=scene_repo,
         library_slug=effective_library,
-        verbose=verbose,
         analyzer_name=resolved_analyzer,
         system_default_model_id=system_default_model_id,
         mode=mode,
@@ -1431,12 +1406,6 @@ def metadata_exif(
         "--batch",
         help="Number of assets to claim per EXIF batch (default from config when 0).",
     ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Print progress (each asset processed).",
-    ),
 ) -> None:
     """Start the Metadata worker in EXIF phase."""
     effective_library = _require_library_or_all(
@@ -1467,12 +1436,11 @@ def metadata_exif(
     )
     typer.secho(f"Starting Metadata Worker (EXIF): {worker_id}")
 
-    if verbose:
-        root = logging.getLogger("src.workers")
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.INFO)
-        root.addHandler(handler)
-        root.setLevel(logging.INFO)
+    root = logging.getLogger("src.workers")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
     worker = MetadataWorker(
         worker_id=worker_id,
@@ -1483,7 +1451,6 @@ def metadata_exif(
         phase="exif",
         batch_size=eff_batch,
         library_slug=effective_library,
-        verbose=verbose,
     )
     try:
         worker.run()
@@ -1498,12 +1465,6 @@ def metadata_reset_stuck(
         "--older-than",
         help="Reset assets stuck in metadata processing older than this duration (e.g. '1h', '30m').",
     ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Print a short message before and after the reset.",
-    ),
 ) -> None:
     """
     Reset assets stuck in exif_processing or sharpness_processing older than the given duration.
@@ -1512,8 +1473,7 @@ def metadata_reset_stuck(
     Does not clear media_metadata.
     """
     seconds = _parse_duration_to_seconds(older_than)
-    if verbose:
-        typer.echo(f"Resetting metadata statuses older than {older_than} (~{int(seconds)} seconds).")
+    typer.echo(f"Resetting metadata statuses older than {older_than} (~{int(seconds)} seconds).")
     session_factory = _get_session_factory()
     asset_repo = AssetRepository(session_factory)
     exif_count, sharpness_count = asset_repo.reset_stuck_metadata(older_than_seconds=seconds)
@@ -1546,12 +1506,6 @@ def metadata_sharpness(
         "--batch",
         help="Number of assets to claim per sharpness batch (default from config when 0).",
     ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Print progress (each asset processed).",
-    ),
 ) -> None:
     """Start the Metadata worker in sharpness phase (thumbnail sharpness + face detection)."""
     effective_library = _require_library_or_all(
@@ -1582,12 +1536,11 @@ def metadata_sharpness(
     )
     typer.secho(f"Starting Metadata Worker (sharpness): {worker_id}")
 
-    if verbose:
-        root = logging.getLogger("src.workers")
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.INFO)
-        root.addHandler(handler)
-        root.setLevel(logging.INFO)
+    root = logging.getLogger("src.workers")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
     worker = MetadataWorker(
         worker_id=worker_id,
@@ -1598,7 +1551,6 @@ def metadata_sharpness(
         phase="sharpness",
         batch_size=eff_batch,
         library_slug=effective_library,
-        verbose=verbose,
     )
     try:
         worker.run()
