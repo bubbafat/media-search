@@ -4,6 +4,9 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import requests.exceptions
+import urllib3.exceptions
+
 from src.ai.factory import get_vision_analyzer
 from src.ai.vision_moondream_station import MoondreamUnavailableError
 from src.core.file_extensions import IMAGE_EXTENSIONS_LIST
@@ -16,6 +19,17 @@ from src.repository.worker_repo import WorkerRepository
 from src.workers.base import BaseWorker
 
 _log = logging.getLogger(__name__)
+
+# Exceptions that indicate transient infrastructure (inference service unreachable).
+# On these we reset the asset to its pre-claim state so it retries when the service recovers.
+_TRANSIENT_EXCEPTIONS: tuple[type[Exception], ...] = (
+    MoondreamUnavailableError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.RetryError,
+    urllib3.exceptions.MaxRetryError,
+    urllib3.exceptions.NewConnectionError,
+)
 
 
 class AIWorker(BaseWorker):
@@ -174,6 +188,7 @@ class AIWorker(BaseWorker):
         started = time.perf_counter()
         completed = 0
         failed = 0
+        first_transient_in_batch = True
         with ThreadPoolExecutor(max_workers=len(assets)) as executor:
             futures = {executor.submit(_process_one, a): a for a in assets}
             for future in as_completed(futures):
@@ -181,32 +196,31 @@ class AIWorker(BaseWorker):
                 if err is None:
                     completed += 1
                     _log.info("Completed asset %s (%s/%s)", asset_id, slug, rel_path)
+                elif isinstance(err, _TRANSIENT_EXCEPTIONS):
+                    # Connection/timeout/retry: return asset to pre-claim state so it retries.
+                    self.asset_repo.update_asset_status(
+                        asset_id, claim_status, None, owned_by=self.worker_id
+                    )
+                    _log.warning(
+                        "AI worker transient error for asset %s (%s): %s",
+                        asset_id,
+                        rel_path,
+                        err,
+                    )
+                    if first_transient_in_batch:
+                        first_transient_in_batch = False
+                        _log.warning(
+                            "Inference service may be down; assets will retry when it recovers."
+                        )
                 else:
                     failed += 1
-                    if isinstance(err, MoondreamUnavailableError):
-                        # Friendly, high-level message for non-technical users.
-                        _log.error(
-                            "AI worker could not reach Moondream Station for asset %s (%s). %s",
-                            asset_id,
-                            rel_path,
-                            err,
-                        )
-                        # Preserve full traceback at debug level for operators.
-                        _log.debug(
-                            "Underlying Moondream Station error for asset %s (%s): %s",
-                            asset_id,
-                            rel_path,
-                            err,
-                            exc_info=True,
-                        )
-                    else:
-                        _log.error(
-                            "AI worker failed for asset %s (%s): %s",
-                            asset_id,
-                            rel_path,
-                            err,
-                            exc_info=True,
-                        )
+                    _log.error(
+                        "AI worker failed for asset %s (%s): %s",
+                        asset_id,
+                        rel_path,
+                        err,
+                        exc_info=True,
+                    )
                     self.asset_repo.update_asset_status(
                         asset_id, AssetStatus.poisoned, str(err), owned_by=self.worker_id
                     )

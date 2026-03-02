@@ -213,9 +213,9 @@ def test_ai_worker_process_task_poisons_on_exception(engine, _session_factory):
         session.close()
 
 
-@pytest.mark.logging_level(logging.ERROR, logger="src.workers.ai_worker")
+@pytest.mark.logging_level(logging.WARNING, logger="src.workers.ai_worker")
 def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _session_factory, caplog):
-    """When Moondream is unavailable, process_task poisons asset and logs a friendly message."""
+    """When Moondream is unavailable, process_task resets asset to proxied and logs WARNING (transient)."""
     from src.ai.vision_moondream_station import MoondreamUnavailableError
 
     _create_tables_and_seed(engine, _session_factory)
@@ -268,7 +268,6 @@ def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _sessi
         )
     )
 
-    # Capture ERROR logs from the AI worker module specifically.
     logger = logging.getLogger("src.workers.ai_worker")
     logger.addHandler(caplog.handler)
     try:
@@ -277,7 +276,7 @@ def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _sessi
         logger.removeHandler(caplog.handler)
     assert result is True
 
-    # Asset is poisoned with the friendly error message.
+    # Transient error: asset is reset to proxied, not poisoned; no error_message stored.
     session = _session_factory()
     try:
         row = session.execute(
@@ -288,17 +287,17 @@ def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _sessi
         ).fetchone()
         assert row is not None
         status, error_message = row
-        assert status == "poisoned"
-        assert "Could not connect to Moondream Station at http://localhost:2020/v1" in (
-            error_message or ""
-        )
+        assert status == "proxied"
+        assert error_message is None
     finally:
         session.close()
 
-    # Log output contains the friendly high-level message, not the low-level HTTPConnectionPool noise.
-    error_logs = "\n".join(record.getMessage() for record in caplog.records)
-    assert "AI worker could not reach Moondream Station for asset" in error_logs
-    assert "HTTPConnectionPool" not in error_logs
+    # WARNING logged (transient), not ERROR; inference service hint present.
+    warning_logs = "\n".join(
+        record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
+    )
+    assert "AI worker transient error for asset" in warning_logs
+    assert "Inference service may be down" in warning_logs
 
     # Second scenario: generic analyzer failure still poisons asset, preserving error_message.
     session = _session_factory()

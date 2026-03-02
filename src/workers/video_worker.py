@@ -3,7 +3,11 @@
 import logging
 from pathlib import Path
 
+import requests.exceptions
+import urllib3.exceptions
+
 from src.ai.factory import get_vision_analyzer
+from src.ai.vision_moondream_station import MoondreamUnavailableError
 from src.core.config import get_config
 from src.core.file_extensions import VIDEO_EXTENSIONS_LIST
 from src.core.io_utils import file_non_empty
@@ -17,6 +21,17 @@ from src.workers.base import BaseWorker
 from src.workers.constants import MAX_RETRY_COUNT_BEFORE_POISON
 
 _log = logging.getLogger(__name__)
+
+# Exceptions that indicate transient infrastructure (inference service unreachable).
+# On these we reset the asset to its pre-claim state so it retries when the service recovers.
+_TRANSIENT_EXCEPTIONS: tuple[type[Exception], ...] = (
+    MoondreamUnavailableError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.RetryError,
+    urllib3.exceptions.MaxRetryError,
+    urllib3.exceptions.NewConnectionError,
+)
 
 
 class VideoWorker(BaseWorker):
@@ -186,6 +201,23 @@ class VideoWorker(BaseWorker):
                 asset.id, reset_status, owned_by=self.worker_id
             )
             return False
+        except _TRANSIENT_EXCEPTIONS as e:
+            reset_status = (
+                AssetStatus.proxied if self._mode == "light" else AssetStatus.analyzed_light
+            )
+            self.asset_repo.update_asset_status(
+                asset.id, reset_status, None, owned_by=self.worker_id
+            )
+            _log.warning(
+                "Video worker transient error for asset %s (%s): %s",
+                asset.id,
+                asset.rel_path,
+                e,
+            )
+            _log.warning(
+                "Inference service may be down; asset will retry when it recovers."
+            )
+            return True
         except Exception as e:
             _log.error(
                 "Video worker failed for asset %s (%s): %s",
