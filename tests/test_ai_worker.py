@@ -1,5 +1,6 @@
 """Tests for AI worker process_task: claim proxied, analyze, save, mark completed or poisoned."""
 
+import logging
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -266,9 +267,15 @@ def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _sessi
         )
     )
 
-    # Capture ERROR logs from the AI worker module specifically.
-    with caplog.at_level("ERROR", logger="src.workers.ai_worker"):
+    # Capture ERROR logs from the AI worker module specifically, even if other
+    # tests have removed root handlers. Attach caplog's handler directly.
+    logger = logging.getLogger("src.workers.ai_worker")
+    logger.addHandler(caplog.handler)
+    logger.setLevel(logging.ERROR)
+    try:
         result = worker.process_task()
+    finally:
+        logger.removeHandler(caplog.handler)
     assert result is True
 
     # Asset is poisoned with the friendly error message.
