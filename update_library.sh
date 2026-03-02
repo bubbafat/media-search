@@ -17,7 +17,7 @@ echo "=== MediaSearch update: starting incremental pipeline for library '${LIBRA
 
 run_scan() {
   echo "--- Re-scanning library '${LIBRARY_SLUG}' for new/changed media ---"
-  uv run media-search scan "${LIBRARY_SLUG}" --verbose
+  uv run media-search scan "${LIBRARY_SLUG}"
 }
 
 has_assets_with_status() {
@@ -40,13 +40,13 @@ repair_and_drain_proxies() {
   echo "--- Repairing and building image/video proxies for '${LIBRARY_SLUG}' ---"
 
   # Initial repair pass to mark missing/broken proxies as pending.
-  uv run media-search proxy --library "${LIBRARY_SLUG}" --repair --once --verbose
-  uv run media-search video-proxy --library "${LIBRARY_SLUG}" --repair --once --verbose
+  uv run media-search proxy --library "${LIBRARY_SLUG}" --repair --once
+  uv run media-search video-proxy --library "${LIBRARY_SLUG}" --repair --once
 
   # Continue processing any pending assets (new/changed or repaired).
   while has_assets_with_status "pending"; do
-    uv run media-search proxy --library "${LIBRARY_SLUG}" --once --verbose
-    uv run media-search video-proxy --library "${LIBRARY_SLUG}" --once --verbose
+    uv run media-search proxy --library "${LIBRARY_SLUG}" --once
+    uv run media-search video-proxy --library "${LIBRARY_SLUG}" --once
 
     if ! has_assets_with_status "pending"; then
       break
@@ -58,12 +58,12 @@ repair_and_drain_ai() {
   echo "--- Repairing and running AI analysis for '${LIBRARY_SLUG}' ---"
 
   # Initial repair pass for image AI (e.g. target model changes).
-  uv run media-search ai start --library "${LIBRARY_SLUG}" --repair --once --verbose
+  uv run media-search ai start --library "${LIBRARY_SLUG}" --repair --once
 
   # Pass 1: drain proxied -> analyzed_light (light mode: fast tags/desc, no OCR).
   while has_assets_with_status "proxied"; do
-    uv run media-search ai start --library "${LIBRARY_SLUG}" --mode light --once --verbose
-    uv run media-search ai video --library "${LIBRARY_SLUG}" --mode light --once --verbose
+    uv run media-search ai start --library "${LIBRARY_SLUG}" --mode light --once
+    uv run media-search ai video --library "${LIBRARY_SLUG}" --mode light --once
 
     if ! has_assets_with_status "proxied"; then
       break
@@ -72,8 +72,8 @@ repair_and_drain_ai() {
 
   # Pass 2: drain analyzed_light -> completed (full mode: OCR merge).
   while has_assets_with_status "analyzed_light"; do
-    uv run media-search ai start --library "${LIBRARY_SLUG}" --mode full --once --verbose
-    uv run media-search ai video --library "${LIBRARY_SLUG}" --mode full --once --verbose
+    uv run media-search ai start --library "${LIBRARY_SLUG}" --mode full --once
+    uv run media-search ai video --library "${LIBRARY_SLUG}" --mode full --once
 
     if ! has_assets_with_status "analyzed_light"; then
       break
@@ -86,7 +86,7 @@ drain_search_sync() {
   local output exitcode
   while true; do
     set +e
-    output=$(uv run media-search search-sync --library "${LIBRARY_SLUG}" --once --verbose 2>&1)
+    output=$(uv run media-search search-sync --library "${LIBRARY_SLUG}" --once 2>&1)
     exitcode=$?
     set -e
     echo "$output"
