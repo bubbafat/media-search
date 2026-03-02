@@ -245,6 +245,7 @@ class QuickwitSearchRepository:
 
         base_filter = self._build_scope_filter(scope=scope, exclude_asset_id=exclude_asset_id)
 
+        index_name = self._active_index_name
         last_results: list[SearchResultItem] = []
         last_threshold_used: float = floor
 
@@ -253,7 +254,7 @@ class QuickwitSearchRepository:
             if base_filter:
                 full_query = f"({description}) AND {base_filter}"
 
-            url = f"{self._base_url}/api/v1/{self._active_index_name}/search"
+            url = f"{self._base_url}/api/v1/{index_name}/search"
             payload = {
                 "query": full_query,
                 "max_hits": max_results,
