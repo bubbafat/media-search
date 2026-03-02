@@ -266,7 +266,8 @@ def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _sessi
         )
     )
 
-    with caplog.at_level("ERROR"):
+    # Capture ERROR logs from the AI worker module specifically.
+    with caplog.at_level("ERROR", logger="src.workers.ai_worker"):
         result = worker.process_task()
     assert result is True
 
@@ -292,6 +293,22 @@ def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _sessi
     error_logs = "\n".join(record.getMessage() for record in caplog.records)
     assert "AI worker could not reach Moondream Station for asset" in error_logs
     assert "HTTPConnectionPool" not in error_logs
+
+    # Second scenario: generic analyzer failure still poisons asset, preserving error_message.
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="poison-lib",
+                name="Poison",
+                absolute_path="/tmp/poison",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
 
     asset_repo = AssetRepository(_session_factory)
     asset_repo.upsert_asset("poison-lib", "bad.jpg", AssetType.image, 0.0, 100)

@@ -35,6 +35,35 @@ class LibraryModelPolicyRepository:
             result = s.execute(select(LibraryModelPolicy))
             return list(result.scalars().all())
 
+    def get_active_index_names_for_libraries(
+        self, library_slugs: list[str] | None
+    ) -> list[str]:
+        """Return active_index_name for libraries that have a policy with a non-null active index.
+
+        When library_slugs is None, return index names for all such libraries (All Media).
+        When library_slugs is a list, return only index names for those slugs; libraries
+        with no policy or null active_index_name are omitted. Order is stable (by library_slug).
+        """
+        with self._session_scope() as s:
+            if library_slugs is None:
+                result = s.execute(
+                    text("""
+                        SELECT active_index_name FROM library_model_policy
+                        WHERE active_index_name IS NOT NULL
+                        ORDER BY library_slug
+                    """)
+                )
+            else:
+                result = s.execute(
+                    text("""
+                        SELECT active_index_name FROM library_model_policy
+                        WHERE library_slug = ANY(:slugs) AND active_index_name IS NOT NULL
+                        ORDER BY library_slug
+                    """),
+                    {"slugs": library_slugs},
+                )
+            return [row[0] for row in result.fetchall()]
+
     def delete(self, library_slug: str) -> bool:
         """Delete the policy row for the given library_slug. Return True if deleted, False if not found."""
         with self._session_scope(write=True) as s:

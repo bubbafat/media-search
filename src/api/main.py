@@ -111,12 +111,12 @@ def _get_library_model_policy_repo():
 
 
 @lru_cache(maxsize=32)
-def _get_quickwit_search_repo(active_index_name: str):
-    """Cached per index name. Call cache_clear() after promote or rollback."""
+def _get_quickwit_search_repo(index_names_key: str):
+    """Cached per index name or comma-separated index list. Call cache_clear() after promote or rollback."""
     from src.repository.quickwit_search_repo import QuickwitSearchRepository
     return QuickwitSearchRepository(
         base_url=get_config().quickwit_url,
-        active_index_name=active_index_name,
+        active_index_name=index_names_key,
     )
 
 
@@ -332,18 +332,14 @@ def api_search(
     ui_repo: UIRepository = Depends(_get_ui_repo),
 ) -> JSONResponse:
     query_string = (q or "").strip() or (ocr or "").strip() or None
-    use_quickwit = (
-        get_config().quickwit_enabled
-        and library is not None
-        and len(library) == 1
-        and query_string
-    )
+    use_quickwit = get_config().quickwit_enabled and bool(query_string)
     if use_quickwit:
-        try:
-            policy_repo = _get_library_model_policy_repo()
-            policy = policy_repo.get(library[0])
-            if policy and policy.active_index_name:
-                quickwit_repo = _get_quickwit_search_repo(policy.active_index_name)
+        policy_repo = _get_library_model_policy_repo()
+        active_index_names = policy_repo.get_active_index_names_for_libraries(library)
+        if active_index_names:
+            index_names_key = ",".join(sorted(active_index_names))
+            try:
+                quickwit_repo = _get_quickwit_search_repo(index_names_key)
                 if not quickwit_repo.is_healthy():
                     if get_config().quickwit_fallback_to_postgres:
                         _log.warning(
@@ -372,27 +368,27 @@ def api_search(
                     for r in enriched:
                         r.asset = asset_map[r.asset.id]
                     return _build_search_response(enriched, ui_repo, library)
-        except HTTPException:
-            raise
-        except Exception as e:
-            if get_config().quickwit_fallback_to_postgres:
-                _log.warning(
-                    "Quickwit error — falling back to PostgreSQL FTS "
-                    "(quickwit_fallback_to_postgres=True): %s", e
-                )
-                # Fall through to the PostgreSQL path below
-            else:
-                _log.error(
-                    "Quickwit error and fallback is disabled "
-                    "(quickwit_fallback_to_postgres=False): %s", e
-                )
-                raise HTTPException(
-                    status_code=503,
-                    detail="Search service unavailable. Quickwit is not reachable. "
-                           "Check that the Quickwit container is running, or set "
-                           "quickwit_fallback_to_postgres: true in your config to "
-                           "fall back to PostgreSQL automatically.",
-                )
+            except HTTPException:
+                raise
+            except Exception as e:
+                if get_config().quickwit_fallback_to_postgres:
+                    _log.warning(
+                        "Quickwit error — falling back to PostgreSQL FTS "
+                        "(quickwit_fallback_to_postgres=True): %s", e
+                    )
+                    # Fall through to the PostgreSQL path below
+                else:
+                    _log.error(
+                        "Quickwit error and fallback is disabled "
+                        "(quickwit_fallback_to_postgres=False): %s", e
+                    )
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Search service unavailable. Quickwit is not reachable. "
+                               "Check that the Quickwit container is running, or set "
+                               "quickwit_fallback_to_postgres: true in your config to "
+                               "fall back to PostgreSQL automatically.",
+                    )
 
     results = search_repo.search_assets(
         query_string=q,

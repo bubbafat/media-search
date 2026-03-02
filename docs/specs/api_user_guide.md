@@ -93,7 +93,7 @@ Response headers:
 
 - `X-Search-Incomplete`: `true` when any library in the search scope (the `library` filter if provided, else all non-deleted libraries) has `is_analyzing` true; otherwise `false`. Clients can use this to display a warning that results may be incomplete.
 
-**Quickwit integration:** When `quickwit_enabled` is true in config, exactly one library is in the filter, and that library has a non-empty `active_index_name` in `library_model_policy`, search may be served from Quickwit. On any Quickwit error or unavailability, the API falls back to PostgreSQL search silently. Query string for Quickwit: when both `q` and `ocr` are present, `q` is used; when only `ocr` is present, `ocr` is used.
+**Quickwit integration:** When `quickwit_enabled` is true in config and a query string is provided, the API resolves active Quickwit index names from `library_model_policy`: for All Media (no `library` filter) it uses all libraries that have a policy with non-null `active_index_name`; for a `library` filter it uses only those slugs that have such a policy. If at least one index is found, search is served from Quickwit (one request over a comma-separated multi-index URL). Libraries with no policy are silently omitted (partial Quickwit results). If no indexes are found for the requested scope, the API falls back to PostgreSQL full-text search. On any Quickwit error or unavailability, the API falls back to PostgreSQL when `quickwit_fallback_to_postgres` is true, or returns 503 otherwise. Query string for Quickwit: when both `q` and `ocr` are present, `q` is used; when only `ocr` is present, `ocr` is used.
 
 ### GET /api/admin/search/shadow
 

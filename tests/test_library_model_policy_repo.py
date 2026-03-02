@@ -218,6 +218,9 @@ def test_list_all_returns_all_policies(engine, _session_factory):
     # Ensure we have a second library for FK
     if lib_repo.get_by_slug("other-library") is None:
         lib_repo.add("Other Library", "/tmp/other-lib")
+    # Clear any policies left by prior tests so we start from a known state
+    policy_repo.delete("test-library")
+    policy_repo.delete("other-library")
     assert policy_repo.list_all() == []
     policy_repo.upsert(
         LibraryModelPolicy(
@@ -272,3 +275,59 @@ def test_delete_unknown_slug_returns_false(engine, _session_factory):
     policy_repo = _create_tables_and_policy_repo(engine, _session_factory)
     result = policy_repo.delete("nonexistent-slug")
     assert result is False
+
+
+def test_get_active_index_names_for_libraries_none_returns_all(engine, _session_factory):
+    """get_active_index_names_for_libraries(None) returns all active index names, ordered by library_slug."""
+    policy_repo = _create_tables_and_policy_repo(engine, _session_factory)
+    lib_repo = LibraryRepository(_session_factory)
+    # Clear policies that might exist from other tests so we only see our two
+    for slug in ("alfa", "beta", "lib-a", "lib-b", "lib-c", "test-library", "other-library"):
+        policy_repo.delete(slug)
+    for slug, name in [("alfa", "idx_alfa"), ("beta", "idx_beta")]:
+        if lib_repo.get_by_slug(slug) is None:
+            lib_repo.add(slug.title(), f"/tmp/{slug}")
+        policy_repo.upsert(
+            LibraryModelPolicy(
+                library_slug=slug,
+                active_index_name=name,
+                shadow_index_name=None,
+                previous_index_name=None,
+                locked=False,
+                locked_since=None,
+                promotion_progress=0.0,
+            )
+        )
+    result = policy_repo.get_active_index_names_for_libraries(None)
+    assert result == ["idx_alfa", "idx_beta"]
+
+
+def test_get_active_index_names_for_libraries_slugs_returns_subset(engine, _session_factory):
+    """get_active_index_names_for_libraries([slugs]) returns only those libraries with policies."""
+    policy_repo = _create_tables_and_policy_repo(engine, _session_factory)
+    lib_repo = LibraryRepository(_session_factory)
+    for slug, name in [("lib-a", "idx_a"), ("lib-b", "idx_b"), ("lib-c", "idx_c")]:
+        if lib_repo.get_by_slug(slug) is None:
+            lib_repo.add(slug.replace("-", " ").title(), f"/tmp/{slug}")
+        policy_repo.upsert(
+            LibraryModelPolicy(
+                library_slug=slug,
+                active_index_name=name,
+                shadow_index_name=None,
+                previous_index_name=None,
+                locked=False,
+                locked_since=None,
+                promotion_progress=0.0,
+            )
+        )
+    result = policy_repo.get_active_index_names_for_libraries(["lib-b", "lib-a"])
+    assert result == ["idx_a", "idx_b"]
+
+
+def test_get_active_index_names_for_libraries_empty_or_no_policies_returns_empty(
+    engine, _session_factory
+):
+    """get_active_index_names_for_libraries([]) or slugs with no policies return empty list."""
+    policy_repo = _create_tables_and_policy_repo(engine, _session_factory)
+    assert policy_repo.get_active_index_names_for_libraries([]) == []
+    assert policy_repo.get_active_index_names_for_libraries(["nonexistent"]) == []
