@@ -13,9 +13,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
+
+# Characters that have special meaning in Quickwit query syntax.
+# Replacing & and | covers && and || as well.
+_QUICKWIT_SPECIAL_CHARS = '"()[]{}:^~*?\\/+\\-!&|'
 
 from src.models.similarity import SimilarityScope
 from src.repository.search_repo import SearchResultItem
@@ -207,6 +212,16 @@ class QuickwitSearchRepository:
     # Similarity search
     # ------------------------------------------------------------------
 
+    def _sanitize_query(self, text: str) -> str:
+        """Replace Quickwit-special characters with space and collapse spaces."""
+        if not text:
+            return ""
+        result = text
+        for ch in _QUICKWIT_SPECIAL_CHARS:
+            result = result.replace(ch, " ")
+        result = re.sub(r"\s+", " ", result)
+        return result.strip()
+
     def find_similar(
         self,
         description: str,
@@ -250,9 +265,10 @@ class QuickwitSearchRepository:
         last_threshold_used: float = floor
 
         while threshold >= floor:
-            full_query = description
+            sanitized = self._sanitize_query(description)
+            full_query = sanitized
             if base_filter:
-                full_query = f"({description}) AND {base_filter}"
+                full_query = f"({sanitized}) AND {base_filter}"
 
             url = f"{self._base_url}/api/v1/{index_name}/search"
             payload = {

@@ -160,3 +160,37 @@ def test_adaptive_threshold_algorithm_steps_down_until_min_results():
     # We expect to reach the floor (0.35) on the third attempt before accepting results.
     assert threshold_used == pytest.approx(0.35)
     assert len(results) == 1
+
+
+def test_sanitize_query_removes_double_quotes():
+    """_sanitize_query removes double quotes from a description containing them."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    assert repo._sanitize_query('a "quoted" phrase') == "a quoted phrase"
+
+
+def test_sanitize_query_removes_all_special_characters():
+    """_sanitize_query removes all Quickwit-special characters."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    raw = '"()[]{}:^~*?\\/+\\-!&&||'
+    assert repo._sanitize_query(raw) == ""
+
+
+def test_sanitize_query_collapses_multiple_spaces():
+    """_sanitize_query collapses multiple spaces into one."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    assert repo._sanitize_query("a   red   car") == "a red car"
+
+
+def test_sanitize_query_returns_clean_description_unchanged():
+    """_sanitize_query on a clean description returns it unchanged (modulo stripping)."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    assert repo._sanitize_query("a red car") == "a red car"
+    assert repo._sanitize_query("  a red car  ") == "a red car"
