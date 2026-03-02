@@ -370,17 +370,17 @@ def api_search(
                     return _build_search_response(enriched, ui_repo, library)
             except HTTPException:
                 raise
-            except Exception as e:
+            except Exception:
                 if get_config().quickwit_fallback_to_postgres:
-                    _log.warning(
+                    _log.exception(
                         "Quickwit error — falling back to PostgreSQL FTS "
-                        "(quickwit_fallback_to_postgres=True): %s", e
+                        "(quickwit_fallback_to_postgres=True)"
                     )
                     # Fall through to the PostgreSQL path below
                 else:
-                    _log.error(
+                    _log.exception(
                         "Quickwit error and fallback is disabled "
-                        "(quickwit_fallback_to_postgres=False): %s", e
+                        "(quickwit_fallback_to_postgres=False)"
                     )
                     raise HTTPException(
                         status_code=503,
@@ -441,7 +441,9 @@ def api_promote_model(
     """
     policy_repo = _get_library_model_policy_repo()
     policy_repo.promote(slug, shadow_index_name)
-    _get_quickwit_search_repo.cache_clear()
+    # cache_clear() is not needed here. The active_index_name is resolved
+    # from library_model_policy on every search request. A new index name
+    # after promotion or rollback naturally produces a new cache entry.
     return {"status": "promoted", "library_slug": slug,
             "active_index_name": shadow_index_name}
 
@@ -459,7 +461,9 @@ def api_rollback_model(slug: str):
         policy_repo.rollback(slug)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    _get_quickwit_search_repo.cache_clear()
+    # cache_clear() is not needed here. The active_index_name is resolved
+    # from library_model_policy on every search request. A new index name
+    # after promotion or rollback naturally produces a new cache entry.
     policy = policy_repo.get(slug)
     return {
         "status": "rolled_back",
