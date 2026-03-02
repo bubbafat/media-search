@@ -127,6 +127,20 @@
         "fast": true
       },
       {
+        "name": "has_face",
+        "type": "bool",
+        "indexed": true,
+        "stored": true,
+        "fast": true
+      },
+      {
+        "name": "sharpness_score",
+        "type": "f64",
+        "indexed": false,
+        "stored": true,
+        "fast": true
+      },
+      {
         "name": "scene_start_ts",
         "type": "f64",
         "indexed": false,
