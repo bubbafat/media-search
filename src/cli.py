@@ -969,7 +969,7 @@ def ai_start(
     once: bool = typer.Option(False, "--once", help="Process one batch then exit (no work = exit immediately)."),
     batch: int = typer.Option(1, "--batch", help="Number of assets to claim and process in parallel per task."),
     mode: str = typer.Option("full", "--mode", help="Processing tier: 'light' (fast tags/desc) or 'full' (OCR)."),
-) -> None:
+    ) -> None:
     """Start the AI worker: claims proxied assets, runs vision analysis, marks completed."""
     effective_library = _require_library_or_all(
         library_slug, all_libraries, "Provide either --library <slug> or --all for ai start."
@@ -1017,6 +1017,31 @@ def ai_start(
         resolved_analyzer = model.name
         if resolved_analyzer == "mock-analyzer":
             resolved_analyzer = "mock"
+
+    # Preflight check for Moondream Station analyzers to fail fast with a friendly message.
+    if resolved_analyzer in {"moondream-station", "md3p-int4"}:
+        import requests
+        from requests import exceptions as req_exc  # type: ignore[attr-defined]
+
+        from src.ai.vision_moondream_station import DEFAULT_ENDPOINT, ENDPOINT_ENV
+
+        endpoint = os.environ.get(ENDPOINT_ENV, DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
+        endpoint = endpoint.rstrip("/")
+        try:
+            # We only care that a TCP connection can be established; ignore status code.
+            requests.get(endpoint, timeout=3)
+        except req_exc.RequestException:
+            typer.secho(
+                (
+                    f"Could not reach Moondream Station at {endpoint}. "
+                    "Make sure Moondream Station is running (for example by running "
+                    "'moondream-station') or update MEDIASEARCH_MOONDREAM_STATION_ENDPOINT, "
+                    "then re-run this command."
+                ),
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
 
     worker_id = (
         worker_name

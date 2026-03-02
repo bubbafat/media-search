@@ -211,6 +211,88 @@ def test_ai_worker_process_task_poisons_on_exception(engine, _session_factory):
     finally:
         session.close()
 
+
+def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _session_factory, caplog):
+    """When Moondream is unavailable, process_task poisons asset and logs a friendly message."""
+    from src.ai.vision_moondream_station import MoondreamUnavailableError
+
+    _create_tables_and_seed(engine, _session_factory)
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="moondream-lib",
+                name="Moondream",
+                absolute_path="/tmp/moondream",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo = AssetRepository(_session_factory)
+    asset_repo.upsert_asset("moondream-lib", "bad.jpg", AssetType.image, 0.0, 100)
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET status = 'proxied' "
+                "WHERE library_id = 'moondream-lib' AND rel_path = 'bad.jpg'"
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    worker_repo = WorkerRepository(_session_factory)
+    system_repo = SystemMetadataRepository(_session_factory)
+    worker = AIWorker(
+        worker_id="ai-moondream",
+        repository=worker_repo,
+        heartbeat_interval_seconds=15.0,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_repo,
+        library_slug="moondream-lib",
+        mode="light",
+    )
+    worker.storage.get_proxy_path = MagicMock(return_value=Path("/tmp/fake.jpg"))
+    worker.analyzer.analyze_image = MagicMock(
+        side_effect=MoondreamUnavailableError(
+            "Could not connect to Moondream Station at http://localhost:2020/v1. "
+            "Make sure Moondream Station is running (for example by running 'moondream-station') "
+            "and then re-run this command."
+        )
+    )
+
+    with caplog.at_level("ERROR"):
+        result = worker.process_task()
+    assert result is True
+
+    # Asset is poisoned with the friendly error message.
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text(
+                "SELECT status, error_message "
+                "FROM asset WHERE library_id = 'moondream-lib' AND rel_path = 'bad.jpg'"
+            )
+        ).fetchone()
+        assert row is not None
+        status, error_message = row
+        assert status == "poisoned"
+        assert "Could not connect to Moondream Station at http://localhost:2020/v1" in (
+            error_message or ""
+        )
+    finally:
+        session.close()
+
+    # Log output contains the friendly high-level message, not the low-level HTTPConnectionPool noise.
+    error_logs = "\n".join(record.getMessage() for record in caplog.records)
+    assert "AI worker could not reach Moondream Station for asset" in error_logs
+    assert "HTTPConnectionPool" not in error_logs
+
     asset_repo = AssetRepository(_session_factory)
     asset_repo.upsert_asset("poison-lib", "bad.jpg", AssetType.image, 0.0, 100)
     session = _session_factory()

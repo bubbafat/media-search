@@ -14,12 +14,17 @@ from io import BytesIO
 from pathlib import Path
 
 import requests
+from requests import exceptions as req_exc
 
 from src.ai.schema import ModelCard, VisualAnalysis
 from src.ai.vision_base import BaseVisionAnalyzer
 
 DEFAULT_ENDPOINT = "http://localhost:2020/v1"
 ENDPOINT_ENV = "MEDIASEARCH_MOONDREAM_STATION_ENDPOINT"
+
+
+class MoondreamUnavailableError(RuntimeError):
+    """Raised when Moondream Station cannot be reached at the configured endpoint."""
 
 
 def _parse_tags(tags_str: str) -> list[str]:
@@ -61,14 +66,30 @@ class MoondreamStationAnalyzer(BaseVisionAnalyzer):
     def _post(self, path: str, json_payload: dict) -> dict:
         """POST JSON to Station endpoint and return parsed response."""
         url = f"{self._endpoint}/{path.lstrip('/')}"
-        resp = self._session.post(
-            url,
-            json=json_payload,
-            headers={"Content-Type": "application/json"},
-            timeout=120,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = self._session.post(
+                url,
+                json=json_payload,
+                headers={"Content-Type": "application/json"},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except (req_exc.ConnectionError, req_exc.Timeout) as exc:  # type: ignore[attr-defined]
+            # Friendly, high-level message for non-technical users.
+            message = (
+                f"Could not connect to Moondream Station at {self._endpoint}. "
+                "Make sure Moondream Station is running (for example by running "
+                "'moondream-station') and then re-run this command."
+            )
+            raise MoondreamUnavailableError(message) from exc
+        except req_exc.RequestException as exc:  # type: ignore[attr-defined]
+            # Other HTTP / protocol errors: keep concise but informative.
+            message = (
+                "Moondream Station returned an error while analyzing the image. "
+                "Check that the Moondream Station server is running and healthy."
+            )
+            raise RuntimeError(message) from exc
 
     def _caption(self, image, length: str = "short") -> dict:
         """Call Station caption endpoint. Raises KeyError('caption') if response format is non-standard."""

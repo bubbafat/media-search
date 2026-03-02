@@ -691,6 +691,20 @@ With `--repair`, before the main loop the worker runs a one-time repair pass: it
 
 **Analyzers:** `mock` is a placeholder for development and tests. `moondream2` uses the Moondream2 vision model (vikhyatk/moondream2, revision 2025-01-09) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. When using `moondream2`, the first image in a run may be slower than subsequent ones if the runtime uses model compilation (e.g. torch.compile). `moondream3` uses the Moondream3 vision model (moondream/moondream3-preview) for description, tags, and OCR; it requires PyTorch and sufficient GPU/CPU memory. `moondream-station` and `md3p-int4` (alias) send requests to a **local Moondream Station** server (e.g. for md3p-int4 on Apple Silicon). Run [Moondream Station](https://docs.moondream.ai/station/) separately (e.g. `moondream-station`) and switch to md3p-int4 if desired. Set `MEDIASEARCH_MOONDREAM_STATION_ENDPOINT` to override the default endpoint ([http://localhost:2020/v1](http://localhost:2020/v1)). The Station client uses HTTP connection pooling to handle concurrent requests efficiently when multiple workers hit the same Station.
 
+#### Moondream Station troubleshooting
+
+When you use `moondream-station` (or the `md3p-int4` alias) as the analyzer, MediaSearch performs a quick connection check before starting the AI worker. If Moondream Station is not reachable, `ai start` exits with a clear error like:
+
+```text
+Could not reach Moondream Station at http://localhost:2020/v1. Make sure Moondream Station is running (for example by running 'moondream-station') or update MEDIASEARCH_MOONDREAM_STATION_ENDPOINT, then re-run this command.
+```
+
+To fix this:
+
+- **Start Moondream Station**: run `moondream-station` (or your preferred Station startup command) so that it listens on the configured endpoint (default `http://localhost:2020/v1`).
+- **Adjust the endpoint if needed**: if Station is running on a different host or port, set `MEDIASEARCH_MOONDREAM_STATION_ENDPOINT` to the correct base URL (for example `http://localhost:3030/v1`) and re-run the command.
+- **Re-run the AI worker**: once Station is reachable, re-run your `uv run media-search ai start ...` command; the worker will then process images normally.
+
 **Example:**
 
 ```bash
