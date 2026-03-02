@@ -53,6 +53,12 @@ class Settings(BaseModel):
     # Idle sleep between worker polling iterations when no work is available.
     # Must never exceed 5 seconds; BaseWorker enforces this upper bound.
     worker_idle_poll_seconds: float = 5.0
+    # Similarity search configuration (Workstream B: Live Similarity Search).
+    similarity_max_relationships: int = 20
+    similarity_min_score: float = 0.65
+    similarity_floor: float = 0.35
+    similarity_step: float = 0.10
+    similarity_min_results: int = 3
 
     @field_validator("worker_id", mode="before")
     @classmethod

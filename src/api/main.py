@@ -1,6 +1,7 @@
 """Mission Control API: dashboard and dependencies."""
 
 import errno
+import json
 import logging
 import os
 from functools import lru_cache
@@ -18,6 +19,7 @@ from sqlalchemy import text
 from src.core.config import get_config
 from src.core.io_utils import file_non_empty
 from src.core.path_resolver import resolve_path
+from src.models.similarity import SimilarityScope
 from src.repository.asset_repo import AssetRepository
 from src.repository.library_repo import LibraryRepository
 from src.repository.search_repo import SearchRepository, SearchResultItem
@@ -152,6 +154,15 @@ class SearchResultOut(BaseModel):
     filename: str
 
 
+class SimilarityResultOut(BaseModel):
+    """Similarity search response wrapper."""
+
+    source_asset_id: int
+    results: list[SearchResultOut]
+    threshold_used: float
+    scope: SimilarityScope
+
+
 class AssetDetailOut(BaseModel):
     description: str | None = None
     tags: list[str] = []
@@ -189,6 +200,20 @@ def _build_search_response(
     library: list[str] | None,
 ) -> JSONResponse:
     """Build JSONResponse for search results (shared by main search and shadow endpoint)."""
+    items = _build_search_results(results, ui_repo, library)
+    is_incomplete = ui_repo.any_libraries_analyzing(library)
+    return JSONResponse(
+        content=[item.model_dump(mode="json") for item in items],
+        headers={"X-Search-Incomplete": "true" if is_incomplete else "false"},
+    )
+
+
+def _build_search_results(
+    results: list[SearchResultItem],
+    ui_repo: UIRepository,
+    library: list[str] | None,
+) -> list[SearchResultOut]:
+    """Map SearchResultItem list into SearchResultOut models."""
     library_ids = list({r.asset.library_id for r in results})
     names = ui_repo.get_library_names(library_ids)
 
@@ -236,11 +261,7 @@ def _build_search_response(
                 filename=filename,
             )
         )
-    is_incomplete = ui_repo.any_libraries_analyzing(library)
-    return JSONResponse(
-        content=[item.model_dump(mode="json") for item in out],
-        headers={"X-Search-Incomplete": "true" if is_incomplete else "false"},
-    )
+    return out
 
 
 @app.get("/api/status")
@@ -804,6 +825,105 @@ def api_asset_detail(
         ocr_text=va.get("ocr_text"),
         library_slug=lib_slug,
         filename=filename,
+    )
+
+
+@app.get("/api/assets/{asset_id}/similar", response_model=SimilarityResultOut)
+def api_asset_similar(
+    asset_id: int,
+    scope: str | None = Query(
+        default=None,
+        description="JSON-encoded SimilarityScope for restricting similarity search",
+    ),
+    asset_repo: AssetRepository = Depends(_get_asset_repo),
+    ui_repo: UIRepository = Depends(_get_ui_repo),
+):
+    """Return assets similar to the given asset using BM25 over AI descriptions."""
+    from src.repository.library_model_policy_repo import LibraryModelPolicyRepository
+
+    asset = asset_repo.get_asset_by_id(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    va = asset.visual_analysis or {}
+    description = (va.get("description") or "").strip()
+    if not description:
+        raise HTTPException(
+            status_code=422,
+            detail="Asset has no description and cannot be used for similarity search",
+        )
+
+    # Parse scope from JSON-encoded query param (permissive defaults when absent/null).
+    if scope is None:
+        resolved_scope = SimilarityScope()
+    else:
+        try:
+            raw = json.loads(scope)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid scope parameter: must be valid JSON",
+            )
+        if raw is None:
+            resolved_scope = SimilarityScope()
+        else:
+            resolved_scope = SimilarityScope.model_validate(raw)
+
+    cfg = get_config()
+    if not cfg.quickwit_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Similarity search unavailable. Quickwit is disabled in configuration.",
+        )
+
+    # Resolve Quickwit index set from library model policy, matching /api/search behavior.
+    policy_repo = LibraryModelPolicyRepository(_get_session_factory())
+    if resolved_scope.library and resolved_scope.library != "all":
+        library_filter = [resolved_scope.library]
+    else:
+        library_filter = None
+
+    active_index_names = policy_repo.get_active_index_names_for_libraries(library_filter)
+    if not active_index_names:
+        raise HTTPException(
+            status_code=503,
+            detail="Similarity search unavailable. No active Quickwit indexes for requested scope.",
+        )
+    index_names_key = ",".join(sorted(active_index_names))
+    quickwit_repo = _get_quickwit_search_repo(index_names_key)
+    if not quickwit_repo.is_healthy():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Similarity search unavailable. Quickwit is not reachable. "
+                "Check that the Quickwit container is running."
+            ),
+        )
+
+    results, threshold_used = quickwit_repo.find_similar(
+        description=description,
+        exclude_asset_id=asset.id or 0,
+        scope=resolved_scope,
+        max_results=cfg.similarity_max_relationships,
+        min_score=cfg.similarity_min_score,
+        floor=cfg.similarity_floor,
+        step=cfg.similarity_step,
+        min_results=cfg.similarity_min_results,
+    )
+
+    # Enrich Quickwit results with full asset data (same pattern as /api/search).
+    asset_ids = [r.asset.id for r in results if r.asset.id is not None]
+    asset_map = _get_asset_repo().get_by_ids(asset_ids)
+    enriched = [r for r in results if r.asset.id in asset_map]
+    for r in enriched:
+        r.asset = asset_map[r.asset.id]
+
+    out_items = _build_search_results(enriched, ui_repo, None)
+    return SimilarityResultOut(
+        source_asset_id=asset.id or asset_id,
+        results=out_items,
+        threshold_used=threshold_used,
+        scope=resolved_scope,
     )
 
 
