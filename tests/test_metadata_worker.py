@@ -534,8 +534,7 @@ def test_write_sharpness_metadata_no_op_when_not_sharpness_processing(
     finally:
         session.close()
 
-    # Capture WARNING logs directly (avoid relying on pytest's caplog, which can
-    # be affected by other tests' global logging configuration).
+    # Capture WARNING logs directly from the asset_repo logger.
     import src.repository.asset_repo as asset_repo_module
 
     messages: list[str] = []

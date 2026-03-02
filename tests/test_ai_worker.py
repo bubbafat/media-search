@@ -213,6 +213,7 @@ def test_ai_worker_process_task_poisons_on_exception(engine, _session_factory):
         session.close()
 
 
+@pytest.mark.logging_level(logging.ERROR, logger="src.workers.ai_worker")
 def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _session_factory, caplog):
     """When Moondream is unavailable, process_task poisons asset and logs a friendly message."""
     from src.ai.vision_moondream_station import MoondreamUnavailableError
@@ -267,11 +268,9 @@ def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _sessi
         )
     )
 
-    # Capture ERROR logs from the AI worker module specifically, even if other
-    # tests have removed root handlers. Attach caplog's handler directly.
+    # Capture ERROR logs from the AI worker module specifically.
     logger = logging.getLogger("src.workers.ai_worker")
     logger.addHandler(caplog.handler)
-    logger.setLevel(logging.ERROR)
     try:
         result = worker.process_task()
     finally:

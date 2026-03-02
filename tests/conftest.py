@@ -1,6 +1,7 @@
 """Pytest fixtures. Use testcontainers-python for PostgreSQL in tests."""
 
 import contextlib
+import logging
 import os
 import threading
 
@@ -43,6 +44,40 @@ def clear_app_db_caches() -> None:
     _get_library_repo.cache_clear()
     _get_library_model_policy_repo.cache_clear()
     _get_quickwit_search_repo.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def apply_logging_level_marker(request):
+    """
+    Optional per-test logging control via markers.
+
+    Usage:
+        @pytest.mark.logging_level(logging.DEBUG)
+        def test_something(): ...
+
+        @pytest.mark.logging_level(logging.WARNING, logger="src.workers.ai_worker")
+        def test_other(): ...
+
+    The fixture restores the previous logger level after each test.
+    """
+    marker = request.node.get_closest_marker("logging_level")
+    if not marker:
+        yield
+        return
+
+    if not marker.args:
+        raise ValueError("logging_level marker requires at least one positional arg (level)")
+
+    level = marker.args[0]
+    logger_name = marker.kwargs.get("logger")
+    logger = logging.getLogger(logger_name) if logger_name else logging.getLogger()
+
+    prev_level = logger.level
+    try:
+        logger.setLevel(level)
+        yield
+    finally:
+        logger.setLevel(prev_level)
 
 
 @pytest.fixture(autouse=True)
