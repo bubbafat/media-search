@@ -847,10 +847,11 @@ def api_asset_similar(
 
     va = asset.visual_analysis or {}
     description = (va.get("description") or "").strip()
-    if not description:
+    tags = va.get("tags") or []
+    if not description and not tags:
         raise HTTPException(
             status_code=422,
-            detail="Asset has no description and cannot be used for similarity search",
+            detail="Asset has no description or tags and cannot be used for similarity search",
         )
 
     # Parse scope from JSON-encoded query param (permissive defaults when absent/null).
@@ -902,6 +903,7 @@ def api_asset_similar(
 
     results, threshold_used = quickwit_repo.find_similar(
         description=description,
+        tags=tags,
         exclude_asset_id=asset.id or 0,
         scope=resolved_scope,
         max_results=cfg.similarity_max_relationships,

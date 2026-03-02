@@ -46,7 +46,7 @@ def test_invalid_scope_json_returns_422():
         cfg = get_config()
         patched = cfg.model_copy(update={"quickwit_enabled": True})
         with patch("src.api.main.get_config", return_value=patched), patch(
-            "src.api.main.LibraryModelPolicyRepository"
+            "src.repository.library_model_policy_repo.LibraryModelPolicyRepository"
         ) as MockPolicyRepo, patch("src.api.main._get_quickwit_search_repo") as mock_get_qw:
             MockPolicyRepo.return_value.get_active_index_names_for_libraries.return_value = [
                 "idx"
@@ -81,7 +81,7 @@ def test_source_asset_excluded_id_passed_through():
         cfg = get_config()
         patched = cfg.model_copy(update={"quickwit_enabled": True})
         with patch("src.api.main.get_config", return_value=patched), patch(
-            "src.api.main.LibraryModelPolicyRepository"
+            "src.repository.library_model_policy_repo.LibraryModelPolicyRepository"
         ) as MockPolicyRepo, patch("src.api.main._get_quickwit_search_repo") as mock_get_qw:
             MockPolicyRepo.return_value.get_active_index_names_for_libraries.return_value = [
                 "idx"
@@ -97,6 +97,7 @@ def test_source_asset_excluded_id_passed_through():
             assert mock_qw.find_similar.called
             kwargs = mock_qw.find_similar.call_args.kwargs
             assert kwargs["exclude_asset_id"] == 123
+            assert kwargs["tags"] == ["car"]
     finally:
         app.dependency_overrides.pop(_get_asset_repo, None)
         app.dependency_overrides.pop(_get_ui_repo, None)
@@ -114,10 +115,9 @@ def test_adaptive_threshold_algorithm_steps_down_until_min_results():
 
     def fake_post(url, json=None, timeout=None):  # type: ignore[override]
         # json["query"] contains the combined query + filters; threshold is tracked separately.
-        # We simulate three attempts via len(calls).
+        # We simulate four attempts via len(calls): first three below threshold, fourth above floor.
         attempt = len(calls) + 1
-        # First two attempts: scores below high thresholds; third: above floor.
-        if attempt < 3:
+        if attempt < 4:
             score = 0.3
         else:
             score = 0.8
@@ -148,6 +148,7 @@ def test_adaptive_threshold_algorithm_steps_down_until_min_results():
     with patch("src.repository.quickwit_search_repo.httpx.post", wraps=fake_post):
         results, threshold_used = repo.find_similar(
             description="a red car",
+            tags=[],
             exclude_asset_id=1,
             scope=scope,
             max_results=10,
@@ -157,7 +158,7 @@ def test_adaptive_threshold_algorithm_steps_down_until_min_results():
             min_results=1,
         )
 
-    # We expect to reach the floor (0.35) on the third attempt before accepting results.
+    # We expect to reach the floor (0.35) on the fourth attempt before accepting results.
     assert threshold_used == pytest.approx(0.35)
     assert len(results) == 1
 
@@ -194,3 +195,80 @@ def test_sanitize_query_returns_clean_description_unchanged():
     repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
     assert repo._sanitize_query("a red car") == "a red car"
     assert repo._sanitize_query("  a red car  ") == "a red car"
+
+
+# --- _build_similarity_query tests ---
+
+
+def test_build_similarity_query_tags_appear_twice():
+    """Tags appear twice in the output (doubled for BM25 weight)."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    desc = "dancers blue red"
+    tags = ["dance", "performance"]
+    out = repo._build_similarity_query(desc, tags)
+    parts = out.split()
+    assert parts.count("dance") == 2
+    assert parts.count("performance") == 2
+
+
+def test_build_similarity_query_description_keywords_appear_once():
+    """Description keywords appear once in the output."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    desc = "dancers blue red traditional attire drum backdrop"
+    tags = ["dance", "performance"]
+    out = repo._build_similarity_query(desc, tags)
+    parts = out.split()
+    assert parts.count("dancers") == 1
+    assert parts.count("blue") == 1
+    assert parts.count("backdrop") == 1
+
+
+def test_build_similarity_query_tags_duplicate_description_still_twice_at_end():
+    """Tags that duplicate description keywords still appear twice at the end."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    desc = "dancers dance blue"
+    tags = ["dance", "performance"]
+    out = repo._build_similarity_query(desc, tags)
+    parts = out.split()
+    # Description keywords: dancers, dance, blue (once each)
+    assert parts.count("dancers") == 1
+    assert parts.count("blue") == 1
+    # Tag "dance" appears twice at the end (doubled tags)
+    assert parts.count("dance") == 3  # once from desc + twice from tags
+    assert parts.count("performance") == 2
+
+
+def test_build_similarity_query_empty_tags_same_as_extract_query_terms_alone():
+    """Empty tags list produces same output as _sanitize_query + split (extract terms alone)."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    desc = "a red car in a field"
+    out = repo._build_similarity_query(desc, [])
+    sanitized = repo._sanitize_query(desc)
+    assert out == sanitized
+
+
+def test_build_similarity_query_empty_description_with_tags_produces_doubled_tags_only():
+    """Empty description with tags produces doubled tags only."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    out = repo._build_similarity_query("", ["dance", "performance"])
+    expected = "dance performance dance performance"
+    assert out == expected
+
+
+def test_build_similarity_query_both_empty_produces_fallback_behavior():
+    """Both empty produces fallback behavior (empty string from sanitized desc)."""
+    from src.repository.quickwit_search_repo import QuickwitSearchRepository
+
+    repo = QuickwitSearchRepository(base_url="http://qw", active_index_name="idx")
+    out = repo._build_similarity_query("", [])
+    assert out == ""

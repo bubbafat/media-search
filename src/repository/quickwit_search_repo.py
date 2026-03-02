@@ -222,9 +222,33 @@ class QuickwitSearchRepository:
         result = re.sub(r"\s+", " ", result)
         return result.strip()
 
+    def _build_similarity_query(self, description: str, tags: list[str]) -> str:
+        """Build a query string from description keywords and tags, with tags weighted twice.
+
+        Description keywords are extracted via sanitization and tokenization.
+        Tags are taken as-is (lowercased). Tags appear twice to increase BM25 weight.
+        """
+        desc_sanitized = self._sanitize_query(description)
+        if not tags:
+            return desc_sanitized
+
+        desc_tokens = [t for t in desc_sanitized.split() if t]
+        desc_unique = list(dict.fromkeys(desc_tokens))
+
+        tag_tokens = [t.lower() for t in tags if t]
+        tag_unique = list(dict.fromkeys(tag_tokens))
+
+        result = desc_unique + tag_unique + tag_unique
+        combined = " ".join(result)
+
+        if not combined:
+            return desc_sanitized
+        return combined
+
     def find_similar(
         self,
         description: str,
+        tags: list[str],
         exclude_asset_id: int,
         scope: SimilarityScope,
         max_results: int,
@@ -247,7 +271,8 @@ class QuickwitSearchRepository:
         every attempt. Score filtering is applied client-side using the score
         field returned by Quickwit.
         """
-        if not description:
+        query_terms = self._build_similarity_query(description or "", tags or [])
+        if not query_terms:
             return [], floor
 
         threshold = float(min_score)
@@ -265,10 +290,9 @@ class QuickwitSearchRepository:
         last_threshold_used: float = floor
 
         while threshold >= floor:
-            sanitized = self._sanitize_query(description)
-            full_query = sanitized
+            full_query = query_terms
             if base_filter:
-                full_query = f"({sanitized}) AND {base_filter}"
+                full_query = f"({query_terms}) AND {base_filter}"
 
             url = f"{self._base_url}/api/v1/{index_name}/search"
             payload = {
