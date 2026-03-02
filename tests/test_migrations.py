@@ -418,6 +418,17 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
             assert rows[0][0] == "media_metadata" and rows[0][1] == "jsonb"
             assert rows[1][0] == "metadata_status" and rows[1][1] == "character varying"
             assert rows[2][0] == "raw_exif" and rows[2][1] == "jsonb"
+
+        # Assert asset has metadata_status check constraint (migration 025)
+        with migration_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT constraint_name FROM information_schema.table_constraints "
+                    "WHERE table_schema = 'public' AND table_name = 'asset' "
+                    "AND constraint_type = 'CHECK' AND constraint_name = 'ck_asset_metadata_status'"
+                )
+            ).fetchone()
+            assert row is not None, "asset must have check constraint ck_asset_metadata_status"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev

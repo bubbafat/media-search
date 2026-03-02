@@ -83,7 +83,7 @@ def test_claim_assets_for_exif_metadata_only_null_status(engine, _session_factor
             )
         ).fetchall()
         assert rows[0][0] == "a.jpg"
-        assert rows[0][1] == "processing"
+        assert rows[0][1] == "exif_processing"
         assert rows[1][0] == "b.jpg"
         assert rows[1][1] == "exif_done"
     finally:
@@ -227,8 +227,8 @@ def test_metadata_worker_process_exif_batch_end_to_end(tmp_path, engine, _sessio
         session.close()
 
 
-def test_missing_source_file_is_logged_and_left_processing(tmp_path, engine, _session_factory):
-    """Nonexistent source path should be logged and left in 'processing' state."""
+def test_missing_source_file_is_logged_and_left_exif_processing(tmp_path, engine, _session_factory):
+    """Nonexistent source path should be logged and left in 'exif_processing' state."""
     asset_repo, worker_repo, system_metadata_repo = _create_tables_and_repos(
         engine, _session_factory
     )
@@ -294,8 +294,8 @@ def test_missing_source_file_is_logged_and_left_processing(tmp_path, engine, _se
         ).fetchone()
         assert row is not None
         raw_exif, media_metadata, status = row
-        # Asset should remain in 'processing' and not have EXIF/media_metadata written.
-        assert status == "processing"
+        # Asset should remain in 'exif_processing' and not have EXIF/media_metadata written.
+        assert status == "exif_processing"
         assert raw_exif is None
         assert media_metadata is None
     finally:
@@ -338,7 +338,7 @@ def test_reset_stuck_cli_command_resets_processing_assets(engine, _session_facto
     try:
         session.execute(
             text(
-                "UPDATE asset SET metadata_status = 'processing' "
+                "UPDATE asset SET metadata_status = 'exif_processing' "
                 "WHERE library_id = 'meta-reset'"
             )
         )
@@ -360,9 +360,422 @@ def test_reset_stuck_cli_command_resets_processing_assets(engine, _session_facto
             )
         ).fetchall()
         assert rows[0][0] == "new.jpg"
-        assert rows[0][1] == "processing"
+        assert rows[0][1] == "exif_processing"
         assert rows[1][0] == "old.jpg"
         assert rows[1][1] is None
     finally:
         session.close()
+
+
+# --- Sharpness phase tests ---
+
+
+def test_claim_assets_for_sharpness_metadata_only_exif_done(engine, _session_factory) -> None:
+    """claim_assets_for_sharpness_metadata claims only assets with metadata_status = exif_done."""
+    asset_repo, _, _ = _create_tables_and_repos(engine, _session_factory)
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="sharp-lib",
+                name="Sharp",
+                absolute_path="/tmp/sharp-lib",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("sharp-lib", "a.jpg", AssetType.image, 0.0, 100)
+    asset_repo.upsert_asset("sharp-lib", "b.jpg", AssetType.image, 0.0, 100)
+    asset_repo.upsert_asset("sharp-lib", "c.jpg", AssetType.image, 0.0, 100)
+
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET metadata_status = NULL WHERE library_id = 'sharp-lib' AND rel_path = 'a.jpg'"
+            )
+        )
+        session.execute(
+            text(
+                "UPDATE asset SET metadata_status = 'exif_done' WHERE library_id = 'sharp-lib' AND rel_path = 'b.jpg'"
+            )
+        )
+        session.execute(
+            text(
+                "UPDATE asset SET metadata_status = 'complete' WHERE library_id = 'sharp-lib' AND rel_path = 'c.jpg'"
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    claimed = asset_repo.claim_assets_for_sharpness_metadata(batch_size=10, library_slug="sharp-lib")
+    assert len(claimed) == 1
+
+    session = _session_factory()
+    try:
+        rows = session.execute(
+            text(
+                "SELECT rel_path, metadata_status FROM asset WHERE library_id = 'sharp-lib' ORDER BY rel_path"
+            )
+        ).fetchall()
+        by_path = {r[0]: r[1] for r in rows}
+        assert by_path["a.jpg"] is None
+        assert by_path["b.jpg"] == "sharpness_processing"
+        assert by_path["c.jpg"] == "complete"
+    finally:
+        session.close()
+
+
+def test_write_sharpness_metadata_merges_and_sets_complete(engine, _session_factory) -> None:
+    """write_sharpness_metadata merges has_face/face_count/sharpness_score and sets status = complete."""
+    asset_repo, _, _ = _create_tables_and_repos(engine, _session_factory)
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="sharp-write-lib",
+                name="Sharp Write",
+                absolute_path="/tmp/sharp-write",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("sharp-write-lib", "d.jpg", AssetType.image, 0.0, 100)
+    session = _session_factory()
+    try:
+        asset_id = session.execute(
+            text(
+                "SELECT id FROM asset WHERE library_id = 'sharp-write-lib' AND rel_path = 'd.jpg'"
+            )
+        ).scalar_one()
+    finally:
+        session.close()
+
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET metadata_status = 'sharpness_processing', "
+                "media_metadata = '{\"camera_make\": \"Canon\", \"camera_model\": \"R5\"}'::jsonb "
+                "WHERE id = :id"
+            ),
+            {"id": asset_id},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.write_sharpness_metadata(asset_id, has_face=True, face_count=2, sharpness_score=0.85)
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT media_metadata, metadata_status FROM asset WHERE id = :id"),
+            {"id": asset_id},
+        ).fetchone()
+        assert row is not None
+        meta, status = row
+        assert status == "complete"
+        assert meta.get("camera_make") == "Canon"
+        assert meta.get("camera_model") == "R5"
+        assert meta.get("has_face") is True
+        assert meta.get("face_count") == 2
+        assert meta.get("sharpness_score") == 0.85
+    finally:
+        session.close()
+
+
+def test_write_sharpness_metadata_no_op_when_not_sharpness_processing(
+    engine, _session_factory, caplog
+) -> None:
+    """When metadata_status is not sharpness_processing, write is no-op and logs warning."""
+    asset_repo, _, _ = _create_tables_and_repos(engine, _session_factory)
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="sharp-noop-lib",
+                name="Sharp Noop",
+                absolute_path="/tmp/sharp-noop",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("sharp-noop-lib", "e.jpg", AssetType.image, 0.0, 100)
+    session = _session_factory()
+    try:
+        asset_id = session.execute(
+            text(
+                "SELECT id FROM asset WHERE library_id = 'sharp-noop-lib' AND rel_path = 'e.jpg'"
+            )
+        ).scalar_one()
+        session.execute(
+            text("UPDATE asset SET metadata_status = 'exif_done' WHERE id = :id"),
+            {"id": asset_id},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.write_sharpness_metadata(asset_id, has_face=False, face_count=0, sharpness_score=0.1)
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text("SELECT media_metadata, metadata_status FROM asset WHERE id = :id"),
+            {"id": asset_id},
+        ).fetchone()
+        assert row is not None
+        assert row[1] == "exif_done"
+        assert row[0] is None
+    finally:
+        session.close()
+    assert "no row updated" in caplog.text or "write_sharpness_metadata" in caplog.text
+
+
+def test_process_sharpness_batch_end_to_end(tmp_path, engine, _session_factory, monkeypatch) -> None:
+    """_process_sharpness_batch: thumbnail present, mocks for sharpness/faces, status -> complete."""
+    asset_repo, worker_repo, system_metadata_repo = _create_tables_and_repos(
+        engine, _session_factory
+    )
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setattr(
+        "src.core.storage.get_config",
+        lambda: type("C", (), {"data_dir": str(data_dir)})(),
+    )
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="sharp-e2e",
+                name="Sharp E2E",
+                absolute_path=str(tmp_path),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("sharp-e2e", "photo.jpg", AssetType.image, 1000.0, 5000)
+    session = _session_factory()
+    try:
+        asset_id = session.execute(
+            text("SELECT id FROM asset WHERE library_id = 'sharp-e2e' AND rel_path = 'photo.jpg'")
+        ).scalar_one()
+        session.execute(
+            text(
+                "UPDATE asset SET metadata_status = 'exif_done', "
+                "media_metadata = '{\"camera_make\": \"Canon\"}'::jsonb WHERE id = :id"
+            ),
+            {"id": asset_id},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    shard = asset_id % 1000
+    thumb_dir = data_dir / "sharp-e2e" / "thumbnails" / str(shard)
+    thumb_dir.mkdir(parents=True)
+    thumb_path = thumb_dir / f"{asset_id}.jpg"
+    from PIL import Image
+
+    img = Image.new("RGB", (64, 64), color=(100, 100, 100))
+    img.save(thumb_path, "JPEG", quality=85)
+
+    monkeypatch.setattr(
+        "src.workers.metadata_worker.compute_sharpness_from_array",
+        lambda arr: 0.42,
+    )
+    monkeypatch.setattr(
+        "src.workers.metadata_worker.detect_faces",
+        lambda arr: (True, 1),
+    )
+
+    worker = MetadataWorker(
+        worker_id="sharp-e2e-worker",
+        repository=worker_repo,
+        heartbeat_interval_seconds=15.0,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_metadata_repo,
+        phase="sharpness",
+        batch_size=16,
+        library_slug="sharp-e2e",
+    )
+    worker._storage.data_dir = data_dir
+
+    ok = worker._process_sharpness_batch()
+    assert ok is True
+
+    session = _session_factory()
+    try:
+        row = session.execute(
+            text(
+                "SELECT media_metadata, metadata_status FROM asset WHERE library_id = 'sharp-e2e' AND rel_path = 'photo.jpg'"
+            )
+        ).fetchone()
+        assert row is not None
+        meta, status = row
+        assert status == "complete"
+        assert meta.get("camera_make") == "Canon"
+        assert meta.get("has_face") is True
+        assert meta.get("face_count") == 1
+        assert meta.get("sharpness_score") == 0.42
+    finally:
+        session.close()
+
+
+def test_process_sharpness_batch_missing_thumbnail_reset_to_exif_done(
+    tmp_path, engine, _session_factory, monkeypatch
+) -> None:
+    """Asset with exif_done but no thumbnail file is reset to exif_done and not crashed."""
+    asset_repo, worker_repo, system_metadata_repo = _create_tables_and_repos(
+        engine, _session_factory
+    )
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setattr(
+        "src.core.storage.get_config",
+        lambda: type("C", (), {"data_dir": str(data_dir)})(),
+    )
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="sharp-missing",
+                name="Sharp Missing",
+                absolute_path=str(tmp_path),
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    asset_repo.upsert_asset("sharp-missing", "nothumb.jpg", AssetType.image, 1000.0, 5000)
+    session = _session_factory()
+    try:
+        asset_id = session.execute(
+            text("SELECT id FROM asset WHERE library_id = 'sharp-missing' AND rel_path = 'nothumb.jpg'")
+        ).scalar_one()
+        session.execute(
+            text("UPDATE asset SET metadata_status = 'exif_done' WHERE id = :id"),
+            {"id": asset_id},
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    worker = MetadataWorker(
+        worker_id="sharp-missing-worker",
+        repository=worker_repo,
+        heartbeat_interval_seconds=15.0,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_metadata_repo,
+        phase="sharpness",
+        batch_size=16,
+        library_slug="sharp-missing",
+    )
+    worker._storage.data_dir = data_dir
+
+    ok = worker._process_sharpness_batch()
+    assert ok is True
+
+    session = _session_factory()
+    try:
+        status = session.execute(
+            text("SELECT metadata_status FROM asset WHERE id = :id"),
+            {"id": asset_id},
+        ).scalar_one()
+        assert status == "exif_done"
+    finally:
+        session.close()
+
+
+def test_reset_stuck_exif_and_sharpness_phase(engine, _session_factory) -> None:
+    """reset_stuck: exif_processing -> NULL, sharpness_processing -> exif_done; neither clears media_metadata."""
+    asset_repo, _, _ = _create_tables_and_repos(engine, _session_factory)
+
+    session = _session_factory()
+    try:
+        session.add(
+            Library(
+                slug="meta-reset-both",
+                name="Meta Reset Both",
+                absolute_path="/tmp/meta-reset-both",
+                is_active=True,
+                sampling_limit=100,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    import time
+
+    asset_repo.upsert_asset("meta-reset-both", "exif_stuck.jpg", AssetType.image, 0.0, 100)
+    asset_repo.upsert_asset("meta-reset-both", "sharp_stuck.jpg", AssetType.image, 0.0, 100)
+
+    session = _session_factory()
+    try:
+        session.execute(
+            text(
+                "UPDATE asset SET metadata_status = 'exif_processing', "
+                "media_metadata = '{\"a\": 1}'::jsonb "
+                "WHERE library_id = 'meta-reset-both' AND rel_path = 'exif_stuck.jpg'"
+            )
+        )
+        session.execute(
+            text(
+                "UPDATE asset SET metadata_status = 'sharpness_processing', "
+                "media_metadata = '{\"b\": 2}'::jsonb "
+                "WHERE library_id = 'meta-reset-both' AND rel_path = 'sharp_stuck.jpg'"
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    exif_count, sharpness_count = asset_repo.reset_stuck_metadata(older_than_seconds=3600.0)
+
+    session = _session_factory()
+    try:
+        rows = session.execute(
+            text(
+                "SELECT rel_path, metadata_status, media_metadata FROM asset "
+                "WHERE library_id = 'meta-reset-both' ORDER BY rel_path"
+            )
+        ).fetchall()
+        by_path = {r[0]: (r[1], r[2]) for r in rows}
+        assert by_path["exif_stuck.jpg"][0] is None
+        assert by_path["exif_stuck.jpg"][1] == {"a": 1}
+        assert by_path["sharp_stuck.jpg"][0] == "exif_done"
+        assert by_path["sharp_stuck.jpg"][1] == {"b": 2}
+    finally:
+        session.close()
+    assert exif_count >= 1, "expected at least one exif_processing reset"
+    assert sharpness_count >= 1, "expected at least one sharpness_processing reset"
 

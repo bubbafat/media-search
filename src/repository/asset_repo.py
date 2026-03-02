@@ -986,7 +986,7 @@ class AssetRepository:
 
         Uses FOR UPDATE SKIP LOCKED on assets where metadata_status IS NULL and the
         file extension matches the combined image+video pattern. Immediately sets
-        metadata_status = 'processing' and commits, releasing the row locks before
+        metadata_status = 'exif_processing' and commits, releasing the row locks before
         returning. Returns the list of claimed asset IDs.
         """
         if batch_size <= 0:
@@ -1023,13 +1023,119 @@ class AssetRepository:
                 text(
                     """
                     UPDATE asset
-                    SET metadata_status = 'processing'
+                    SET metadata_status = 'exif_processing'
                     WHERE id = ANY(:ids)
                     """
                 ),
                 {"ids": ids},
             )
             return ids
+
+    def claim_assets_for_sharpness_metadata(
+        self,
+        batch_size: int,
+        library_slug: str | None = None,
+    ) -> list[int]:
+        """
+        Claim a batch of assets for sharpness/face metadata (second pass).
+
+        Uses FOR UPDATE SKIP LOCKED on assets where metadata_status = 'exif_done',
+        same file extension filter as EXIF claim. Immediately sets
+        metadata_status = 'sharpness_processing' and commits. Returns claimed asset IDs.
+        """
+        if batch_size <= 0:
+            return []
+        with self._session_scope(write=True) as session:
+            params: dict = {
+                "limit": batch_size,
+                "pattern": _REPAIR_PROXYABLE_PATTERN,
+            }
+            library_clause = ""
+            if library_slug is not None:
+                library_clause = " AND a.library_id = :library_slug"
+                params["library_slug"] = library_slug
+            rows = session.execute(
+                text(
+                    f"""
+                    SELECT a.id
+                    FROM asset a
+                    JOIN library l ON a.library_id = l.slug
+                    WHERE l.deleted_at IS NULL
+                      AND a.metadata_status = 'exif_done'
+                      AND a.rel_path ~* :pattern
+                      {library_clause}
+                    FOR UPDATE OF a SKIP LOCKED
+                    LIMIT :limit
+                    """
+                ),
+                params,
+            ).fetchall()
+            if not rows:
+                return []
+            ids = [int(r[0]) for r in rows]
+            session.execute(
+                text(
+                    """
+                    UPDATE asset
+                    SET metadata_status = 'sharpness_processing'
+                    WHERE id = ANY(:ids)
+                    """
+                ),
+                {"ids": ids},
+            )
+            return ids
+
+    def write_sharpness_metadata(
+        self,
+        asset_id: int,
+        has_face: bool,
+        face_count: int,
+        sharpness_score: float,
+    ) -> None:
+        """
+        Merge sharpness/face fields into media_metadata and set metadata_status = 'complete'.
+
+        Uses JSONB || so existing EXIF keys are preserved. Only updates when
+        metadata_status = 'sharpness_processing'. Logs a warning if no row was updated.
+        """
+        extra = json.dumps({
+            "has_face": has_face,
+            "face_count": face_count,
+            "sharpness_score": sharpness_score,
+        })
+        with self._session_scope(write=True) as session:
+            result = session.execute(
+                text(
+                    """
+                    UPDATE asset
+                    SET media_metadata = COALESCE(media_metadata, '{}'::jsonb) || CAST(:extra AS jsonb),
+                        metadata_status = 'complete'
+                    WHERE id = :asset_id AND metadata_status = 'sharpness_processing'
+                    """
+                ),
+                {"asset_id": asset_id, "extra": extra},
+            )
+            if (result.rowcount or 0) == 0:
+                _log.warning(
+                    "write_sharpness_metadata: no row updated for asset_id=%s (status may have been reset)",
+                    asset_id,
+                )
+
+    def reset_sharpness_processing_to_exif_done(self, asset_id: int) -> None:
+        """
+        Set metadata_status back to 'exif_done' for an asset stuck in sharpness_processing
+        (e.g. missing thumbnail). No-op if status is not 'sharpness_processing'.
+        """
+        with self._session_scope(write=True) as session:
+            session.execute(
+                text(
+                    """
+                    UPDATE asset SET metadata_status = 'exif_done'
+                    WHERE id = :asset_id AND metadata_status = 'sharpness_processing'
+                    """
+                ),
+                {"asset_id": asset_id},
+            )
 
     def write_exif_metadata(
         self,
@@ -1062,31 +1168,49 @@ class AssetRepository:
                 },
             )
 
-    def reset_stuck_metadata(self, older_than_seconds: float) -> int:
+    def reset_stuck_metadata(
+        self, older_than_seconds: float
+    ) -> tuple[int, int]:
         """
-        Reset assets stuck in EXIF metadata processing back to NULL metadata_status.
+        Reset assets stuck in metadata processing. Does not clear media_metadata.
 
-        To avoid long-running transactions, this uses a simple cutoff based on the
-        asset's mtime as a proxy for age. Returns the count of assets updated.
+        - exif_processing (older than cutoff) -> NULL.
+        - sharpness_processing (older than cutoff) -> exif_done.
+
+        Uses mtime as a proxy for age. Returns (exif_reset_count, sharpness_reset_count).
         """
         if older_than_seconds <= 0:
-            return 0
+            return (0, 0)
         from time import time as _time
 
         cutoff = _time() - older_than_seconds
         with self._session_scope(write=True) as session:
-            result = session.execute(
+            exif_result = session.execute(
                 text(
                     """
                     UPDATE asset
                     SET metadata_status = NULL
-                    WHERE metadata_status = 'processing'
+                    WHERE metadata_status = 'exif_processing'
                       AND mtime < :cutoff
                     """
                 ),
                 {"cutoff": cutoff},
             )
-            return result.rowcount or 0
+            sharpness_result = session.execute(
+                text(
+                    """
+                    UPDATE asset
+                    SET metadata_status = 'exif_done'
+                    WHERE metadata_status = 'sharpness_processing'
+                      AND mtime < :cutoff
+                    """
+                ),
+                {"cutoff": cutoff},
+            )
+            return (
+                exif_result.rowcount or 0,
+                sharpness_result.rowcount or 0,
+            )
 
     def get_asset_with_library_by_id(self, asset_id: int) -> Asset | None:
         """

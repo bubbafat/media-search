@@ -35,6 +35,7 @@ dependencies = [
     "moondream-station>=0.1.9",
     "pyexiftool>=0.5",
     "reverse_geocoder>=1.5",
+    "mediapipe>=0.10.0,<0.11",
 ]
 
 [project.scripts]

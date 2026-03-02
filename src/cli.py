@@ -1482,26 +1482,92 @@ def metadata_reset_stuck(
     older_than: str = typer.Option(
         "1h",
         "--older-than",
-        help="Reset assets stuck in EXIF metadata processing older than this duration (e.g. '1h', '30m').",
+        help="Reset assets stuck in metadata processing older than this duration (e.g. '1h', '30m').",
     ),
 ) -> None:
     """
-    Reset assets with metadata_status='processing' that are older than the given duration.
+    Reset assets stuck in exif_processing or sharpness_processing older than the given duration.
 
-    This makes them eligible for re-processing by the MetadataWorker EXIF phase.
+    exif_processing -> NULL (re-eligible for EXIF). sharpness_processing -> exif_done.
+    Does not clear media_metadata.
     """
     seconds = _parse_duration_to_seconds(older_than)
     session_factory = _get_session_factory()
     asset_repo = AssetRepository(session_factory)
-    count = asset_repo.reset_stuck_metadata(older_than_seconds=seconds)
-    typer.echo(f"Reset {count} asset(s) stuck in metadata processing.")
+    exif_count, sharpness_count = asset_repo.reset_stuck_metadata(older_than_seconds=seconds)
+    typer.echo(
+        f"Reset {exif_count} asset(s) from exif_processing to NULL, "
+        f"{sharpness_count} asset(s) from sharpness_processing to exif_done."
+    )
 
 
 @metadata_app.command("sharpness")
-def metadata_sharpness() -> None:
-    """Placeholder for future sharpness metadata worker."""
-    typer.echo("not yet implemented")
-    raise typer.Exit(1)
+def metadata_sharpness(
+    heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
+    worker_name: str | None = typer.Option(
+        None,
+        "--worker-name",
+        help="Force a specific worker ID. Defaults to auto-generated.",
+    ),
+    library_slug: str | None = typer.Option(
+        None,
+        "--library",
+        help="Limit to this library slug only.",
+    ),
+    all_libraries: bool = typer.Option(
+        False,
+        "--all",
+        help="Process all libraries (global mode). Requires explicit flag.",
+    ),
+    batch: int = typer.Option(
+        0,
+        "--batch",
+        help="Number of assets to claim per sharpness batch (default from config when 0).",
+    ),
+) -> None:
+    """Start the Metadata worker in sharpness phase (thumbnail sharpness + face detection)."""
+    effective_library = _require_library_or_all(
+        library_slug, all_libraries, "Provide either --library <slug> or --all for metadata sharpness."
+    )
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+
+    if effective_library is not None:
+        lib = lib_repo.get_by_slug(effective_library)
+        if lib is None:
+            typer.echo(
+                f"Library not found or deleted: '{effective_library}'. Use 'library list' to see valid slugs.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+    cfg = get_config()
+    eff_batch = batch if batch > 0 else cfg.metadata_batch_size
+
+    worker_id = (
+        worker_name
+        if worker_name is not None
+        else f"metadata-sharpness-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+    )
+    typer.secho(f"Starting Metadata Worker (sharpness): {worker_id}")
+
+    worker = MetadataWorker(
+        worker_id=worker_id,
+        repository=worker_repo,
+        heartbeat_interval_seconds=heartbeat,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_metadata_repo,
+        phase="sharpness",
+        batch_size=eff_batch,
+        library_slug=effective_library,
+    )
+    try:
+        worker.run()
+    except KeyboardInterrupt:
+        typer.secho(f"Worker {worker_id} shutting down...")
 
 
 def main() -> None:

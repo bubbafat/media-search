@@ -27,6 +27,7 @@ uv run media-search --help
 | `proxy`         | Start the image proxy worker (thumbnails and WebP proxies for pending image assets)                         |
 | `video-proxy`   | Start the video proxy worker (720p pipeline: thumbnail, head-clip, scene indexing for pending video assets) |
 | `ai`            | Manage AI models and workers (default model, start AI worker, start video worker, list/add/remove models)   |
+| `metadata`      | Metadata enrichment: EXIF extraction (`exif`), sharpness/face detection on thumbnails (`sharpness`), reset stuck processing (`reset-stuck`) |
 
 
 ---
@@ -810,6 +811,24 @@ Remove an AI model by name (all versions with that name are removed). Prompts fo
 uv run media-search ai remove mock-analyzer
 uv run media-search ai remove mock-analyzer --force
 ```
+
+---
+
+## metadata
+
+Metadata enrichment runs in two phases: **EXIF** (from source files) and **sharpness/face** (from JPEG thumbnails, after the proxy worker has generated them). Use `metadata exif` first, then `metadata sharpness`. Stuck assets can be reset with `metadata reset-stuck`.
+
+### metadata exif
+
+Start the Metadata worker in EXIF phase. Claims assets with `metadata_status` NULL, reads EXIF from the source file, normalizes into `media_metadata`, and sets status to `exif_done`. Requires `--library <slug>` or `--all`. Options: `--heartbeat`, `--worker-name`, `--batch` (default from config when 0).
+
+### metadata sharpness
+
+Start the Metadata worker in sharpness phase. Claims assets with `metadata_status` = `exif_done`, reads the existing JPEG thumbnail, computes sharpness (Laplacian variance) and runs face detection (MediaPipe), then merges `has_face`, `face_count`, and `sharpness_score` into `media_metadata` and sets status to `complete`. Requires `--library <slug>` or `--all`. Options: `--heartbeat`, `--worker-name`, `--batch`.
+
+### metadata reset-stuck [--older-than DURATION]
+
+Reset assets stuck in metadata processing. `exif_processing` (older than threshold) → NULL so they can be re-claimed for EXIF. `sharpness_processing` (older than threshold) → `exif_done` so they can be re-claimed for sharpness. Does not clear `media_metadata`. Default duration is `1h`; use e.g. `30m` or `2h`.
 
 ---
 

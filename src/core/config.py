@@ -49,6 +49,7 @@ class Settings(BaseModel):
     exiftool_path: str = "exiftool"
     generation_hint_original_bpppf_threshold: float = 0.08
     generation_hint_proxy_bpppf_threshold: float = 0.03
+    sharpness_max_variance: float = 1000.0
 
     @field_validator("worker_id", mode="before")
     @classmethod
