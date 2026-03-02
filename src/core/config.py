@@ -50,6 +50,9 @@ class Settings(BaseModel):
     generation_hint_original_bpppf_threshold: float = 0.08
     generation_hint_proxy_bpppf_threshold: float = 0.03
     sharpness_max_variance: float = 1000.0
+    # Idle sleep between worker polling iterations when no work is available.
+    # Must never exceed 5 seconds; BaseWorker enforces this upper bound.
+    worker_idle_poll_seconds: float = 5.0
 
     @field_validator("worker_id", mode="before")
     @classmethod
@@ -93,6 +96,10 @@ class ConfigLoader:
                 data["use_raw_previews"] = self._env["MEDIA_SEARCH_USE_RAW_PREVIEWS"]
             if self._env.get("QUICKWIT_URL"):
                 data["quickwit_url"] = self._env["QUICKWIT_URL"]
+            if self._env.get("MEDIA_SEARCH_WORKER_IDLE_POLL_SECONDS"):
+                data["worker_idle_poll_seconds"] = self._env[
+                    "MEDIA_SEARCH_WORKER_IDLE_POLL_SECONDS"
+                ]
         settings = Settings.model_validate(data)
         if settings.worker_id is None or settings.worker_id == "":
             settings = settings.model_copy(update={"worker_id": socket.gethostname()})
@@ -122,6 +129,10 @@ class ConfigLoader:
             overrides["use_raw_previews"] = self._env["MEDIA_SEARCH_USE_RAW_PREVIEWS"]
         if self._env.get("QUICKWIT_URL"):
             overrides["quickwit_url"] = self._env["QUICKWIT_URL"]
+        if self._env.get("MEDIA_SEARCH_WORKER_IDLE_POLL_SECONDS"):
+            overrides["worker_idle_poll_seconds"] = self._env[
+                "MEDIA_SEARCH_WORKER_IDLE_POLL_SECONDS"
+            ]
         if overrides:
             settings = settings.model_copy(update=overrides)
         return settings

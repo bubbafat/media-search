@@ -41,4 +41,4 @@ All workers must inherit from BaseWorker and implement handle_signal(command).
 - All worker commands log progress at INFO level by default. Do not add --verbose or --quiet flags. Users who want silence use shell redirection.
 - All workers which have a polling loop for work should have a --once option to short circuit that polling
 - All polling workers should gracefully handle CTRL+C to kill their current polling and exit to the command line (error code 0 since this was not an error)
-- All polling workers should sleep for now more than 5 seconds so that the app is terminated in a reasonable amount of time when a signal is recieved
+- All polling workers should sleep for no more than 5 seconds so that the app is terminated in a reasonable amount of time when a signal is recieved. The user is welcome to extend this time further, but our shipping code should respect this.

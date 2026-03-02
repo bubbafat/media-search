@@ -8,6 +8,7 @@ import time
 from abc import ABC
 from typing import Any
 
+from src.core.config import get_config
 from src.core.logging import get_flight_logger
 from src.models.entities import WorkerState
 from src.repository.system_metadata_repo import SystemMetadataRepository
@@ -15,8 +16,26 @@ from src.repository.worker_repo import WorkerRepository
 
 _log = logging.getLogger(__name__)
 
-# Fixed idle sleep between process_task() calls when no work is available. Not configurable.
-IDLE_POLL_SECONDS = 5.0
+
+def _resolve_idle_poll_seconds() -> float:
+    """
+    Resolve idle poll duration from config.
+
+    Shipping config should keep this at 5.0s or below to respect the project
+    convention, but tests and local overrides are free to shorten or extend it.
+    """
+    try:
+        cfg = get_config()
+        value = getattr(cfg, "worker_idle_poll_seconds", 5.0)
+    except Exception:
+        value = 5.0
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = 5.0
+    if seconds <= 0:
+        seconds = 5.0
+    return seconds
 
 
 class BaseWorker(ABC):
@@ -44,6 +63,7 @@ class BaseWorker(ABC):
         self._shutdown = False
         self.should_exit = False  # Alias for _shutdown; subclasses may check this
         self._heartbeat_thread: threading.Thread | None = None
+        self._idle_poll_seconds: float = 5.0
 
     def _check_compatibility(self) -> None:
         """
@@ -146,6 +166,7 @@ class BaseWorker(ABC):
         self._repo.register_worker(self.worker_id, WorkerState.idle, self.hostname)
         self._state = WorkerState.idle
         self._shutdown = False
+        self._idle_poll_seconds = _resolve_idle_poll_seconds()
 
         _log.info("Worker %s starting.", self.worker_id)
 
@@ -182,10 +203,10 @@ class BaseWorker(ABC):
                     _log.info("Work done.")
                     time.sleep(0.1)
                 else:
-                    _log.info("Idle, sleeping 5s")
+                    _log.info("Idle, sleeping %ss", self._idle_poll_seconds)
                     idle_period_started = True
                     try:
-                        time.sleep(IDLE_POLL_SECONDS)
+                        time.sleep(self._idle_poll_seconds)
                     except InterruptedError:
                         break
                     if self._shutdown or self.should_exit:

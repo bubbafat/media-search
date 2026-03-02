@@ -45,6 +45,25 @@ def clear_app_db_caches() -> None:
     _get_quickwit_search_repo.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def fast_worker_idle_poll(monkeypatch):
+    """
+    Use a faster idle poll interval in tests so polling workers don't sleep
+    the full 5 seconds between checks. Production default remains 5.0s.
+    """
+    prev = os.environ.get("MEDIA_SEARCH_WORKER_IDLE_POLL_SECONDS")
+    os.environ["MEDIA_SEARCH_WORKER_IDLE_POLL_SECONDS"] = "1.0"
+    reset_config()
+    try:
+        yield
+    finally:
+        if prev is not None:
+            os.environ["MEDIA_SEARCH_WORKER_IDLE_POLL_SECONDS"] = prev
+        else:
+            os.environ.pop("MEDIA_SEARCH_WORKER_IDLE_POLL_SECONDS", None)
+        reset_config()
+
+
 @pytest.fixture(scope="module")
 def postgres_container():
     """Module-scoped PostgreSQL 16 container (testcontainers).
