@@ -304,16 +304,18 @@ def test_ai_worker_logs_friendly_message_on_moondream_unavailable(engine, _sessi
     # Second scenario: generic analyzer failure still poisons asset, preserving error_message.
     session = _session_factory()
     try:
-        session.add(
-            Library(
-                slug="poison-lib",
-                name="Poison",
-                absolute_path="/tmp/poison",
-                is_active=True,
-                sampling_limit=100,
+        existing = session.get(Library, "poison-lib")
+        if existing is None:
+            session.add(
+                Library(
+                    slug="poison-lib",
+                    name="Poison",
+                    absolute_path="/tmp/poison",
+                    is_active=True,
+                    sampling_limit=100,
+                )
             )
-        )
-        session.commit()
+            session.commit()
     finally:
         session.close()
 
