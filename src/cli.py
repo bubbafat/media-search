@@ -1019,29 +1019,40 @@ def ai_start(
             resolved_analyzer = "mock"
 
     # Preflight check for Moondream Station analyzers to fail fast with a friendly message.
+    # Only perform this check when there is likely work to do; avoid bothering users when
+    # a library has no assets needing AI analysis.
     if resolved_analyzer in {"moondream-station", "md3p-int4"}:
-        import requests
-        from requests import exceptions as req_exc  # type: ignore[attr-defined]
+        need_work = True
+        if effective_library is not None:
+            # For library-scoped workers, only preflight when there are assets in the
+            # claimable status for the selected processing mode.
+            claim_status = AssetStatus.proxied if mode == "light" else AssetStatus.analyzed_light
+            count = asset_repo.count_assets_by_library(effective_library, status=claim_status)
+            need_work = count > 0
 
-        from src.ai.vision_moondream_station import DEFAULT_ENDPOINT, ENDPOINT_ENV
+        if need_work:
+            import requests
+            from requests import exceptions as req_exc  # type: ignore[attr-defined]
 
-        endpoint = os.environ.get(ENDPOINT_ENV, DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
-        endpoint = endpoint.rstrip("/")
-        try:
-            # We only care that a TCP connection can be established; ignore status code.
-            requests.get(endpoint, timeout=3)
-        except req_exc.RequestException:
-            typer.secho(
-                (
-                    f"Could not reach Moondream Station at {endpoint}. "
-                    "Make sure Moondream Station is running (for example by running "
-                    "'moondream-station') or update MEDIASEARCH_MOONDREAM_STATION_ENDPOINT, "
-                    "then re-run this command."
-                ),
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(1)
+            from src.ai.vision_moondream_station import DEFAULT_ENDPOINT, ENDPOINT_ENV
+
+            endpoint = os.environ.get(ENDPOINT_ENV, DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
+            endpoint = endpoint.rstrip("/")
+            try:
+                # We only care that a TCP connection can be established; ignore status code.
+                requests.get(endpoint, timeout=3)
+            except req_exc.RequestException:
+                typer.secho(
+                    (
+                        f"Could not reach Moondream Station at {endpoint}. "
+                        "Make sure Moondream Station is running (for example by running "
+                        "'moondream-station') or update MEDIASEARCH_MOONDREAM_STATION_ENDPOINT, "
+                        "then re-run this command."
+                    ),
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(1)
 
     worker_id = (
         worker_name
