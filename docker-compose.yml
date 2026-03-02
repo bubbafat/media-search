@@ -20,7 +20,7 @@ services:
     image: quickwit/quickwit:0.8.1
     container_name: media-search-quickwit
     ports:
-      - "127.0.0.1:7280:7280"
+      - "7280:7280"
     volumes:
       - quickwit_data:/quickwit/qwdata
     environment:
