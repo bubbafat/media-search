@@ -820,11 +820,11 @@ Metadata enrichment runs in two phases: **EXIF** (from source files) and **sharp
 
 ### metadata exif
 
-Start the Metadata worker in EXIF phase. Claims assets with `metadata_status` NULL, reads EXIF from the source file, normalizes into `media_metadata`, and sets status to `exif_done`. Requires `--library <slug>` or `--all`. Options: `--heartbeat`, `--worker-name`, `--batch` (default from config when 0).
+Start the Metadata worker in EXIF phase. Claims assets with `metadata_status` NULL, reads EXIF from the source file, normalizes into `media_metadata`, and sets status to `exif_done`. Requires `--library <slug>` or `--all`. Options: `--heartbeat`, `--worker-name`, `--batch` (default from config when 0), `--verbose` / `-v` (print progress for each asset processed).
 
 ### metadata sharpness
 
-Start the Metadata worker in sharpness phase. Claims assets with `metadata_status` = `exif_done`, reads the existing JPEG thumbnail, computes sharpness (Laplacian variance) and runs face detection (MediaPipe), then merges `has_face`, `face_count`, and `sharpness_score` into `media_metadata` and sets status to `complete`. Requires `--library <slug>` or `--all`. Options: `--heartbeat`, `--worker-name`, `--batch`.
+Start the Metadata worker in sharpness phase. Claims assets with `metadata_status` = `exif_done`, reads the existing JPEG thumbnail, computes sharpness (Laplacian variance) and runs face detection (MediaPipe), then merges `has_face`, `face_count`, and `sharpness_score` into `media_metadata` and sets status to `complete`. Requires `--library <slug>` or `--all`. Options: `--heartbeat`, `--worker-name`, `--batch`, `--verbose` / `-v` (print progress for each asset processed).
 
 ### metadata reset-stuck [--older-than DURATION]
 

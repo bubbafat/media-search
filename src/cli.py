@@ -1431,6 +1431,12 @@ def metadata_exif(
         "--batch",
         help="Number of assets to claim per EXIF batch (default from config when 0).",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print progress (each asset processed).",
+    ),
 ) -> None:
     """Start the Metadata worker in EXIF phase."""
     effective_library = _require_library_or_all(
@@ -1461,6 +1467,13 @@ def metadata_exif(
     )
     typer.secho(f"Starting Metadata Worker (EXIF): {worker_id}")
 
+    if verbose:
+        root = logging.getLogger("src.workers")
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.INFO)
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+
     worker = MetadataWorker(
         worker_id=worker_id,
         repository=worker_repo,
@@ -1470,6 +1483,7 @@ def metadata_exif(
         phase="exif",
         batch_size=eff_batch,
         library_slug=effective_library,
+        verbose=verbose,
     )
     try:
         worker.run()
@@ -1524,6 +1538,12 @@ def metadata_sharpness(
         "--batch",
         help="Number of assets to claim per sharpness batch (default from config when 0).",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print progress (each asset processed).",
+    ),
 ) -> None:
     """Start the Metadata worker in sharpness phase (thumbnail sharpness + face detection)."""
     effective_library = _require_library_or_all(
@@ -1554,6 +1574,13 @@ def metadata_sharpness(
     )
     typer.secho(f"Starting Metadata Worker (sharpness): {worker_id}")
 
+    if verbose:
+        root = logging.getLogger("src.workers")
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.INFO)
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+
     worker = MetadataWorker(
         worker_id=worker_id,
         repository=worker_repo,
@@ -1563,6 +1590,7 @@ def metadata_sharpness(
         phase="sharpness",
         batch_size=eff_batch,
         library_slug=effective_library,
+        verbose=verbose,
     )
     try:
         worker.run()

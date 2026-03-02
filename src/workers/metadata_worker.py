@@ -42,6 +42,7 @@ class MetadataWorker(BaseWorker):
         batch_size: int,
         library_slug: str | None = None,
         idle_poll_interval_seconds: float = 5.0,
+        verbose: bool = False,
     ) -> None:
         super().__init__(
             worker_id,
@@ -55,6 +56,7 @@ class MetadataWorker(BaseWorker):
         self._batch_size = batch_size
         self._library_slug = library_slug
         self._storage = LocalMediaStore()
+        self._verbose = verbose
 
     def process_task(self) -> bool:
         if self._phase == "exif":
@@ -110,6 +112,12 @@ class MetadataWorker(BaseWorker):
                 self._asset_repo.write_sharpness_metadata(
                     asset_id, has_face, face_count, sharpness_score
                 )
+                if self._verbose:
+                    _log.info(
+                        "Sharpness: processed asset %s (%s)",
+                        asset_id,
+                        asset.rel_path,
+                    )
             except Exception as e:  # noqa: BLE001
                 _log.error(
                     "MetadataWorker sharpness phase failed for asset %s: %s",
@@ -151,6 +159,12 @@ class MetadataWorker(BaseWorker):
                 assert isinstance(asset, Asset)
                 media_metadata = normalize_media_metadata(raw_exif, asset=asset)
                 self._asset_repo.write_exif_metadata(asset_id, raw_exif, media_metadata)
+                if self._verbose:
+                    _log.info(
+                        "EXIF: processed asset %s (%s)",
+                        asset_id,
+                        asset.rel_path,
+                    )
             except Exception as e:  # noqa: BLE001
                 # Leave the asset in 'exif_processing' for the recovery CLI to reset.
                 try:
