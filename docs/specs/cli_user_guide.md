@@ -830,6 +830,8 @@ Start the Metadata worker in sharpness phase. Claims assets with `metadata_statu
 
 Reset assets stuck in metadata processing. `exif_processing` (older than threshold) → NULL so they can be re-claimed for EXIF. `sharpness_processing` (older than threshold) → `exif_done` so they can be re-claimed for sharpness. Does not clear `media_metadata`. Default duration is `1h`; use e.g. `30m` or `2h`.
 
+Options: `--older-than`, `--verbose` / `-v` (print a short message before the reset so you know it’s running).
+
 ---
 
 ## End-to-end example

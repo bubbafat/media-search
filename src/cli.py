@@ -1498,6 +1498,12 @@ def metadata_reset_stuck(
         "--older-than",
         help="Reset assets stuck in metadata processing older than this duration (e.g. '1h', '30m').",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print a short message before and after the reset.",
+    ),
 ) -> None:
     """
     Reset assets stuck in exif_processing or sharpness_processing older than the given duration.
@@ -1506,6 +1512,8 @@ def metadata_reset_stuck(
     Does not clear media_metadata.
     """
     seconds = _parse_duration_to_seconds(older_than)
+    if verbose:
+        typer.echo(f"Resetting metadata statuses older than {older_than} (~{int(seconds)} seconds).")
     session_factory = _get_session_factory()
     asset_repo = AssetRepository(session_factory)
     exif_count, sharpness_count = asset_repo.reset_stuck_metadata(older_than_seconds=seconds)
