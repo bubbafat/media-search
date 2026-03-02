@@ -112,6 +112,9 @@ class Asset(SQLModel, table=True):
     preview_path: str | None = Field(default=None)
     video_preview_path: str | None = Field(default=None)
     segmentation_version: int | None = Field(default=None)
+    raw_exif: dict | None = Field(default=None, sa_column=Column(JSONB))
+    media_metadata: dict | None = Field(default=None, sa_column=Column(JSONB))
+    metadata_status: str | None = Field(default=None)
 
     library: "Library" = Relationship()
 

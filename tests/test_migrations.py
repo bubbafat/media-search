@@ -402,6 +402,22 @@ def test_migration_01_upgrade_head(migration_postgres, migration_engine):
                 )
             ).fetchone()
             assert row is not None, "library_model_policy must have FK to library.slug"
+
+        # Assert asset has raw_exif, media_metadata, metadata_status (migration 024)
+        with migration_engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT column_name, data_type FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'asset' "
+                    "AND column_name IN ('raw_exif', 'media_metadata', 'metadata_status') "
+                    "ORDER BY column_name"
+                )
+            )
+            rows = result.fetchall()
+            assert len(rows) == 3, f"asset must have raw_exif, media_metadata, metadata_status (got {rows})"
+            assert rows[0][0] == "media_metadata" and rows[0][1] == "jsonb"
+            assert rows[1][0] == "metadata_status" and rows[1][1] == "character varying"
+            assert rows[2][0] == "raw_exif" and rows[2][1] == "jsonb"
     finally:
         if prev is not None:
             os.environ["DATABASE_URL"] = prev
