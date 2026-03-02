@@ -44,7 +44,11 @@ def _get_exiftool() -> exiftool.ExifTool:
     executable = getattr(cfg, "exiftool_path", "exiftool") or "exiftool"
     tool = exiftool.ExifTool(executable=executable)
     try:
-        tool.start()
+        # PyExifTool: older versions use start(), newer use run()
+        if hasattr(tool, "run"):
+            tool.run()
+        else:
+            tool.start()
     except Exception as e:  # noqa: BLE001
         raise ExifToolError(f"Failed to start exiftool at '{executable}': {e}") from e
     _EXIFTOOL_INSTANCE = tool
