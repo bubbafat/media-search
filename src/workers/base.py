@@ -157,8 +157,9 @@ class BaseWorker(ABC):
         """
         Main entry: pre-flight compatibility check, register worker, start heartbeat thread, run loop.
         Loop checks DB for command (pause/resume/shutdown), calls handle_signal, then process_task when not paused.
-        When once=True, calls process_task() exactly once, does not sleep, then exits cleanly.
-        Idle sleep when no work is available is fixed at 5 seconds.
+        When once=True, repeatedly calls process_task() until it returns False (no work)
+        or a shutdown signal is received, without entering the idle sleep/poll loop.
+        Idle sleep when no work is available in normal mode is fixed at 5 seconds.
         On exit, deregisters the worker (removes row from worker_status). Exit code is 0.
         """
         self._install_signal_handlers()
@@ -194,8 +195,13 @@ class BaseWorker(ABC):
                     continue
 
                 if once:
-                    self.process_task()
-                    break
+                    result = self.process_task()
+                    if not result:
+                        break
+                    idle_period_started = False
+                    _log.info("Work done.")
+                    time.sleep(0.1)
+                    continue
 
                 result = self.process_task()
                 if result:

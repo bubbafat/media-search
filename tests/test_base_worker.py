@@ -44,6 +44,22 @@ class _ConcreteWorker(BaseWorker):
         self.process_task_calls.append(time.monotonic())
 
 
+class _DrainingWorker(BaseWorker):
+    """Worker that simulates N units of work then reports no work."""
+
+    def __init__(self, *args: object, max_tasks: int = 0, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.remaining_tasks = max_tasks
+        self.process_task_calls: list[float] = []
+
+    def process_task(self) -> bool:
+        self.process_task_calls.append(time.monotonic())
+        if self.remaining_tasks > 0:
+            self.remaining_tasks -= 1
+            return True
+        return False
+
+
 def _start_worker_in_thread(worker: BaseWorker) -> threading.Thread:
     """Start a worker.run() loop in a daemon thread and return the thread."""
     thread = threading.Thread(target=worker.run)
@@ -239,6 +255,28 @@ worker.run()
         assert row is None
     finally:
         session.close()
+
+
+def test_once_drains_available_work_without_polling(engine, _session_factory):
+    """When once=True, run() drains all available work (repeated process_task) without entering idle polling."""
+    repo, system_metadata_repo = _create_repo_and_tables(engine, _session_factory)
+    # Simulate two units of work: process_task returns True twice, then False once.
+    worker = _DrainingWorker(
+        "once-worker",
+        repo,
+        heartbeat_interval_seconds=60,
+        system_metadata_repo=system_metadata_repo,
+        max_tasks=2,
+    )
+
+    start = time.monotonic()
+    worker.run(once=True)
+    elapsed = time.monotonic() - start
+
+    # Two tasks + one final "no work" check.
+    assert len(worker.process_task_calls) == 3
+    # Should complete quickly (no 5s idle sleep); allow a buffer for test overhead.
+    assert elapsed < 4.0
 
 
 def test_unregister_worker_deletes_row(engine, _session_factory):
