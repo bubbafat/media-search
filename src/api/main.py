@@ -845,9 +845,9 @@ def api_asset_similar(
     if asset is None:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    va = asset.visual_analysis or {}
-    description = (va.get("description") or "").strip()
-    tags = va.get("tags") or []
+    visual_analysis = asset.visual_analysis or {}
+    description = visual_analysis.get("description") or ""
+    tags = visual_analysis.get("tags") or []
     if not description and not tags:
         raise HTTPException(
             status_code=422,
