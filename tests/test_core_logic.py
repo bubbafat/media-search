@@ -169,6 +169,7 @@ def test_flight_logger_stores_all_levels_in_memory_until_dump(tmp_path):
     handler = FlightLogger(capacity=100, forensics_dir=forensics_dir)
     handler.setFormatter(logging.Formatter("%(message)s"))
     root = logging.getLogger()
+    prev_level = root.level
     root.addHandler(handler)
     root.setLevel(logging.DEBUG)
 
@@ -190,6 +191,7 @@ def test_flight_logger_stores_all_levels_in_memory_until_dump(tmp_path):
     assert "msg-error" in content
 
     root.removeHandler(handler)
+    root.setLevel(prev_level)
 
 
 @pytest.mark.fast
@@ -204,17 +206,24 @@ def test_flight_logger_gets_all_levels_console_only_above_config(tmp_path):
     console.setLevel(logging.INFO)
     console.setFormatter(logging.Formatter("%(message)s"))
     root = logging.getLogger()
-    for h in root.handlers[:]:
-        root.removeHandler(h)
-    root.setLevel(logging.DEBUG)
-    root.addHandler(handler)
-    root.addHandler(console)
+    prev_handlers = list(root.handlers)
+    prev_level = root.level
+    try:
+        for h in root.handlers[:]:
+            root.removeHandler(h)
+        root.setLevel(logging.DEBUG)
+        root.addHandler(handler)
+        root.addHandler(console)
 
-    logging.debug("only-in-flight")
-    logging.info("in-flight-and-console")
-
-    root.removeHandler(handler)
-    root.removeHandler(console)
+        logging.debug("only-in-flight")
+        logging.info("in-flight-and-console")
+    finally:
+        # Remove handlers we added and restore previous root configuration
+        for h in root.handlers[:]:
+            root.removeHandler(h)
+        for h in prev_handlers:
+            root.addHandler(h)
+        root.setLevel(prev_level)
 
     assert len(handler) == 2
     path = handler.dump("routing-test")
@@ -233,6 +242,7 @@ def test_flight_logger_only_last_50000_after_60000_messages(tmp_path):
     handler = FlightLogger(capacity=FLIGHT_LOG_CAPACITY, forensics_dir=forensics_dir)
     handler.setFormatter(logging.Formatter("%(message)s"))
     root = logging.getLogger()
+    prev_level = root.level
     root.addHandler(handler)
     root.setLevel(logging.DEBUG)
 
@@ -249,3 +259,4 @@ def test_flight_logger_only_last_50000_after_60000_messages(tmp_path):
     assert "line-59999" in lines[-1] or lines[-1].endswith("line-59999")
 
     root.removeHandler(handler)
+    root.setLevel(prev_level)
