@@ -667,7 +667,6 @@ def search_sync(
         quickwit_base_url=qw_url,
         system_metadata_repo=system_metadata_repo,
         library_slug=library,
-        idle_poll_interval_seconds=5.0,
     )
     try:
         worker.run(once=once)

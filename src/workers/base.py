@@ -15,6 +15,9 @@ from src.repository.worker_repo import WorkerRepository
 
 _log = logging.getLogger(__name__)
 
+# Fixed idle sleep between process_task() calls when no work is available. Not configurable.
+IDLE_POLL_SECONDS = 5.0
+
 
 class BaseWorker(ABC):
     """
@@ -31,16 +34,15 @@ class BaseWorker(ABC):
         heartbeat_interval_seconds: float = 15.0,
         *,
         system_metadata_repo: SystemMetadataRepository,
-        idle_poll_interval_seconds: float = 5.0,
     ) -> None:
         self.worker_id = worker_id
         self._repo = repository
         self._heartbeat_interval = heartbeat_interval_seconds
         self._system_metadata_repo = system_metadata_repo
-        self._idle_poll_interval = idle_poll_interval_seconds
         self.hostname = socket.gethostname()
         self._state = WorkerState.idle
-        self.should_exit = False
+        self._shutdown = False
+        self.should_exit = False  # Alias for _shutdown; subclasses may check this
         self._heartbeat_thread: threading.Thread | None = None
 
     def _check_compatibility(self) -> None:
@@ -80,6 +82,7 @@ class BaseWorker(ABC):
 
     def _handle_shutdown(self) -> None:
         """Transition to offline and request run-loop exit."""
+        self._shutdown = True
         self.should_exit = True
         self._set_state(WorkerState.offline)
 
@@ -106,9 +109,9 @@ class BaseWorker(ABC):
 
     def _heartbeat_loop(self) -> None:
         """Daemon thread: update last_seen_at and stats every heartbeat_interval_seconds."""
-        while not self.should_exit:
+        while not self._shutdown:
             time.sleep(self._heartbeat_interval)
-            if self.should_exit:
+            if self._shutdown:
                 break
             try:
                 self._repo.update_heartbeat(
@@ -119,11 +122,12 @@ class BaseWorker(ABC):
                 logging.error("Heartbeat failed", exc_info=True)
 
     def _install_signal_handlers(self) -> None:
-        """Register SIGINT and SIGTERM to set should_exit for graceful shutdown (main thread only)."""
+        """Register SIGINT and SIGTERM to set _shutdown for graceful shutdown (main thread only). Does not raise."""
         if threading.current_thread() is not threading.main_thread():
             return
 
         def _handler(_signum: int, _frame: Any) -> None:
+            self._shutdown = True
             self.should_exit = True
 
         signal.signal(signal.SIGINT, _handler)
@@ -133,20 +137,24 @@ class BaseWorker(ABC):
         """
         Main entry: pre-flight compatibility check, register worker, start heartbeat thread, run loop.
         Loop checks DB for command (pause/resume/shutdown), calls handle_signal, then process_task when not paused.
-        When once=True, exit immediately when process_task() returns False (no work available).
-        On exit, deregisters the worker (removes row from worker_status).
+        When once=True, calls process_task() exactly once, does not sleep, then exits cleanly.
+        Idle sleep when no work is available is fixed at 5 seconds.
+        On exit, deregisters the worker (removes row from worker_status). Exit code is 0.
         """
         self._install_signal_handlers()
         self._check_compatibility()
         self._repo.register_worker(self.worker_id, WorkerState.idle, self.hostname)
         self._state = WorkerState.idle
+        self._shutdown = False
+
+        _log.info("Worker %s starting.", self.worker_id)
 
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._heartbeat_thread.start()
 
         idle_period_started = False
         try:
-            while not self.should_exit:
+            while not self._shutdown and not self.should_exit:
                 cmd = self._repo.get_command(self.worker_id)
                 if cmd != "none":
                     if cmd in ("pause", "resume", "shutdown"):
@@ -157,33 +165,35 @@ class BaseWorker(ABC):
                             fl.dump(self.worker_id)
                     self._repo.clear_command(self.worker_id)
 
-                if self.should_exit:
+                if self._shutdown or self.should_exit:
                     break
 
                 if self._state == WorkerState.paused:
                     time.sleep(1)
                     continue
 
+                if once:
+                    self.process_task()
+                    break
+
                 result = self.process_task()
                 if result:
                     idle_period_started = False
+                    _log.info("Work done.")
                     time.sleep(0.1)
                 else:
-                    if once:
+                    _log.info("Idle, sleeping 5s")
+                    idle_period_started = True
+                    try:
+                        time.sleep(IDLE_POLL_SECONDS)
+                    except InterruptedError:
                         break
-                    if not idle_period_started:
-                        _log.info(
-                            "No work, entering polling mode (checking every %ss)",
-                            self._idle_poll_interval,
-                        )
-                        idle_period_started = True
-                    time.sleep(self._idle_poll_interval)
-                    if self.should_exit:
+                    if self._shutdown or self.should_exit:
                         break
-                    _log.info("Checking for work...")
         finally:
+            self._shutdown = True
             self.should_exit = True
-            # Deregister the worker from worker_status on shutdown.
+            _log.info("Shutdown requested, exiting cleanly.")
             try:
                 self._repo.unregister_worker(self.worker_id)
             except Exception:

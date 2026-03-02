@@ -114,7 +114,6 @@ def test_pause_command_transitions_state_and_stops_process_task(engine, _session
         repo,
         heartbeat_interval_seconds=10,
         system_metadata_repo=system_metadata_repo,
-        idle_poll_interval_seconds=0.2,
     )
 
     session = _session_factory()
@@ -138,7 +137,7 @@ def test_pause_command_transitions_state_and_stops_process_task(engine, _session
     finally:
         session.close()
 
-    time.sleep(1.5)
+    time.sleep(6)  # Worker idles 5s between checks; allow time to see pause command
 
     session = _session_factory()
     try:
@@ -163,7 +162,6 @@ def test_shutdown_command_causes_graceful_exit(engine, _session_factory):
         repo,
         heartbeat_interval_seconds=10,
         system_metadata_repo=system_metadata_repo,
-        idle_poll_interval_seconds=0.2,
     )
 
     thread = threading.Thread(target=worker.run)
@@ -179,7 +177,7 @@ def test_shutdown_command_causes_graceful_exit(engine, _session_factory):
     finally:
         session.close()
 
-    thread.join(timeout=3)
+    thread.join(timeout=8)  # Worker idles 5s between checks; allow time to see shutdown
     assert not thread.is_alive()
 
     session = _session_factory()
@@ -223,7 +221,7 @@ engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
 session_factory = sessionmaker(engine, autocommit=False, autoflush=False, expire_on_commit=False)
 repo = WorkerRepository(session_factory)
 system_metadata_repo = SystemMetadataRepository(session_factory)
-worker = MinimalWorker("sigterm-worker", repo, heartbeat_interval_seconds=60, system_metadata_repo=system_metadata_repo, idle_poll_interval_seconds=0.5)
+worker = MinimalWorker("sigterm-worker", repo, heartbeat_interval_seconds=60, system_metadata_repo=system_metadata_repo)
 worker.run()
 """,
         ],
@@ -232,7 +230,7 @@ worker.run()
     )
     time.sleep(0.5)
     proc.send_signal(signal.SIGTERM)
-    proc.wait(timeout=5)
+    proc.wait(timeout=10)  # Allow time for signal to interrupt sleep or for one 5s idle cycle
     assert proc.returncode in (0, -signal.SIGTERM, 128 + signal.SIGTERM)
 
     session = _session_factory()

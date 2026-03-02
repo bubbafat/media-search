@@ -49,14 +49,12 @@ class SearchSyncWorker(BaseWorker):
         system_metadata_repo: SystemMetadataRepository,
         library_slug: str | None = None,
         heartbeat_interval_seconds: float = 15.0,
-        idle_poll_interval_seconds: float = 5.0,
     ) -> None:
         super().__init__(
             worker_id,
             repository,
             heartbeat_interval_seconds,
             system_metadata_repo=system_metadata_repo,
-            idle_poll_interval_seconds=idle_poll_interval_seconds,
         )
         self._asset_repo = asset_repo
         self._scene_repo = scene_repo

@@ -41,14 +41,12 @@ class MetadataWorker(BaseWorker):
         phase: Literal["exif", "sharpness"],
         batch_size: int,
         library_slug: str | None = None,
-        idle_poll_interval_seconds: float = 5.0,
     ) -> None:
         super().__init__(
             worker_id,
             repository,
             heartbeat_interval_seconds,
             system_metadata_repo=system_metadata_repo,
-            idle_poll_interval_seconds=idle_poll_interval_seconds,
         )
         self._asset_repo = asset_repo
         self._phase: Literal["exif", "sharpness"] = phase

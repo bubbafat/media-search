@@ -297,7 +297,7 @@ def test_dirty_detection(scanner_worker, tmp_path):
 
     worker.should_exit = False
     with run_worker(worker):
-        time.sleep(0.8)
+        time.sleep(2.0)  # Allow full scan to complete (dirty detection)
 
     assets_after = _get_assets(session_factory, library_slug)
     assert len(assets_after) == 1
@@ -433,14 +433,13 @@ def test_signal_respect_pause(engine, _session_factory, run_worker, tmp_path):
             heartbeat_interval_seconds=60.0,
             asset_repo=asset_repo,
             system_metadata_repo=system_metadata_repo,
-            idle_poll_interval_seconds=0.2,
         )
         worker_repo.register_worker("scanner-pause-test", WorkerState.idle, hostname="")
 
     with run_worker(worker):
-        time.sleep(0.5)
+        time.sleep(0.3)  # Worker may still be in first scan
         _set_worker_command(_session_factory, "scanner-pause-test", "pause")
-        time.sleep(1.5)
+        time.sleep(7)  # After first scan: 0.1s then 5s idle; worker wakes and sees pause
         state = _get_worker_state(_session_factory, "scanner-pause-test")
         assert state == WorkerState.paused.value
         scan_status = _get_library_scan_status(_session_factory, library_slug)

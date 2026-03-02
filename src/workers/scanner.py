@@ -103,14 +103,12 @@ class ScannerWorker(BaseWorker):
         asset_repo: AssetRepository,
         system_metadata_repo: SystemMetadataRepository,
         progress_interval: int | None = None,
-        idle_poll_interval_seconds: float = 5.0,
     ) -> None:
         super().__init__(
             worker_id,
             repository,
             heartbeat_interval_seconds,
             system_metadata_repo=system_metadata_repo,
-            idle_poll_interval_seconds=idle_poll_interval_seconds,
         )
         self._asset_repo = asset_repo
         self._last_files_processed: int = 0
@@ -121,11 +119,11 @@ class ScannerWorker(BaseWorker):
     def get_heartbeat_stats(self) -> dict | None:
         return {"files_processed": self._last_files_processed}
 
-    def process_task(self, library_slug: str | None = None) -> None:
+    def process_task(self, library_slug: str | None = None) -> bool:
         library = self._asset_repo.claim_library_for_scanning(slug=library_slug)
         if library is None:
             _log.info("No libraries require scanning")
-            return
+            return False
 
         def should_stop():
             return self.should_exit or self._state == WorkerState.paused
@@ -138,16 +136,16 @@ class ScannerWorker(BaseWorker):
             except ValueError as e:
                 _log.warning("Scanner: %s; resetting library to idle", e)
                 self._asset_repo.set_library_scan_status(library.slug, ScanStatus.idle)
-                return
+                return True
             except OSError as e:
                 _log.warning("Scanner: %s; resetting library to idle", e)
                 self._asset_repo.set_library_scan_status(library.slug, ScanStatus.idle)
-                return
+                return True
 
         if not root.exists():
             _log.warning("Scanner: library root does not exist %s; resetting library to idle", root)
             self._asset_repo.set_library_scan_status(library.slug, ScanStatus.idle)
-            return
+            return True
 
         self._set_state(WorkerState.processing, persist=True)
         try:
@@ -164,3 +162,4 @@ class ScannerWorker(BaseWorker):
         finally:
             self._asset_repo.set_library_scan_status(library.slug, ScanStatus.idle)
             self._set_state(WorkerState.idle, persist=True)
+        return True
