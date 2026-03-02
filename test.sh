@@ -39,4 +39,5 @@ if [[ -z "$PYTEST_M" ]]; then
   PYTEST_M='not migration and (fast or slow)'
 fi
 
-exec uv run --env-file .env pytest tests/ -v -m "$PYTEST_M" "${PASSTHROUGH[@]}"
+# Run pytest without .env so tests are hermetic (conftest sets DATABASE_URL to testcontainers).
+exec uv run pytest tests/ -v -m "$PYTEST_M" "${PASSTHROUGH[@]}"

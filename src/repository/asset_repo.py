@@ -1,5 +1,6 @@
 """Asset and library scan repository: upsert assets, claim library for scanning, set scan status."""
 
+import json
 import logging
 import re
 from collections.abc import Sequence
@@ -974,6 +975,197 @@ class AssetRepository:
                 params,
             )
             return result.rowcount or 0
+
+    def claim_assets_for_exif_metadata(
+        self,
+        batch_size: int,
+        library_slug: str | None = None,
+    ) -> list[int]:
+        """
+        Claim a batch of assets for EXIF metadata extraction.
+
+        Uses FOR UPDATE SKIP LOCKED on assets where metadata_status IS NULL and the
+        file extension matches the combined image+video pattern. Immediately sets
+        metadata_status = 'processing' and commits, releasing the row locks before
+        returning. Returns the list of claimed asset IDs.
+        """
+        if batch_size <= 0:
+            return []
+        with self._session_scope(write=True) as session:
+            params: dict = {
+                "limit": batch_size,
+                "pattern": _REPAIR_PROXYABLE_PATTERN,
+            }
+            library_clause = ""
+            if library_slug is not None:
+                library_clause = " AND a.library_id = :library_slug"
+                params["library_slug"] = library_slug
+            rows = session.execute(
+                text(
+                    f"""
+                    SELECT a.id
+                    FROM asset a
+                    JOIN library l ON a.library_id = l.slug
+                    WHERE l.deleted_at IS NULL
+                      AND a.metadata_status IS NULL
+                      AND a.rel_path ~* :pattern
+                      {library_clause}
+                    FOR UPDATE OF a SKIP LOCKED
+                    LIMIT :limit
+                    """
+                ),
+                params,
+            ).fetchall()
+            if not rows:
+                return []
+            ids = [int(r[0]) for r in rows]
+            session.execute(
+                text(
+                    """
+                    UPDATE asset
+                    SET metadata_status = 'processing'
+                    WHERE id = ANY(:ids)
+                    """
+                ),
+                {"ids": ids},
+            )
+            return ids
+
+    def write_exif_metadata(
+        self,
+        asset_id: int,
+        raw_exif: dict,
+        media_metadata: dict,
+    ) -> None:
+        """
+        Persist EXIF and normalized media metadata for an asset.
+
+        Runs in its own short transaction and sets metadata_status = 'exif_done'.
+        """
+        with self._session_scope(write=True) as session:
+            raw_exif_json = json.dumps(raw_exif) if raw_exif is not None else None
+            media_metadata_json = json.dumps(media_metadata) if media_metadata is not None else None
+            session.execute(
+                text(
+                    """
+                    UPDATE asset
+                    SET raw_exif = :raw_exif,
+                        media_metadata = :media_metadata,
+                        metadata_status = 'exif_done'
+                    WHERE id = :asset_id
+                    """
+                ),
+                {
+                    "asset_id": asset_id,
+                    "raw_exif": raw_exif_json,
+                    "media_metadata": media_metadata_json,
+                },
+            )
+
+    def reset_stuck_metadata(self, older_than_seconds: float) -> int:
+        """
+        Reset assets stuck in EXIF metadata processing back to NULL metadata_status.
+
+        To avoid long-running transactions, this uses a simple cutoff based on the
+        asset's mtime as a proxy for age. Returns the count of assets updated.
+        """
+        if older_than_seconds <= 0:
+            return 0
+        from time import time as _time
+
+        cutoff = _time() - older_than_seconds
+        with self._session_scope(write=True) as session:
+            result = session.execute(
+                text(
+                    """
+                    UPDATE asset
+                    SET metadata_status = NULL
+                    WHERE metadata_status = 'processing'
+                      AND mtime < :cutoff
+                    """
+                ),
+                {"cutoff": cutoff},
+            )
+            return result.rowcount or 0
+
+    def get_asset_with_library_by_id(self, asset_id: int) -> Asset | None:
+        """
+        Fetch an asset together with its library information using a single query.
+
+        Returns an Asset instance with its `library` attribute populated, or None
+        when the asset or its library does not exist / is soft-deleted.
+        """
+        with self._session_scope(write=False) as session:
+            row = session.execute(
+                text(
+                    """
+                    SELECT a.id, a.library_id, a.rel_path, a.type, a.mtime, a.size,
+                           a.status, a.tags_model_id, a.analysis_model_id, a.worker_id,
+                           a.lease_expires_at, a.retry_count, a.error_message,
+                           a.visual_analysis, a.preview_path, a.video_preview_path,
+                           a.segmentation_version,
+                           l.slug, l.absolute_path, l.deleted_at
+                    FROM asset a
+                    JOIN library l ON a.library_id = l.slug
+                    WHERE a.id = :asset_id AND l.deleted_at IS NULL
+                    """
+                ),
+                {"asset_id": asset_id},
+            ).fetchone()
+        if row is None:
+            return None
+        (
+            a_id,
+            library_id,
+            rel_path,
+            type_str,
+            mtime,
+            size,
+            status_str,
+            tags_model_id,
+            analysis_model_id,
+            worker_id,
+            lease_expires_at,
+            retry_count,
+            error_message,
+            visual_analysis,
+            preview_path,
+            video_preview_path,
+            segmentation_version,
+            lib_slug,
+            lib_absolute_path,
+            _lib_deleted_at,
+        ) = row
+        library = Library(
+            slug=lib_slug,
+            name="",
+            absolute_path=lib_absolute_path or "",
+            is_active=True,
+            scan_status=ScanStatus.idle,
+            target_tagger_id=None,
+            sampling_limit=100,
+        )
+        asset = Asset(
+            id=a_id,
+            library_id=library_id,
+            rel_path=rel_path,
+            type=AssetType(type_str),
+            mtime=float(mtime) if mtime is not None else 0.0,
+            size=int(size) if size is not None else 0,
+            status=AssetStatus(status_str),
+            tags_model_id=tags_model_id,
+            analysis_model_id=analysis_model_id,
+            worker_id=worker_id,
+            lease_expires_at=lease_expires_at,
+            retry_count=retry_count or 0,
+            error_message=error_message,
+            visual_analysis=visual_analysis,
+            preview_path=preview_path,
+            video_preview_path=video_preview_path,
+            segmentation_version=segmentation_version,
+        )
+        asset.library = library
+        return asset
 
     def mark_completed(
         self, asset_id: int, analysis_model_id: int, *, owned_by: str

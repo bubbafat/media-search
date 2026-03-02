@@ -33,6 +33,8 @@ dependencies = [
     "rawpy>=0.26.1",
     "requests>=2.25",
     "moondream-station>=0.1.9",
+    "pyexiftool>=0.5",
+    "reverse_geocoder>=1.5",
 ]
 
 [project.scripts]

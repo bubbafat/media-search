@@ -44,6 +44,11 @@ class Settings(BaseModel):
     # When True: silently fall back to PostgreSQL FTS on any Quickwit error.
     # Has no effect when quickwit_enabled=False (PostgreSQL is always used).
     admin_key: str = ""
+    # Metadata enrichment / EXIF worker
+    metadata_batch_size: int = 16
+    exiftool_path: str = "exiftool"
+    generation_hint_original_bpppf_threshold: float = 0.08
+    generation_hint_proxy_bpppf_threshold: float = 0.03
 
     @field_validator("worker_id", mode="before")
     @classmethod

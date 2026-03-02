@@ -27,6 +27,7 @@ from src.repository.system_metadata_repo import (
 from src.repository.video_scene_repo import VideoSceneRepository
 from src.repository.worker_repo import WorkerRepository
 from src.workers.ai_worker import AIWorker
+from src.workers.metadata_worker import MetadataWorker
 from src.workers.proxy_worker import ImageProxyWorker
 from src.workers.video_proxy_worker import VideoProxyWorker
 from src.workers.video_worker import VideoWorker
@@ -47,6 +48,8 @@ repair_app = typer.Typer(help="Repair database consistency (e.g. orphaned assets
 app.add_typer(repair_app, name="repair")
 maintenance_app = typer.Typer(help="System maintenance and housekeeping.")
 app.add_typer(maintenance_app, name="maintenance")
+metadata_app = typer.Typer(help="Metadata enrichment (EXIF, sharpness).")
+app.add_typer(metadata_app, name="metadata")
 
 
 def _get_session_factory():
@@ -72,6 +75,26 @@ def _require_library_or_all(
     if not all_libraries and library_slug is None:
         raise typer.BadParameter(command_hint)
     return None if all_libraries else library_slug
+
+
+def _parse_duration_to_seconds(value: str) -> float:
+    """
+    Parse a simple duration string like '30s', '5m', or '1h' into seconds.
+    Raises typer.BadParameter on invalid input.
+    """
+    s = (value or "").strip().lower()
+    if not s:
+        raise typer.BadParameter("Duration must be a non-empty string like '30s', '5m', or '1h'.")
+    unit = s[-1]
+    num_str = s[:-1]
+    if unit not in ("s", "m", "h") or not num_str.isdigit():
+        raise typer.BadParameter("Duration must end with s, m, or h (e.g. '30s', '10m', '1h').")
+    n = int(num_str)
+    if unit == "s":
+        return float(n)
+    if unit == "m":
+        return float(n * 60)
+    return float(n * 3600)
 
 
 @library_app.command("add")
@@ -1383,6 +1406,102 @@ def maintenance_purge_deleted(
         typer.echo(f"Would purge {purged} trashed library(ies). Run without --dry-run to apply.")
     else:
         typer.echo(f"Purged {purged} trashed library(ies).")
+
+
+@metadata_app.command("exif")
+def metadata_exif(
+    heartbeat: float = typer.Option(15.0, "--heartbeat", help="Heartbeat interval in seconds."),
+    worker_name: str | None = typer.Option(
+        None,
+        "--worker-name",
+        help="Force a specific worker ID. Defaults to auto-generated.",
+    ),
+    library_slug: str | None = typer.Option(
+        None,
+        "--library",
+        help="Limit to this library slug only.",
+    ),
+    all_libraries: bool = typer.Option(
+        False,
+        "--all",
+        help="Process all libraries (global mode). Requires explicit flag.",
+    ),
+    batch: int = typer.Option(
+        0,
+        "--batch",
+        help="Number of assets to claim per EXIF batch (default from config when 0).",
+    ),
+) -> None:
+    """Start the Metadata worker in EXIF phase."""
+    effective_library = _require_library_or_all(
+        library_slug, all_libraries, "Provide either --library <slug> or --all for metadata exif."
+    )
+    session_factory = _get_session_factory()
+    lib_repo = LibraryRepository(session_factory)
+    asset_repo = AssetRepository(session_factory)
+    worker_repo = WorkerRepository(session_factory)
+    system_metadata_repo = SystemMetadataRepository(session_factory)
+
+    if effective_library is not None:
+        lib = lib_repo.get_by_slug(effective_library)
+        if lib is None:
+            typer.echo(
+                f"Library not found or deleted: '{effective_library}'. Use 'library list' to see valid slugs.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+    cfg = get_config()
+    eff_batch = batch if batch > 0 else cfg.metadata_batch_size
+
+    worker_id = (
+        worker_name
+        if worker_name is not None
+        else f"metadata-exif-{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+    )
+    typer.secho(f"Starting Metadata Worker (EXIF): {worker_id}")
+
+    worker = MetadataWorker(
+        worker_id=worker_id,
+        repository=worker_repo,
+        heartbeat_interval_seconds=heartbeat,
+        asset_repo=asset_repo,
+        system_metadata_repo=system_metadata_repo,
+        phase="exif",
+        batch_size=eff_batch,
+        library_slug=effective_library,
+    )
+    try:
+        worker.run()
+    except KeyboardInterrupt:
+        typer.secho(f"Worker {worker_id} shutting down...")
+
+
+@metadata_app.command("reset-stuck")
+def metadata_reset_stuck(
+    older_than: str = typer.Option(
+        "1h",
+        "--older-than",
+        help="Reset assets stuck in EXIF metadata processing older than this duration (e.g. '1h', '30m').",
+    ),
+) -> None:
+    """
+    Reset assets with metadata_status='processing' that are older than the given duration.
+
+    This makes them eligible for re-processing by the MetadataWorker EXIF phase.
+    """
+    seconds = _parse_duration_to_seconds(older_than)
+    session_factory = _get_session_factory()
+    asset_repo = AssetRepository(session_factory)
+    count = asset_repo.reset_stuck_metadata(older_than_seconds=seconds)
+    typer.echo(f"Reset {count} asset(s) stuck in metadata processing.")
+
+
+@metadata_app.command("sharpness")
+def metadata_sharpness() -> None:
+    """Placeholder for future sharpness metadata worker."""
+    typer.echo("not yet implemented")
+    raise typer.Exit(1)
 
 
 def main() -> None:
