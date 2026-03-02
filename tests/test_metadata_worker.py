@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict
 
@@ -497,7 +498,7 @@ def test_write_sharpness_metadata_merges_and_sets_complete(engine, _session_fact
 
 
 def test_write_sharpness_metadata_no_op_when_not_sharpness_processing(
-    engine, _session_factory, caplog
+    engine, _session_factory
 ) -> None:
     """When metadata_status is not sharpness_processing, write is no-op and logs warning."""
     asset_repo, _, _ = _create_tables_and_repos(engine, _session_factory)
@@ -533,7 +534,36 @@ def test_write_sharpness_metadata_no_op_when_not_sharpness_processing(
     finally:
         session.close()
 
-    asset_repo.write_sharpness_metadata(asset_id, has_face=False, face_count=0, sharpness_score=0.1)
+    # Capture WARNING logs directly (avoid relying on pytest's caplog, which can
+    # be affected by other tests' global logging configuration).
+    import src.repository.asset_repo as asset_repo_module
+
+    messages: list[str] = []
+
+    class _ListHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
+            messages.append(record.getMessage())
+
+    logger = asset_repo_module._log
+    handler = _ListHandler(level=logging.WARNING)
+    prev_level = logger.level
+    prev_disabled = logger.disabled
+    prev_global_disable = logging.getLogger().manager.disable
+    try:
+        # Ensure this test can observe warning logs even if another test has
+        # globally disabled logging.
+        logging.disable(logging.NOTSET)
+        logger.disabled = False
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(handler)
+        asset_repo.write_sharpness_metadata(
+            asset_id, has_face=False, face_count=0, sharpness_score=0.1
+        )
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prev_level)
+        logger.disabled = prev_disabled
+        logging.disable(prev_global_disable)
 
     session = _session_factory()
     try:
@@ -546,7 +576,8 @@ def test_write_sharpness_metadata_no_op_when_not_sharpness_processing(
         assert row[0] is None
     finally:
         session.close()
-    assert "no row updated" in caplog.text or "write_sharpness_metadata" in caplog.text
+    joined = "\n".join(messages)
+    assert "no row updated" in joined or "write_sharpness_metadata" in joined
 
 
 def test_process_sharpness_batch_end_to_end(tmp_path, engine, _session_factory, monkeypatch) -> None:

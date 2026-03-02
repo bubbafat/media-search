@@ -1111,11 +1111,13 @@ class AssetRepository:
                     SET media_metadata = COALESCE(media_metadata, '{}'::jsonb) || CAST(:extra AS jsonb),
                         metadata_status = 'complete'
                     WHERE id = :asset_id AND metadata_status = 'sharpness_processing'
+                    RETURNING id
                     """
                 ),
                 {"asset_id": asset_id, "extra": extra},
             )
-            if (result.rowcount or 0) == 0:
+            updated = result.fetchone() is not None
+            if not updated:
                 _log.warning(
                     "write_sharpness_metadata: no row updated for asset_id=%s (status may have been reset)",
                     asset_id,
