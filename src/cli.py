@@ -1401,6 +1401,11 @@ def metadata_exif(
         "--all",
         help="Process all libraries (global mode). Requires explicit flag.",
     ),
+    once: bool = typer.Option(
+        False,
+        "--once",
+        help="Process one batch then exit (no work = exit immediately).",
+    ),
     batch: int = typer.Option(
         0,
         "--batch",
@@ -1453,7 +1458,7 @@ def metadata_exif(
         library_slug=effective_library,
     )
     try:
-        worker.run()
+        worker.run(once=once)
     except KeyboardInterrupt:
         typer.secho(f"Worker {worker_id} shutting down...")
 
@@ -1506,6 +1511,11 @@ def metadata_sharpness(
         "--batch",
         help="Number of assets to claim per sharpness batch (default from config when 0).",
     ),
+    once: bool = typer.Option(
+        False,
+        "--once",
+        help="Process one batch then exit (no work = exit immediately).",
+    ),
 ) -> None:
     """Start the Metadata worker in sharpness phase (thumbnail sharpness + face detection)."""
     effective_library = _require_library_or_all(
@@ -1553,7 +1563,7 @@ def metadata_sharpness(
         library_slug=effective_library,
     )
     try:
-        worker.run()
+        worker.run(once=once)
     except KeyboardInterrupt:
         typer.secho(f"Worker {worker_id} shutting down...")
 

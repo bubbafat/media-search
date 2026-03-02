@@ -49,7 +49,7 @@ class SearchSyncWorker(BaseWorker):
         system_metadata_repo: SystemMetadataRepository,
         library_slug: str | None = None,
         heartbeat_interval_seconds: float = 15.0,
-        idle_poll_interval_seconds: float = 30.0,
+        idle_poll_interval_seconds: float = 5.0,
     ) -> None:
         super().__init__(
             worker_id,
