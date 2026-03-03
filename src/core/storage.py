@@ -183,15 +183,7 @@ def _atomic_write(dest_path: Path, write_fn: Callable[[Path], None]) -> None:
 def _vips_write_jpeg(vips_img: "pyvips.Image", path: Path, quality: int = 85) -> None:
     """Write a pyvips image as JPEG to path with the given quality (atomic)."""
     def _do_write(p: Path) -> None:
-        vips_img.write_to_file(str(p), Q=quality)
-
-    _atomic_write(path, _do_write)
-
-
-def _vips_write_webp(vips_img: "pyvips.Image", path: Path, quality: int = 85) -> None:
-    """Write a pyvips image as WebP to path with the given quality (atomic)."""
-    def _do_write(p: Path) -> None:
-        vips_img.write_to_file(str(p), Q=quality)
+        vips_img.jpegsave(str(p), Q=quality, optimize_coding=True)
 
     _atomic_write(path, _do_write)
 
@@ -200,10 +192,10 @@ class LocalMediaStore:
     """
     Stores thumbnails and proxies under data_dir, sharded by library_slug and asset_id.
     Directory layout: data_dir / library_slug / category / (asset_id % 1000) / {asset_id}.jpg
-    (proxies use .webp instead of .jpg).
+    (proxies use .jpg).
     """
 
-    PROXY_EXTENSION = ".webp"
+    PROXY_EXTENSION = ".jpg"
     THUMBNAIL_SIZE: tuple[int, int] = (320, 320)
     PROXY_SIZE: tuple[int, int] = (768, 768)
 
@@ -344,7 +336,7 @@ class LocalMediaStore:
         _atomic_write(path, _do_write)
 
     def save_proxy(self, library_slug: str, asset_id: int, image: Image.Image) -> Image.Image:
-        """Create proxy (max 768x768) and save as WebP (quality 85).
+        """Create proxy (max 768x768) and save as JPEG (quality 85).
 
         The proxy is never upscaled: if the input image is already smaller than
         the target box, it is saved at its original resolution.
@@ -356,7 +348,7 @@ class LocalMediaStore:
         proxy = self._fit_within_box_no_upscale(image, self.PROXY_SIZE)
 
         def _do_write(p: Path) -> None:
-            proxy.save(p, "WEBP", quality=85)
+            proxy.save(p, "JPEG", quality=85)
 
         _atomic_write(path, _do_write)
         return proxy
@@ -380,7 +372,7 @@ class LocalMediaStore:
         *,
         create_dirs: bool = False,
     ) -> Path:
-        """Return path for proxy file (WebP). Used by save_proxy, get_proxy_path, proxy_and_thumbnail_exist."""
+        """Return path for proxy file (JPEG). Used by save_proxy, get_proxy_path, proxy_and_thumbnail_exist."""
         shard = asset_id % 1000
         directory = self.data_dir / library_slug / "proxies" / str(shard)
         if create_dirs:
@@ -404,14 +396,14 @@ class LocalMediaStore:
         return file_non_empty(path)
 
     def get_proxy_path(self, library_slug: str, asset_id: int) -> Path:
-        """Return path to proxy (WebP); raise FileNotFoundError if it does not exist."""
+        """Return path to proxy (JPEG); raise FileNotFoundError if it does not exist."""
         path = self._get_proxy_path(library_slug, asset_id)
         if not path.exists():
             raise FileNotFoundError(path)
         return path
 
     def proxy_and_thumbnail_exist(self, library_slug: str, asset_id: int) -> bool:
-        """Return True if both proxy (WebP) and thumbnail files exist and are non-empty. Used by proxy --repair."""
+        """Return True if both proxy (JPEG) and thumbnail files exist and are non-empty. Used by proxy --repair."""
         proxy_path = self._get_proxy_path(library_slug, asset_id)
         thumb_path = self._get_shard_path(library_slug, asset_id, "thumbnails")
         return file_non_empty(proxy_path) and file_non_empty(thumb_path)
@@ -437,7 +429,7 @@ class LocalMediaStore:
         use_previews: bool = True,
     ) -> None:
         """
-        Generate proxy (WebP) and thumbnail (JPEG) for an image asset from the source path.
+        Generate proxy (JPEG) and thumbnail (JPEG) for an image asset from the source path.
 
         This is a pyvips-first pipeline:
         - For the common case, it uses libvips shrink-on-load thumbnailing with sequential
@@ -459,7 +451,7 @@ class LocalMediaStore:
                     library_slug, asset_id, "thumbnails", create_dirs=True
                 )
 
-                _vips_write_webp(proxy_vips, proxy_path)
+                _vips_write_jpeg(proxy_vips, proxy_path, quality=85)
 
                 thumb_vips = _vips_thumbnail_from_vips(proxy_vips, self.THUMBNAIL_SIZE)
                 _vips_write_jpeg(thumb_vips, thumb_path)

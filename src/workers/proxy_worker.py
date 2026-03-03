@@ -1,4 +1,4 @@
-"""Proxy worker: claims pending image assets, generates thumbnails and WebP proxies on local SSD, updates to proxied."""
+"""Proxy worker: claims pending image assets, generates thumbnails and JPEG proxies on local SSD, updates to proxied."""
 
 import logging
 
@@ -17,7 +17,7 @@ _log = logging.getLogger(__name__)
 
 class ImageProxyWorker(BaseWorker):
     """
-    Worker that claims pending image assets only, writes thumbnails (JPEG) and proxies (WebP)
+    Worker that claims pending image assets only, writes thumbnails (JPEG) and proxies (JPEG)
     to the local sharded store, and updates status to proxied (or poisoned on error).
     """
 

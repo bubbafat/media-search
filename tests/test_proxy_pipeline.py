@@ -1253,7 +1253,7 @@ def test_proxy_worker_video_720p_pipeline(engine, _session_factory, tmp_path):
         shard = asset_id % 1000
         thumb_path = data_dir / "vid-proxy-lib" / "thumbnails" / str(shard) / f"{asset_id}.jpg"
         head_clip_path = data_dir / "video_clips" / "vid-proxy-lib" / str(asset_id) / "head_clip.mp4"
-        proxy_path = data_dir / "vid-proxy-lib" / "proxies" / str(shard) / f"{asset_id}.webp"
+        proxy_path = data_dir / "vid-proxy-lib" / "proxies" / str(shard) / f"{asset_id}.jpg"
         assert thumb_path.exists()
         assert head_clip_path.exists()
         assert not proxy_path.exists()

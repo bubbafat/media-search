@@ -286,7 +286,7 @@ def test_repair_sets_pending_when_proxy_or_thumbnail_0_byte(engine, _session_fac
             m.return_value.data_dir = str(data_dir)
             store = LocalMediaStore()
             # Create 0-byte proxy and thumbnail - repair should treat as missing
-            proxy_path = data_dir / "repair-0byte-lib" / "proxies" / str(asset_id % 1000) / f"{asset_id}.webp"
+            proxy_path = data_dir / "repair-0byte-lib" / "proxies" / str(asset_id % 1000) / f"{asset_id}.jpg"
             thumb_path = data_dir / "repair-0byte-lib" / "thumbnails" / str(asset_id % 1000) / f"{asset_id}.jpg"
             proxy_path.parent.mkdir(parents=True, exist_ok=True)
             thumb_path.parent.mkdir(parents=True, exist_ok=True)

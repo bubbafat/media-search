@@ -106,7 +106,7 @@ MediaSearch v2 is a highly concurrent, distributed media discovery and AI-proces
 MediaSearch v2 uses a **Decentralized Worker Model**. Workers are completely stateless and pull work dynamically.
 
 1. **The Scanner Worker (I/O & DB Bound):** Rapidly traverses the user's read-only network storage (NAS). Inserts DB rows as pending.  
-2. **The Image Proxy Worker (Network I/O & CPU Bound):** Claims pending images. Pulls the heavy original file once. Generates a WebP proxy and a UI thumbnail using libvips shrink-on-load capabilities. Updates status to proxied.  
+2. **The Image Proxy Worker (Network I/O & CPU Bound):** Claims pending images. Pulls the heavy original file once. Generates a JPEG proxy and a UI thumbnail using libvips shrink-on-load capabilities. Updates status to proxied.  
 3. **The Video Proxy Worker (Network I/O & CPU Bound):** Claims pending videos. Transcodes to a temporary 720p H.264 file, extracts a 10-second head-clip for UI preview, runs scene indexing, persists scene bounds, and deletes the temp file.  
 4. **The ML / AI Worker (GPU Bound):** Claims proxied images. Reads only the lightweight local proxies from the SSD, runs them through local Vision Models (Moondream), extracts tags/embeddings, and updates the asset to completed.  
 5. **The Video Worker (GPU Bound):** Claims proxied videos that already have scene bounds. Runs vision analysis only on the persisted scene rep frame images.  
@@ -140,7 +140,7 @@ In a high-throughput system, writing DEBUG or INFO statements to a log file for 
 To ensure UI responsiveness and absolute security of the source media, the system strictly enforces a **Proxy Architecture**. The user's original media directories must be treated as **Read-Only**.
 
 * **Stage 1 (Discovery):** Scanner finds a file on the NAS. Inserts DB row as pending.  
-* **Stage 2 (Proxy Generation):** Proxy workers read the heavy source once to generate SSD-cached web-friendly derivatives, updating status to proxied.  
+* **Stage 2 (Proxy Generation):** Proxy workers read the heavy source once to generate SSD-cached JPEG proxy (and thumbnail) derivatives, updating status to proxied.  
 * **Stage 3 (AI Extraction):** GPU workers claim proxied assets, reading only the local SSD derivatives to run inference, and marking assets as completed.  
 * **Stage 4 (Search Sync):** The Search Sync Worker detects the completion via the Outbox queue and pushes the final metadata to the active Quickwit index.
 

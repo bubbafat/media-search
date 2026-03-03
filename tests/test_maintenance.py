@@ -743,9 +743,9 @@ def test_purge_deleted_library_wipes_disk_and_hard_deletes(engine, _session_fact
     (tmp_path / slug / "thumbnails" / "0").mkdir(parents=True)
     (tmp_path / slug / "thumbnails" / "0" / "1.jpg").write_text("thumb")
     (tmp_path / slug / "proxies" / "0").mkdir(parents=True)
-    (tmp_path / slug / "proxies" / "0" / "1.webp").write_text("proxy")
+    (tmp_path / slug / "proxies" / "0" / "1.jpg").write_text("proxy")
     (tmp_path / "tmp" / slug).mkdir(parents=True)
-    (tmp_path / "tmp" / slug / "part.webp").write_text("partial")
+    (tmp_path / "tmp" / slug / "part.jpg").write_text("partial")
     (tmp_path / "video_clips" / slug).mkdir(parents=True)
     (tmp_path / "video_clips" / slug / "1").mkdir()
     (tmp_path / "video_clips" / slug / "1" / "clip.mp4").write_text("clip")
@@ -807,7 +807,7 @@ def test_purge_deleted_libraries_purges_all_trashed(engine, _session_factory, tm
     (tmp_path / "trash-a" / "thumbnails" / "0").mkdir(parents=True)
     (tmp_path / "trash-a" / "thumbnails" / "0" / "1.jpg").write_text("a")
     (tmp_path / "trash-b" / "proxies" / "0").mkdir(parents=True)
-    (tmp_path / "trash-b" / "proxies" / "0" / "2.webp").write_text("b")
+    (tmp_path / "trash-b" / "proxies" / "0" / "2.jpg").write_text("b")
 
     service = MaintenanceService(
         asset_repo=asset_repo,
@@ -1247,7 +1247,7 @@ def test_reap_missing_source_files_skips_project_assets(
     with patch("src.core.storage.get_config", return_value=mock_cfg):
         store = LocalMediaStore()
         proxy_path = (
-            tmp_path / lib_slug / "proxies" / str(asset_id % 1000) / f"{asset_id}.webp"
+            tmp_path / lib_slug / "proxies" / str(asset_id % 1000) / f"{asset_id}.jpg"
         )
         proxy_path.parent.mkdir(parents=True, exist_ok=True)
         proxy_path.write_text("proxy")
